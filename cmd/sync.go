@@ -26,7 +26,7 @@ var syncCmd = &cobra.Command{
   ggt sync          自动同步所有仓库`,
 	Run: func(cmd *cobra.Command, args []string) {
 		repos := MustGetRepoList()
-		pterm.Info.Printf("共 %d 个仓库，开始同步...\n\n", len(repos))
+		pterm.Info.Println("共 " + pterm.Cyan(len(repos)) + " 个仓库，开始同步...")
 
 		cfg := GetConfig()
 		var wg sync.WaitGroup
@@ -43,6 +43,7 @@ var syncCmd = &cobra.Command{
 		}
 
 		wg.Wait()
+		pterm.Success.Println("所有仓库同步完成")
 	},
 }
 
@@ -92,9 +93,9 @@ func syncRepo(repoPath string) {
 
 	// compare and decide
 	if local == remote {
-		pterm.FgGreen.Printf("[%s] 本地与远程一致，无需处理\n", name)
+		InfoMsg(fmt.Sprintf("[%s] 本地与远程一致，无需处理", name))
 	} else if local == base {
-		pterm.FgYellow.Printf("[%s] 检测到线性更新，正在拉取...\n", name)
+		WarnMsg(fmt.Sprintf("[%s] 检测到线性更新，正在拉取...", name))
 		_, err := runGitCommand(repoPath, "pull", "--ff-only")
 		if err != nil {
 			ErrorMsg(fmt.Sprintf("[%s] 拉取失败: %s", name, err))
@@ -102,9 +103,9 @@ func syncRepo(repoPath string) {
 			SuccessMsg(fmt.Sprintf("[%s] 拉取成功", name))
 		}
 	} else if remote == base {
-		pterm.FgYellow.Printf("[%s] 本地领先于远程，请手动推送\n", name)
+		WarnMsg(fmt.Sprintf("[%s] 本地领先于远程，请手动推送", name))
 	} else {
-		pterm.FgRed.Printf("[%s] 非线性更新，必须手动处理\n", name)
+		ErrorMsg(fmt.Sprintf("[%s] 非线性更新，必须手动处理", name))
 	}
 }
 

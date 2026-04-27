@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"context"
+	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -57,8 +60,11 @@ func showRepoStatus(repoPath string) {
 }
 
 func runGitCommand(repoPath string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
