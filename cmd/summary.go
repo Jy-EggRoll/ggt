@@ -68,9 +68,8 @@ var summaryCmd = &cobra.Command{
 					continue
 				}
 
-				clearScreen()
-				fmt.Print(pterm.FgGray.Sprint("*************************"), "\n")
-				fmt.Printf("%s 检测到变动\n", pterm.FgCyan.Sprint(entry.Name()))
+				pterm.FgLightYellow.Println(strings.Repeat("─", pterm.GetTerminalWidth()))
+				pterm.FgCyan.Printfln("%s 检测到变动", entry.Name())
 				fmt.Print(statusOutput)
 				fmt.Printf("%s\n", pterm.FgCyan.Sprint("变动详情："))
 				diffOutput, _ := runGitCommand(repoPath, "diff", "--color=always", "--stat")
@@ -92,14 +91,9 @@ var summaryCmd = &cobra.Command{
 						fmt.Print(string(countOutput))
 					}
 				}
-				fmt.Print(pterm.FgGray.Sprint("*************************"), "\n")
 			}
 		}
 	},
-}
-
-func clearScreen() {
-	fmt.Print("\033[2J\033[H")
 }
 
 func init() {
