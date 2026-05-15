@@ -29,7 +29,6 @@ var summaryCmd = &cobra.Command{
 			home, _ := os.UserHomeDir()
 			targetPaths = []string{filepath.Join(home, "GitRepo")}
 		}
-		firstRepo := true
 		for _, path := range targetPaths {
 			if _, err := os.Stat(path); os.IsNotExist(err) {
 				continue
@@ -69,11 +68,7 @@ var summaryCmd = &cobra.Command{
 					continue
 				}
 
-				if firstRepo {
-					firstRepo = false
-				} else {
-					clearScreen()
-				}
+				clearScreen()
 				fmt.Print(pterm.FgGray.Sprint("*************************"), "\n")
 				fmt.Printf("%s 检测到变动\n", pterm.FgCyan.Sprint(entry.Name()))
 				fmt.Print(statusOutput)
