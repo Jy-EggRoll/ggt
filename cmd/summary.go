@@ -83,8 +83,11 @@ var summaryCmd = &cobra.Command{
 					exec.Command("git", "-C", repoPath, "add", "-A").Run()
 					msg := fmt.Sprintf("🔨 chore: 终端推送更新 %s", time.Now().Format("2006-01-02 15:04:05"))
 					exec.Command("git", "-C", repoPath, "commit", "-m", msg).Run()
-					exec.Command("git", "-C", repoPath, "push").Run()
-					fmt.Printf("%s\n", pterm.FgGreen.Sprint("推送完成！"))
+					if err := exec.Command("git", "-C", repoPath, "push").Run(); err != nil {
+						fmt.Printf("%s\n", pterm.FgRed.Sprint("推送失败！"))
+					} else {
+						fmt.Printf("%s\n", pterm.FgGreen.Sprint("推送完成！"))
+					}
 					fmt.Print("大小信息：\n")
 					countOutput, _ := exec.Command("git", "-C", repoPath, "count-objects", "-vH").Output()
 					if len(countOutput) > 0 {
