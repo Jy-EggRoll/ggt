@@ -1,3 +1,5 @@
 ggt
 ggt_test
 ggt-test
+dist/
+*.exe
