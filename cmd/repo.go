@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// repoCmd 实现 "ggt repo" 及其子命令，管理仓库路径配置。
+// 配置存储在 ~/.config/go-git-ggt/ggt-config.json 中。
 var repoCmd = &cobra.Command{
 	Use:   "repo",
 	Short: "管理仓库路径配置",
@@ -21,6 +23,8 @@ var repoCmd = &cobra.Command{
   ggt repo add-parent <path> 添加父目录（自动扫描其中的 git 仓库）`,
 }
 
+// repoListCmd 列出所有已配置的仓库路径。
+// 包括直接添加的仓库和从父目录扫描到的仓库。
 var repoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "列出所有已配置的仓库路径",
@@ -37,6 +41,8 @@ var repoListCmd = &cobra.Command{
 	},
 }
 
+// repoAddCmd 添加一个仓库路径到配置文件。
+// 路径必须指向一个有效的 git 仓库（存在 .git 目录）。
 var repoAddCmd = &cobra.Command{
 	Use:   "add <path>",
 	Short: "添加一个仓库路径到配置文件",
@@ -72,6 +78,7 @@ var repoAddCmd = &cobra.Command{
 	},
 }
 
+// repoRemoveCmd 从配置文件中移除一个仓库路径。
 var repoRemoveCmd = &cobra.Command{
 	Use:   "remove <path>",
 	Short: "从配置文件移除一个仓库路径",
@@ -110,6 +117,8 @@ var repoRemoveCmd = &cobra.Command{
 	},
 }
 
+// repoAddParentCmd 添加一个父目录到配置文件。
+// ggt 运行时会扫描该目录下的所有子目录，自动识别其中包含 .git 的仓库。
 var repoAddParentCmd = &cobra.Command{
 	Use:   "add-parent <path>",
 	Short: "添加一个父目录，自动扫描其中的所有 git 仓库路径",

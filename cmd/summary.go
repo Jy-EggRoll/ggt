@@ -2,17 +2,23 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
+	"ggt/internal/git"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
+// summaryCmd 实现 "ggt summary"（简写 ggt sum）。
+// 遍历所有已配置的仓库，对有变更的仓库：
+// 1. 显示 git status 和 diff stat
+// 2. 交互式询问是否一键提交并推送
+// 3. 执行 git add -A → git commit → git push
+// 4. 显示推送后的仓库大小变化
+//
+// 关键修复：使用 git.RunCombined 捕获 stderr，推送失败时显示具体错误原因。
+// 注意：此命令是顺序执行的（交互式确认需要等待用户输入），没有并发问题。
 var summaryCmd = &cobra.Command{
 	Use:   "summary",
 	Short: "遍历所有仓库，显示变更，询问一键提交",
@@ -22,78 +28,75 @@ var summaryCmd = &cobra.Command{
   ggt summary          查看变更并提交
   ggt sum             简写形式`,
 	Run: func(cmd *cobra.Command, args []string) {
-		var targetPaths []string
-		if runtime.GOOS == "windows" {
-			targetPaths = []string{"D:\\GitRepo", "R:\\GitRepoCache"}
-		} else {
-			home, _ := os.UserHomeDir()
-			targetPaths = []string{filepath.Join(home, "GitRepo")}
-		}
-		for _, path := range targetPaths {
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				continue
-			}
-			if runtime.GOOS == "windows" {
-				fmt.Printf("%s 盘目录 Git 状态检查\n", pterm.FgMagenta.Sprint(string(path[0])))
-			} else {
-				pterm.FgMagenta.Printfln("%s Git 状态检查", path)
-			}
+		repos := MustGetRepoList()
+		pterm.Info.Printf("共 %d 个仓库，开始检查变更...\n\n", len(repos))
 
-			entries, err := os.ReadDir(path)
+		for _, repoPath := range repos {
+			// 检查是否有未提交的变更
+			statusOutput, err := git.Run(repoPath, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
 			if err != nil {
 				continue
 			}
-			for _, entry := range entries {
-				if !entry.IsDir() {
-					continue
-				}
-				repoPath := path + string(os.PathSeparator) + entry.Name()
-				gitPath := repoPath + string(os.PathSeparator) + ".git"
-				if _, err := os.Stat(gitPath); os.IsNotExist(err) {
-					continue
-				}
 
-				statusOutput, err := runGitCommand(repoPath, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
-				if err != nil {
-					continue
+			// 过滤空行，判断除了分支信息外是否有实际变更
+			lines := strings.Split(strings.TrimRight(statusOutput, "\n"), "\n")
+			var nonEmpty []string
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					nonEmpty = append(nonEmpty, line)
 				}
-				lines := strings.Split(strings.TrimRight(statusOutput, "\n"), "\n")
-				var nonEmpty []string
-				for _, line := range lines {
-					if strings.TrimSpace(line) != "" {
-						nonEmpty = append(nonEmpty, line)
-					}
-				}
-				if len(nonEmpty) <= 1 {
-					continue
-				}
+			}
+			// 只有分支行（## main...origin/main）说明没有变更
+			if len(nonEmpty) <= 1 {
+				continue
+			}
 
-				pterm.FgLightYellow.Println(strings.Repeat("─", pterm.GetTerminalWidth()))
-				pterm.FgCyan.Printfln("%s 检测到变动", entry.Name())
-				fmt.Print(statusOutput)
-				fmt.Printf("%s\n", pterm.FgCyan.Sprint("变动详情："))
-				diffOutput, _ := runGitCommand(repoPath, "diff", "--color=always", "--stat")
-				if diffOutput != "" {
-					fmt.Print(diffOutput)
-				}
+			// 显示变更概览
+			name := getRepoName(repoPath)
+			pterm.FgLightYellow.Println(strings.Repeat("─", pterm.GetTerminalWidth()))
+			pterm.FgCyan.Printfln("%s 检测到变动", name)
+			fmt.Print(statusOutput)
 
-				result, _ := pterm.DefaultInteractiveConfirm.WithDefaultValue(false).WithDefaultText("是否一键提交所有更改并推送？").Show()
-				if result {
-					fmt.Printf("%s\n", pterm.FgYellow.Sprint("正在处理推送..."))
-					exec.Command("git", "-C", repoPath, "add", "-A").Run()
-					msg := fmt.Sprintf("🔨 chore: 终端推送更新 %s", time.Now().Format("2006-01-02 15:04:05"))
-					exec.Command("git", "-C", repoPath, "commit", "-m", msg).Run()
-					if err := exec.Command("git", "-C", repoPath, "push").Run(); err != nil {
-						fmt.Printf("%s\n", pterm.FgRed.Sprint("推送失败！"))
-					} else {
-						fmt.Printf("%s\n", pterm.FgGreen.Sprint("推送完成！"))
-					}
-					fmt.Print("大小信息：\n")
-					countOutput, _ := exec.Command("git", "-C", repoPath, "count-objects", "-vH").Output()
-					if len(countOutput) > 0 {
-						fmt.Print(string(countOutput))
-					}
-				}
+			// 显示详细的 diff 统计
+			fmt.Printf("%s\n", pterm.FgCyan.Sprint("变动详情："))
+			diffOutput, _ := git.Run(repoPath, "diff", "--color=always", "--stat")
+			if diffOutput != "" {
+				fmt.Print(diffOutput)
+			}
+
+			// 交互式确认：是否一键提交并推送
+			result, _ := pterm.DefaultInteractiveConfirm.WithDefaultValue(false).WithDefaultText("是否一键提交所有更改并推送？").Show()
+			if !result {
+				continue
+			}
+
+			pterm.FgYellow.Printfln("正在处理 %s ...", name)
+
+			// git add -A：暂存所有更改
+			if out, err := git.RunCombined(repoPath, "add", "-A"); err != nil {
+				pterm.Error.Printf("git add 失败:\n%s\n", out)
+				continue
+			}
+
+			// git commit：自动生成提交信息
+			msg := fmt.Sprintf("🔨 chore: 终端推送更新 %s", time.Now().Format("2006-01-02 15:04:05"))
+			if out, err := git.RunCombined(repoPath, "commit", "-m", msg); err != nil {
+				pterm.Error.Printf("git commit 失败:\n%s\n", out)
+				continue
+			}
+
+			// git push：推送到远程，使用 RunCombined 确保捕获 stderr 错误信息
+			if out, err := git.RunCombined(repoPath, "push"); err != nil {
+				pterm.Error.Printf("推送失败:\n%s\n", out)
+			} else {
+				pterm.Success.Println("推送完成！")
+			}
+
+			// 显示提交后的仓库大小信息
+			fmt.Print("大小信息：\n")
+			countOutput, _ := git.Run(repoPath, "count-objects", "-vH")
+			if countOutput != "" {
+				fmt.Print(countOutput)
 			}
 		}
 	},

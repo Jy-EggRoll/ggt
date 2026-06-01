@@ -5,14 +5,26 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"sync"
 
+	"ggt/internal/git"
+	"ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
 var remoteAll bool
 
+// remoteCmd 实现 "ggt remote"（含子命令 https / ssh）。
+// 在 HTTPS 和 SSH 协议之间切换远程 origin 的地址。
+// 支持当前目录单仓库模式（默认）和 --all 批量模式。
+//
+// SSH → HTTPS 示例：
+//
+//	git@github.com:user/repo.git  →  https://github.com/user/repo.git
+//
+// HTTPS → SSH 示例：
+//
+//	https://github.com/user/repo.git  →  git@github.com:user/repo.git
 var remoteCmd = &cobra.Command{
 	Use:   "remote",
 	Short: "切换远程仓库协议 (HTTPS ↔ SSH)",
@@ -50,15 +62,21 @@ var remoteSshCmd = &cobra.Command{
 	},
 }
 
+// remoteURLRegex 匹配主流托管平台的远程 URL，提取 host 和 path 部分。
+// 支持两种格式：
+//   - https://HOST/PATH.git
+//   - git@HOST:PATH.git
 var remoteURLRegex = regexp.MustCompile(`^(?:https://|git@)([^:/]+)[:/](.+?)(?:\.git)?(?:/)?$`)
 
 const remoteOrigin = "origin"
 
+// remoteInfo 保存从远程 URL 中解析出的托管平台和仓库路径。
 type remoteInfo struct {
 	host string
 	path string
 }
 
+// parseRemoteURL 从原始的 git remote URL 中提取 host 和 path。
 func parseRemoteURL(raw string) (*remoteInfo, error) {
 	matches := remoteURLRegex.FindStringSubmatch(strings.TrimSpace(raw))
 	if len(matches) < 3 {
@@ -67,14 +85,17 @@ func parseRemoteURL(raw string) (*remoteInfo, error) {
 	return &remoteInfo{host: matches[1], path: matches[2]}, nil
 }
 
+// buildHTTPSURL 根据 host + path 构建 HTTPS 格式的 URL。
 func buildHTTPSURL(info *remoteInfo) string {
 	return fmt.Sprintf("https://%s/%s.git", info.host, info.path)
 }
 
+// buildSSHURL 根据 host + path 构建 SSH 格式的 URL。
 func buildSSHURL(info *remoteInfo) string {
 	return fmt.Sprintf("git@%s:%s.git", info.host, info.path)
 }
 
+// detectProtocol 检测当前远程 URL 使用的协议。
 func detectProtocol(raw string) string {
 	if strings.HasPrefix(raw, "http") {
 		return "HTTPS"
@@ -82,6 +103,8 @@ func detectProtocol(raw string) string {
 	return "SSH"
 }
 
+// switchCurrentRepo 切换当前目录下的 git 仓库的远程协议。
+// 此模式仅操作一个仓库，直接打印结果。
 func switchCurrentRepo(target string) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -98,46 +121,33 @@ func switchCurrentRepo(target string) {
 	printRemoteResult(result)
 }
 
+// switchAllRepos 切换所有配置仓库的远程协议。
+// 使用 worker.Map 并发收集结果后顺序打印统计信息。
 func switchAllRepos(target string) {
 	repos := MustGetRepoList()
 	pterm.Info.Printf("共 %d 个仓库，开始切换协议至 [%s] ...\n\n", len(repos), pterm.Cyan(strings.ToUpper(target)))
-
-	cfg := GetConfig()
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, cfg.Concurrency)
 
 	type repoResult struct {
 		name   string
 		result switchRemoteResult
 	}
-	results := make(chan repoResult, len(repos))
 
-	for _, repoPath := range repos {
-		wg.Add(1)
-		go func(path string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			res := doSwitchRemote(path, target)
-			results <- repoResult{name: getRepoName(path), result: res}
-		}(repoPath)
-	}
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
+	results := worker.Map(repos, GetConfig().Concurrency, func(path string) repoResult {
+		return repoResult{name: getRepoName(path), result: doSwitchRemote(path, target)}
+	})
 
 	var success, skipped, failed int
-	for r := range results {
+	for _, r := range results {
 		name := pterm.FgCyan.Sprintf("[%s]", r.name)
 		switch r.result.status {
 		case "switched":
-			pterm.Success.Printfln("%s %s → %s", name, pterm.FgRed.Sprint(detectProtocol(r.result.oldURL)), pterm.FgGreen.Sprint(strings.ToUpper(target)))
+			pterm.Success.Printfln("%s %s → %s", name,
+				pterm.FgRed.Sprint(detectProtocol(r.result.oldURL)),
+				pterm.FgGreen.Sprint(strings.ToUpper(target)))
 			success++
 		case "same":
-			pterm.Info.Printfln("%s 已是 %s 协议，无需切换", name, pterm.Cyan(detectProtocol(r.result.oldURL)))
+			pterm.Info.Printfln("%s 已是 %s 协议，无需切换", name,
+				pterm.Cyan(detectProtocol(r.result.oldURL)))
 			skipped++
 		case "error":
 			pterm.Error.Printfln("%s %s", name, r.result.err)
@@ -149,15 +159,18 @@ func switchAllRepos(target string) {
 	pterm.Info.Printf("处理完成: 成功 %d, 跳过 %d, 失败 %d\n", success, skipped, failed)
 }
 
+// switchRemoteResult 保存远程协议切换的结果。
 type switchRemoteResult struct {
 	oldURL string
 	newURL string
-	status string
+	status string // "switched", "same", "error"
 	err    string
 }
 
+// doSwitchRemote 执行单个仓库的远程协议切换。
+// 流程：获取当前 URL → 解析 host+path → 构建新 URL → git remote set-url。
 func doSwitchRemote(repoPath string, target string) switchRemoteResult {
-	raw, err := runGitCommand(repoPath, "remote", "get-url", remoteOrigin)
+	raw, err := git.Run(repoPath, "remote", "get-url", remoteOrigin)
 	if err != nil {
 		return switchRemoteResult{status: "error", err: fmt.Sprintf("获取远程地址失败: %v", err)}
 	}
@@ -182,7 +195,7 @@ func doSwitchRemote(repoPath string, target string) switchRemoteResult {
 		newURL = buildSSHURL(info)
 	}
 
-	_, err = runGitCommand(repoPath, "remote", "set-url", remoteOrigin, newURL)
+	_, err = git.Run(repoPath, "remote", "set-url", remoteOrigin, newURL)
 	if err != nil {
 		return switchRemoteResult{status: "error", err: fmt.Sprintf("切换失败: %v", err)}
 	}
@@ -190,6 +203,7 @@ func doSwitchRemote(repoPath string, target string) switchRemoteResult {
 	return switchRemoteResult{status: "switched", oldURL: oldURL, newURL: newURL}
 }
 
+// printRemoteResult 打印单个仓库的切换结果（用于单仓库模式）。
 func printRemoteResult(r switchRemoteResult) {
 	switch r.status {
 	case "switched":

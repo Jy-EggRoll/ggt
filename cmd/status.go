@@ -1,16 +1,19 @@
 package cmd
 
 import (
-	"context"
-	"os"
-	"os/exec"
-	"sync"
-	"time"
+	"fmt"
 
+	"ggt/internal/git"
+	"ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
+// statusCmd 实现 "ggt status"（简写 ggt st）。
+// 并发检查所有配置仓库的 git 状态（未跟踪文件、修改、分支信息）。
+//
+// 输出安全：使用 worker.Map 并发收集结果 → 主 goroutine 顺序打印，
+// 避免多个仓库的输出行互相插入。
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "显示所有仓库的 git 状态",
@@ -23,53 +26,27 @@ var statusCmd = &cobra.Command{
 		repos := MustGetRepoList()
 		pterm.Info.Printf("共 %d 个仓库，开始检查状态...\n\n", len(repos))
 
-		cfg := GetConfig()
-		var wg sync.WaitGroup
-		sem := make(chan struct{}, cfg.Concurrency)
-
-		for _, repoPath := range repos {
-			wg.Add(1)
-			go func(path string) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				showRepoStatus(path)
-			}(repoPath)
+		results := worker.Map(repos, GetConfig().Concurrency, showRepoStatus)
+		for _, r := range results {
+			fmt.Print(r)
 		}
-
-		wg.Wait()
 	},
 }
 
-func showRepoStatus(repoPath string) {
-	output, err := runGitCommand(repoPath, "status", "--short", "--branch", "--untracked-files")
+// showRepoStatus 检查单个仓库的 git 状态并返回格式化字符串。
+// 使用 --short --branch --untracked-files 选项输出紧凑状态。
+func showRepoStatus(repoPath string) string {
+	output, err := git.Run(repoPath, "status", "--short", "--branch", "--untracked-files")
 	if err != nil {
-		pterm.Warning.Printf("仓库 %s: 执行失败\n", repoPath)
-		return
+		return pterm.Warning.Sprintf("仓库 %s: 执行失败\n", repoPath)
 	}
 
-	if output == "" {
-		name := getRepoName(repoPath)
-		pterm.FgGreen.Printf("[%s] ", name)
-		pterm.Println("已就绪")
-		return
-	}
 	name := getRepoName(repoPath)
-	pterm.FgYellow.Printf("[%s]\n", name)
-	pterm.Println(output)
-}
-
-func runGitCommand(repoPath string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = repoPath
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
+	// 如果输出为空（极少出现，因为 --branch 至少输出分支行），表示完全干净
+	if output == "" {
+		return pterm.FgGreen.Sprintf("[%s] ", name) + "已就绪\n"
 	}
-	return string(output), nil
+	return pterm.FgYellow.Sprintf("[%s]\n", name) + output
 }
 
 func init() {
