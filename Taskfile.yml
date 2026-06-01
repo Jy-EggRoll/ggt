@@ -1,0 +1,55 @@
+version: "3"
+
+vars:
+  APP: ggt
+  OUTPUT: dist
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+  LDFLAGS: '-s -w -X main.version={{.VERSION}}'
+  PLATFORMS: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
+
+tasks:
+  build:
+    desc: 构建当前平台的二进制到 dist/
+    cmds:
+      - mkdir -p {{.OUTPUT}}
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.OUTPUT}}/{{.APP}} .
+
+  build-all:
+    desc: 并发交叉编译所有目标平台到 dist/
+    deps:
+      - for:
+          var: PLATFORMS
+          split: " "
+        task: build-one
+        vars:
+          PLATFORM: '{{.ITEM}}'
+    cmds:
+      - |
+        for platform in {{.PLATFORMS}}; do
+          os=${platform%/*}
+          arch=${platform#*/}
+          name={{.APP}}-$os-$arch
+          [ "$os" = "windows" ] && name="$name.exe"
+          printf "- %s " "$platform"
+          ls -lh {{.OUTPUT}}/$name | awk '{print $5}'
+        done
+    silent: true
+
+  build-one:
+    internal: true
+    cmds:
+      - mkdir -p {{.OUTPUT}}
+      - |
+        platform={{.PLATFORM}}
+        os=${platform%/*}
+        arch=${platform#*/}
+        name={{.APP}}-$os-$arch
+        [ "$os" = "windows" ] && name="$name.exe"
+        GOOS=$os GOARCH=$arch go build -ldflags "{{.LDFLAGS}}" -o {{.OUTPUT}}/$name .
+    silent: true
+
+  clean:
+    desc: 清理构建产物
+    cmds:
+      - rm -rf {{.OUTPUT}}
