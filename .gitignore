@@ -1,5 +1,5 @@
-ggt
-ggt_test
-ggt-test
 dist/
-*.exe
+.task/
+
+ggt
+ggt-test

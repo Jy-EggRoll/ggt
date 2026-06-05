@@ -1,4 +1,4 @@
-module ggt
+qmodule ggt
 
 go 1.26.2
 
