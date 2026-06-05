@@ -3,8 +3,8 @@ version: '3'
 vars:
   APP: ggt
   VERSION:
-    sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
-  LDFLAGS: '-s -w -X main.version={{.VERSION}}'
+    sh: date '+%Y-%m-%d-%H-%M-%S'
+  LDFLAGS: '-s -w -X ggt/cmd.Version={{.VERSION}}'
 
 tasks:
   default:

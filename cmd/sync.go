@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -41,7 +42,7 @@ var syncCmd = &cobra.Command{
 		repos := MustGetRepoList()
 		pterm.Info.Println("共 " + pterm.Cyan(len(repos)) + " 个仓库，开始同步...")
 
-		results := worker.Map(repos, GetConfig().Concurrency, syncRepo)
+		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, syncRepo)
 		for _, r := range results {
 			fmt.Print(r)
 		}
@@ -49,17 +50,11 @@ var syncCmd = &cobra.Command{
 	},
 }
 
-// syncRepo 同步单个仓库：fetch → 分析 commit 关系 → 自动拉取或给出建议。
+// syncRepo 同步单个仓库：检查脏状态 → fetch → 分析 commit 关系 → 自动拉取或给出建议。
 func syncRepo(repoPath string) string {
 	name := getRepoName(repoPath)
 
-	// 第一步：拉取远程最新数据，修剪已删除的远程分支
-	_, err := git.Run(repoPath, "fetch", "--all", "--prune")
-	if err != nil {
-		return pterm.Warning.Sprintf("[%s] fetch 失败: %s\n", name, err)
-	}
-
-	// 第二步：检查工作目录是否干净
+	// 第一步：检查工作目录是否干净（本地操作，快速返回）
 	status, err := git.Run(repoPath, "status", "--porcelain")
 	if err != nil {
 		return pterm.Warning.Sprintf("[%s] 检查状态失败: %s\n", name, err)
@@ -67,6 +62,12 @@ func syncRepo(repoPath string) string {
 
 	if strings.TrimSpace(status) != "" {
 		return pterm.Warning.Sprintf("[%s] 本地有未提交的更改，必须手动处理\n", name)
+	}
+
+	// 第二步：拉取远程最新数据，修剪已删除的远程分支
+	_, err = git.Run(repoPath, "fetch", "--all", "--prune")
+	if err != nil {
+		return pterm.Warning.Sprintf("[%s] fetch 失败: %s\n", name, err)
 	}
 
 	// 第三步：获取三个关键 commit hash

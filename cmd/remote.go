@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
@@ -63,12 +64,21 @@ var remoteSshCmd = &cobra.Command{
 }
 
 // remoteURLRegex 匹配主流托管平台的远程 URL，提取 host 和 path 部分。
-// 支持两种格式：
+// 支持三种格式：
 //   - https://HOST/PATH.git
+//   - http://HOST/PATH.git
 //   - git@HOST:PATH.git
-var remoteURLRegex = regexp.MustCompile(`^(?:https://|git@)([^:/]+)[:/](.+?)(?:\.git)?(?:/)?$`)
+var remoteURLRegex = regexp.MustCompile(`^(?:https?://|git@)([^:/]+)[:/](.+?)(?:\.git)?(?:/)?$`)
 
 const remoteOrigin = "origin"
+
+// remoteURL 正则子分组索引。
+const (
+	remoteURLIdxFull = iota // 完整匹配
+	remoteURLIdxHost        // host 部分
+	remoteURLIdxPath        // path 部分
+	remoteURLIdxCount       // 分组总数（用于长度校验）
+)
 
 // remoteInfo 保存从远程 URL 中解析出的托管平台和仓库路径。
 type remoteInfo struct {
@@ -79,10 +89,10 @@ type remoteInfo struct {
 // parseRemoteURL 从原始的 git remote URL 中提取 host 和 path。
 func parseRemoteURL(raw string) (*remoteInfo, error) {
 	matches := remoteURLRegex.FindStringSubmatch(strings.TrimSpace(raw))
-	if len(matches) < 3 {
+	if len(matches) < remoteURLIdxCount {
 		return nil, fmt.Errorf("无法解析 URL，仅支持主流托管平台 (GitHub/GitLab/Gitee 等)")
 	}
-	return &remoteInfo{host: matches[1], path: matches[2]}, nil
+	return &remoteInfo{host: matches[remoteURLIdxHost], path: matches[remoteURLIdxPath]}, nil
 }
 
 // buildHTTPSURL 根据 host + path 构建 HTTPS 格式的 URL。
@@ -132,7 +142,7 @@ func switchAllRepos(target string) {
 		result switchRemoteResult
 	}
 
-	results := worker.Map(repos, GetConfig().Concurrency, func(path string) repoResult {
+	results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(path string) repoResult {
 		return repoResult{name: getRepoName(path), result: doSwitchRemote(path, target)}
 	})
 

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"ggt/internal/git"
@@ -26,7 +27,7 @@ var statusCmd = &cobra.Command{
 		repos := MustGetRepoList()
 		pterm.Info.Printf("共 %d 个仓库，开始检查状态...\n\n", len(repos))
 
-		results := worker.Map(repos, GetConfig().Concurrency, showRepoStatus)
+		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, showRepoStatus)
 		for _, r := range results {
 			fmt.Print(r)
 		}
@@ -38,7 +39,7 @@ var statusCmd = &cobra.Command{
 func showRepoStatus(repoPath string) string {
 	output, err := git.Run(repoPath, "status", "--short", "--branch", "--untracked-files")
 	if err != nil {
-		return pterm.Warning.Sprintf("仓库 %s: 执行失败\n", repoPath)
+		return pterm.Warning.Sprintf("仓库 %s: git 执行失败 — %v\n", repoPath, err)
 	}
 
 	name := getRepoName(repoPath)

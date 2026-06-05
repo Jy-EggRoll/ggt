@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -37,7 +38,10 @@ var sizeCmd = &cobra.Command{
 		repos := MustGetRepoList()
 		pterm.Info.Printf("共 %d 个仓库，开始统计大小...\n\n", len(repos))
 
-		results := worker.Map(repos, GetConfig().Concurrency, showRepoSize)
+		width := pterm.GetTerminalWidth()
+		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(repoPath string) repoSizeResult {
+			return showRepoSize(repoPath, width)
+		})
 
 		// 顺序打印各仓库的大小信息
 		for _, r := range results {
@@ -58,7 +62,7 @@ var sizeCmd = &cobra.Command{
 // showRepoSize 分析单个仓库的大小并返回格式化结果。
 // 从 git count-objects -vH 的输出中提取关键字段，
 // 主要展示"磁盘占用"和"包文件大小"两个核心指标。
-func showRepoSize(repoPath string) repoSizeResult {
+func showRepoSize(repoPath string, width int) repoSizeResult {
 	output, err := git.Run(repoPath, "count-objects", "-vH")
 	if err != nil {
 		return repoSizeResult{
@@ -71,7 +75,6 @@ func showRepoSize(repoPath string) repoSizeResult {
 	// 解析 git count-objects 的输出为键值映射
 	info := parseSizeOutput(output)
 	name := getRepoName(repoPath)
-	width := pterm.GetTerminalWidth()
 	var b strings.Builder
 
 	// 终端宽度分割线 + 仓库名

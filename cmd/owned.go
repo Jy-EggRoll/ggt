@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"ggt/internal/git"
@@ -30,6 +31,10 @@ var ownedCmd = &cobra.Command{
 使用示例:
   ggt owned          获取所有仓库所有权`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if runtime.GOOS != "windows" {
+			pterm.Warning.Println("ggt owned 仅支持 Windows 系统")
+			return
+		}
 		repos := MustGetRepoList()
 		pterm.Info.Printf("共 %d 个仓库，开始获取所有权...\n\n", len(repos))
 
@@ -99,7 +104,7 @@ func runTakeown(path string) error {
 	}
 
 	cmd := exec.Command("takeown", "/F", path)
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// takeown 在已经拥有所有权时也会失败，忽略此类错误
 		pterm.FgYellow.Printf("  takeown on %s: %s\n", path, string(output))

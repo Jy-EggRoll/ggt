@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"ggt/internal/config"
 	"github.com/pterm/pterm"
@@ -35,8 +36,7 @@ var rootCmd = &cobra.Command{
 		var err error
 		cfg, err = config.LoadConfig()
 		if err != nil {
-			pterm.Error.Println("加载配置失败:", err)
-			os.Exit(1)
+			return fmt.Errorf("加载配置失败: %w", err)
 		}
 
 		// 命令行的 -c 参数优先级高于配置文件
@@ -166,12 +166,7 @@ func PrintRepoStatus(repoPath string, status string) {
 // getRepoName 从完整路径中提取仓库目录名。
 // 如 "/home/user/GitRepo/my-project" → "my-project"
 func getRepoName(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' || path[i] == '\\' {
-			return path[i+1:]
-		}
-	}
-	return path
+	return filepath.Base(path)
 }
 
 // PrintRepoSize 打印单个仓库的大小信息（与仓库名同行）。
