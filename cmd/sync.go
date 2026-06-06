@@ -40,7 +40,7 @@ var syncCmd = &cobra.Command{
   ggt sync          自动同步所有仓库`,
 	Run: func(cmd *cobra.Command, args []string) {
 		repos := MustGetRepoList()
-		pterm.Info.Println("共 " + pterm.Cyan(len(repos)) + " 个仓库，开始同步...")
+		pterm.Info.Printf("共 %d 个仓库，开始同步...\n", len(repos))
 
 		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, syncRepo)
 		for _, r := range results {

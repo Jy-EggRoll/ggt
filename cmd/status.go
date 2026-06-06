@@ -39,7 +39,7 @@ var statusCmd = &cobra.Command{
 func showRepoStatus(repoPath string) string {
 	output, err := git.Run(repoPath, "status", "--short", "--branch", "--untracked-files")
 	if err != nil {
-		return pterm.Warning.Sprintf("仓库 %s: git 执行失败 — %v\n", repoPath, err)
+		return pterm.Warning.Sprintf("仓库 %s: git 执行失败 - %v\n", repoPath, err)
 	}
 
 	name := getRepoName(repoPath)
@@ -47,6 +47,7 @@ func showRepoStatus(repoPath string) string {
 	if output == "" {
 		return pterm.FgGreen.Sprintf("[%s] ", name) + "已就绪\n"
 	}
+	// status 输出自带末尾换行，直接拼接即可，无需额外空行
 	return pterm.FgYellow.Sprintf("[%s]\n", name) + output
 }
 

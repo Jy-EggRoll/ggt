@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,16 +10,22 @@ import (
 	"strings"
 
 	"ggt/internal/git"
+	"ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
+
+// takeownResult 记录单个仓库的 takeown 处理结果。
+type takeownResult struct {
+	name string
+	err  error
+}
 
 // ownedCmd 实现 "ggt owned"。
 // 调用 Windows takeown 命令获取仓库文件所有权。
 // 严格遵循原有的 pwsh 脚本逻辑，处理主仓库目录、.git 目录、以及子模块。
 //
-// 注意：此命令仅适用于 Windows 系统，takeown 是 Windows 专属命令。
-// 在 Linux/macOS 上执行不会报错，但也不会产生实际效果。
+// 注意：此命令仅适用于 Windows 系统（入口处 runtime.GOOS 检测提前返回）。
 var ownedCmd = &cobra.Command{
 	Use:   "owned",
 	Short: "批量获取所有仓库的所有权",
@@ -38,15 +45,19 @@ var ownedCmd = &cobra.Command{
 		repos := MustGetRepoList()
 		pterm.Info.Printf("共 %d 个仓库，开始获取所有权...\n\n", len(repos))
 
+		// 并发执行 takeown（worker.Map 保证输出顺序）
+		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(repoPath string) takeownResult {
+			return takeownResult{name: getRepoName(repoPath), err: takeownRepo(repoPath)}
+		})
+
 		var successCount, failCount int
-		for _, repoPath := range repos {
-			err := takeownRepo(repoPath)
-			if err != nil {
+		for _, r := range results {
+			if r.err != nil {
 				failCount++
-				ErrorMsg(fmt.Sprintf("处理失败: %s - %s", getRepoName(repoPath), err))
+				ErrorMsg(fmt.Sprintf("处理失败: %s - %s", r.name, r.err))
 			} else {
 				successCount++
-				SuccessMsg(fmt.Sprintf("成功处理: %s", getRepoName(repoPath)))
+				SuccessMsg(fmt.Sprintf("成功处理: %s", r.name))
 			}
 		}
 

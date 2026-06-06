@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,9 +66,9 @@ func GetConfig() *config.Config {
 
 // ——— 统一的 pterm 输出辅助函数 ———
 
-// Header 打印带样式的标题。
+// Header 打印带样式的标题（使用 Section 风格，比 DefaultHeader 方块更简洁）。
 func Header(title string) {
-	pterm.Println(pterm.DefaultHeader.Sprint(title))
+	pterm.DefaultSection.Println(title)
 }
 
 // SuccessMsg 打印绿色成功消息。
@@ -80,16 +79,6 @@ func SuccessMsg(msg string) {
 // ErrorMsg 打印红色错误消息。
 func ErrorMsg(msg string) {
 	pterm.Error.Println(msg)
-}
-
-// InfoMsg 打印蓝色信息消息。
-func InfoMsg(msg string) {
-	pterm.Info.Println(msg)
-}
-
-// WarnMsg 打印黄色警告消息。
-func WarnMsg(msg string) {
-	pterm.Warning.Println(msg)
 }
 
 // PrintPath 以黄色缩进格式打印一个路径。
@@ -156,30 +145,10 @@ func PrintRepoList(repos []string) {
 	pterm.Info.Printf("共 %d 个仓库\n", len(repos))
 }
 
-// PrintRepoStatus 打印单个仓库的状态（带仓库名标签）。
-func PrintRepoStatus(repoPath string, status string) {
-	name := getRepoName(repoPath)
-	pterm.FgCyan.Printf("[%s]\n", name)
-	pterm.Println(status)
-}
-
 // getRepoName 从完整路径中提取仓库目录名。
 // 如 "/home/user/GitRepo/my-project" → "my-project"
 func getRepoName(path string) string {
 	return filepath.Base(path)
 }
 
-// PrintRepoSize 打印单个仓库的大小信息（与仓库名同行）。
-func PrintRepoSize(repoPath string, size string) {
-	name := getRepoName(repoPath)
-	fmt.Printf("  %s: %s\n", name, size)
-}
 
-// Confirm 显示提示并等待用户输入 y/n，返回是否确认。
-func Confirm(prompt string) bool {
-	pterm.Print(pterm.Yellow(prompt + " (y/n): "))
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Scan()
-	input := scanner.Text()
-	return input == "y" || input == "Y"
-}

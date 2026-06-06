@@ -10,7 +10,7 @@ import (
 // 收集结果并保持原始顺序返回。
 //
 // ctx 用于取消/超时控制，若 ctx 已取消则停止启动新 goroutine。
-// fn 内 panic 会被 recover 并转为字符串存入对应位置。
+// fn 内 panic 会被 recover，对应位置写入 T 的零值。
 func Map[T any](ctx context.Context, items []string, concurrency int, fn func(string) T) []T {
 	results := make([]T, len(items))
 	var wg sync.WaitGroup
