@@ -13,10 +13,12 @@ import (
 )
 
 // dirtyRepo 记录检测到变更有待处理的仓库。
+// hasUncommitted 标记是否存在未提交的文件变更（false 表示仅是本地 ahead 未 push）。
 type dirtyRepo struct {
-	path         string
-	name         string
-	statusOutput string
+	path           string
+	name           string
+	statusOutput   string
+	hasUncommitted bool
 }
 
 // summaryCmd 实现 "ggt summary"（简写 ggt sum）。
@@ -47,15 +49,25 @@ var summaryCmd = &cobra.Command{
 					nonEmptyCount++
 				}
 			}
-			// 只有分支行说明没有变更
+			// 只有分支行说明没有文件变更，但需检查是否为 ahead（已 commit 未 push）
 			if nonEmptyCount <= 1 {
-				return nil
+				if !strings.Contains(statusOutput, "[ahead") {
+					return nil
+				}
+				// 仅有 ahead，无未提交的文件变更
+				return &dirtyRepo{
+					path:           repoPath,
+					name:           getRepoName(repoPath),
+					statusOutput:   statusOutput,
+					hasUncommitted: false,
+				}
 			}
 
 			return &dirtyRepo{
-				path:         repoPath,
-				name:         getRepoName(repoPath),
-				statusOutput: statusOutput,
+				path:           repoPath,
+				name:           getRepoName(repoPath),
+				statusOutput:   statusOutput,
+				hasUncommitted: true,
 			}
 		})
 
@@ -78,25 +90,32 @@ var summaryCmd = &cobra.Command{
 				fmt.Print(diffOutput)
 			}
 
-			// 交互式确认：是否一键提交并推送
-			result, _ := pterm.DefaultInteractiveConfirm.WithDefaultValue(false).WithDefaultText("是否一键提交所有更改并推送？").Show()
+			// 交互式确认：根据仓库状态动态调整提示文案
+			promptText := "是否一键提交所有更改并推送？"
+			if !d.hasUncommitted {
+				promptText = "是否推送已提交的更改？"
+			}
+			result, _ := pterm.DefaultInteractiveConfirm.WithDefaultValue(false).WithDefaultText(promptText).Show()
 			if !result {
 				continue
 			}
 
 			pterm.FgYellow.Printfln("正在处理 %s ...", d.name)
 
-			// git add -A：暂存所有更改
-			if out, err := git.RunCombined(d.path, "add", "-A"); err != nil {
-				pterm.Error.Printf("git add 失败:\n%s\n", out)
-				continue
-			}
+			// 仅在存在未提交的文件变更时执行 add + commit
+			if d.hasUncommitted {
+				// git add -A：暂存所有更改
+				if out, err := git.RunCombined(d.path, "add", "-A"); err != nil {
+					pterm.Error.Printf("git add 失败:\n%s\n", out)
+					continue
+				}
 
-			// git commit：自动生成提交信息
-			msg := fmt.Sprintf("🔨 chore: 终端推送更新 %s", time.Now().Format("2006-01-02 15:04:05"))
-			if out, err := git.RunCombined(d.path, "commit", "-m", msg); err != nil {
-				pterm.Error.Printf("git commit 失败:\n%s\n", out)
-				continue
+				// git commit：自动生成提交信息
+				msg := fmt.Sprintf("🔨 chore: 终端推送更新 %s", time.Now().Format("2006-01-02 15:04:05"))
+				if out, err := git.RunCombined(d.path, "commit", "-m", msg); err != nil {
+					pterm.Error.Printf("git commit 失败:\n%s\n", out)
+					continue
+				}
 			}
 
 			// git push：推送到远程，使用 RunCombined 确保捕获 stderr 错误信息

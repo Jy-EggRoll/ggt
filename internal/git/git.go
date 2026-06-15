@@ -50,8 +50,7 @@ func runWithCombinedOutput(ctx context.Context, repoPath string, args ...string)
 	cmd.Dir = repoPath
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-	return string(output), nil
+	// 即使 err != nil 也返回 output（CombinedOutput 在非零退出时仍返回内容），
+	// 让调用方能够看到 stderr 的具体错误信息（如 push 失败原因）。
+	return string(output), err
 }
