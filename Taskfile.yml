@@ -8,9 +8,31 @@ vars:
 
 tasks:
   default:
-    desc: Build for all platforms
+    desc: 完整构建与验证：格式化检查 + 静态检查 + 单元测试 + 全平台编译
     deps:
+      - fmt
+      - lint
+      - test
       - build-all
+
+  # fmt 检查所有 Go 源文件是否已通过 gofmt 格式化
+  # 若输出非空则说明有文件未格式化，命令以非零码退出，阻止构建
+  fmt:
+    desc: 检查 Go 代码格式 (gofmt)
+    cmds:
+      - 'test -z "$(gofmt -l .)" || (echo "以下文件未通过 gofmt 检查:"; gofmt -l .; exit 1)'
+
+  # lint 执行 go vet 静态检查，捕获明显的代码异味与可疑构造
+  lint:
+    desc: 静态检查 (go vet)
+    cmds:
+      - go vet ./...
+
+  # test 运行全部 Go 单元测试，-count=1 禁用缓存确保真实执行
+  test:
+    desc: 运行所有 Go 单元测试
+    cmds:
+      - go test ./... -count=1
 
   build-all:
     desc: Build all platform binaries in parallel
@@ -105,11 +127,6 @@ tasks:
       - go.sum
     generates:
       - dist/windows-arm64/{{.APP}}.exe
-
-  test:
-    desc: Run all Go tests
-    cmds:
-      - go test ./... -count=1
 
   clean:
     desc: Remove all build artifacts
