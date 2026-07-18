@@ -74,10 +74,10 @@ const remoteOrigin = "origin"
 
 // remoteURL 正则子分组索引。
 const (
-	remoteURLIdxFull = iota // 完整匹配
-	remoteURLIdxHost        // host 部分
-	remoteURLIdxPath        // path 部分
-	remoteURLIdxCount       // 分组总数（用于长度校验）
+	remoteURLIdxFull  = iota // 完整匹配
+	remoteURLIdxHost         // host 部分
+	remoteURLIdxPath         // path 部分
+	remoteURLIdxCount        // 分组总数（用于长度校验）
 )
 
 // remoteInfo 保存从远程 URL 中解析出的托管平台和仓库路径。
@@ -127,7 +127,7 @@ func switchCurrentRepo(target string) {
 		return
 	}
 
-	result := doSwitchRemote(wd, target)
+	result := doSwitchRemote(context.Background(), wd, target)
 	printRemoteResult(result)
 }
 
@@ -135,15 +135,15 @@ func switchCurrentRepo(target string) {
 // 使用 worker.Map 并发收集结果后顺序打印统计信息。
 func switchAllRepos(target string) {
 	repos := MustGetRepoList()
-	pterm.Info.Printf("共 %d 个仓库，开始切换协议至 [%s] ...\n\n", len(repos), pterm.Cyan(strings.ToUpper(target)))
+	Infof("共 %d 个仓库，开始切换协议至 [%s] ...\n", len(repos), pterm.Cyan(strings.ToUpper(target)))
 
 	type repoResult struct {
 		name   string
 		result switchRemoteResult
 	}
 
-	results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(path string) repoResult {
-		return repoResult{name: getRepoName(path), result: doSwitchRemote(path, target)}
+	results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(ctx context.Context, path string) repoResult {
+		return repoResult{name: getRepoName(path), result: doSwitchRemote(ctx, path, target)}
 	})
 
 	var success, skipped, failed int
@@ -160,13 +160,13 @@ func switchAllRepos(target string) {
 				pterm.Cyan(detectProtocol(r.result.oldURL)))
 			skipped++
 		case "error":
-			pterm.Error.Printfln("%s %s", name, r.result.err)
+			Errorf("%s %s", name, r.result.err)
 			failed++
 		}
 	}
 
 	pterm.Println()
-	pterm.Info.Printf("处理完成: 成功 %d, 跳过 %d, 失败 %d\n", success, skipped, failed)
+	Infof("处理完成: 成功 %d, 跳过 %d, 失败 %d", success, skipped, failed)
 }
 
 // switchRemoteResult 保存远程协议切换的结果。
@@ -179,8 +179,9 @@ type switchRemoteResult struct {
 
 // doSwitchRemote 执行单个仓库的远程协议切换。
 // 流程：获取当前 URL → 解析 host+path → 构建新 URL → git remote set-url。
-func doSwitchRemote(repoPath string, target string) switchRemoteResult {
-	raw, err := git.Run(repoPath, "remote", "get-url", remoteOrigin)
+// 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
+func doSwitchRemote(ctx context.Context, repoPath string, target string) switchRemoteResult {
+	raw, err := git.RunContext(ctx, repoPath, "remote", "get-url", remoteOrigin)
 	if err != nil {
 		return switchRemoteResult{status: "error", err: fmt.Sprintf("获取远程地址失败: %v", err)}
 	}
@@ -205,7 +206,7 @@ func doSwitchRemote(repoPath string, target string) switchRemoteResult {
 		newURL = buildSSHURL(info)
 	}
 
-	_, err = git.Run(repoPath, "remote", "set-url", remoteOrigin, newURL)
+	_, err = git.RunContext(ctx, repoPath, "remote", "set-url", remoteOrigin, newURL)
 	if err != nil {
 		return switchRemoteResult{status: "error", err: fmt.Sprintf("切换失败: %v", err)}
 	}

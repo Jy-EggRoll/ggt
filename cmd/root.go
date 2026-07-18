@@ -56,7 +56,10 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "并发数 (默认为 CPU 核心数的一半)")
+	// -c 的默认值为 0，表示"未显式指定"；在 PersistentPreRunE 中仅当 >0 时才
+	// 覆盖配置文件里的并发数。真正生效的默认值（CPU 核心数的一半）由
+	// config 包的 getDefaultConcurrency 统一计算，避免出现两处默认值逻辑不一致。
+	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "并发数 (省略时取配置文件值，配置文件也未设则取 CPU 核心数的一半)")
 }
 
 // GetConfig 返回全局配置实例。
@@ -65,6 +68,10 @@ func GetConfig() *config.Config {
 }
 
 // ——— 统一的 pterm 输出辅助函数 ———
+// 所有命令都应通过这些函数输出，不要直接在命令里调用 pterm.*。
+// 这样做的好处：未来若要统一换主题色、换输出库、或接入日志系统，
+// 只需修改本文件这一处，而不必改动各业务命令。
+// 命名约定：Msg 系列接收纯字符串；f 系列接收 format + 参数（对应 pterm 的 Printf/Printfln）。
 
 // Header 打印带样式的标题（使用 Section 风格，比 DefaultHeader 方块更简洁）。
 func Header(title string) {
@@ -76,9 +83,39 @@ func SuccessMsg(msg string) {
 	pterm.Success.Println(msg)
 }
 
+// Successf 以绿色成功样式打印格式化消息。
+func Successf(format string, args ...any) {
+	pterm.Success.Printfln(format, args...)
+}
+
 // ErrorMsg 打印红色错误消息。
 func ErrorMsg(msg string) {
 	pterm.Error.Println(msg)
+}
+
+// Errorf 以红色错误样式打印格式化消息。
+func Errorf(format string, args ...any) {
+	pterm.Error.Printfln(format, args...)
+}
+
+// InfoMsg 打印浅蓝信息消息（区别于成功的绿色，用于客观状态通报）。
+func InfoMsg(msg string) {
+	pterm.Info.Println(msg)
+}
+
+// Infof 以浅蓝信息样式打印格式化消息。
+func Infof(format string, args ...any) {
+	pterm.Info.Printfln(format, args...)
+}
+
+// WarnMsg 打印黄色警告消息。
+func WarnMsg(msg string) {
+	pterm.Warning.Println(msg)
+}
+
+// Warnf 以黄色警告样式打印格式化消息。
+func Warnf(format string, args ...any) {
+	pterm.Warning.Printfln(format, args...)
 }
 
 // PrintPath 以黄色缩进格式打印一个路径。
@@ -124,12 +161,14 @@ func isGitRepo(path string) bool {
 	return info.IsDir()
 }
 
-// MustGetRepoList 获取仓库列表，如果为空则打印提示并退出。
+// MustGetRepoList 获取仓库列表，如果为空则打印提示并以退出码 0 结束进程。
+// 空列表属于"正常无任务可做"而非错误，因此用 os.Exit(0) 而非返回错误，
+// 避免上层命令再去处理一个必然为空的列表。
 // 所有需要仓库列表的命令都应调用此函数而非 GetRepoList。
 func MustGetRepoList() []string {
 	repos := GetRepoList()
 	if len(repos) == 0 {
-		pterm.Warning.Println("未配置任何仓库路径，请先使用 'ggt repo add <path>' 或 'ggt repo add-parent <path>' 添加")
+		WarnMsg("未配置任何仓库路径，请先使用 'ggt repo add <path>' 或 'ggt repo add-parent <path>' 添加")
 		os.Exit(0)
 	}
 	return repos
@@ -142,7 +181,7 @@ func PrintRepoList(repos []string) {
 		PrintPath(repo)
 	}
 	pterm.Println()
-	pterm.Info.Printf("共 %d 个仓库\n", len(repos))
+	Infof("共 %d 个仓库", len(repos))
 }
 
 // getRepoName 从完整路径中提取仓库目录名。
@@ -150,5 +189,3 @@ func PrintRepoList(repos []string) {
 func getRepoName(path string) string {
 	return filepath.Base(path)
 }
-
-

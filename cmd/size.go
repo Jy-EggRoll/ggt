@@ -39,8 +39,8 @@ var sizeCmd = &cobra.Command{
 		pterm.Info.Printf("共 %d 个仓库，开始统计大小...\n\n", len(repos))
 
 		width := pterm.GetTerminalWidth()
-		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(repoPath string) repoSizeResult {
-			return showRepoSize(repoPath, width)
+		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(ctx context.Context, repoPath string) repoSizeResult {
+			return showRepoSize(ctx, repoPath, width)
 		})
 
 		// 顺序打印各仓库的大小信息
@@ -55,15 +55,16 @@ var sizeCmd = &cobra.Command{
 		}
 
 		pterm.Println()
-		pterm.Info.Printf("总大小: %s\n", formatSize(totalSize))
+		Infof("总大小: %s", formatSize(totalSize))
 	},
 }
 
 // showRepoSize 分析单个仓库的大小并返回格式化结果。
 // 从 git count-objects -vH 的输出中提取关键字段，
 // 主要展示"磁盘占用"和"包文件大小"两个核心指标。
-func showRepoSize(repoPath string, width int) repoSizeResult {
-	output, err := git.Run(repoPath, "count-objects", "-vH")
+// 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
+func showRepoSize(ctx context.Context, repoPath string, width int) repoSizeResult {
+	output, err := git.RunContext(ctx, repoPath, "count-objects", "-vH")
 	if err != nil {
 		return repoSizeResult{
 			name:   getRepoName(repoPath),
@@ -171,10 +172,12 @@ func parseSizeValue(s string) int64 {
 }
 
 // formatSize 将字节数转为人类可读的大小字符串（如 985.7 MB）。
+// 仅做数值格式化，不含颜色；颜色由调用处的 Infof 统一处理，
+// 便于对纯文本结果做单元测试，也符合"格式化与展示分离"的原则。
 func formatSize(size int64) string {
 	const unit = int64(1024)
 	if size < unit {
-		return pterm.FgYellow.Sprintf("%d B", size)
+		return fmt.Sprintf("%d B", size)
 	}
 	div, exp := int64(unit), 0
 	for n := size / unit; n >= unit; n /= unit {
@@ -184,7 +187,7 @@ func formatSize(size int64) string {
 	if exp > 3 {
 		exp = 3
 	}
-	return pterm.FgYellow.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
+	return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
 }
 
 func init() {

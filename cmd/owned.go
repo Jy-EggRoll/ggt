@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,30 +38,30 @@ var ownedCmd = &cobra.Command{
   ggt owned          获取所有仓库所有权`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if runtime.GOOS != "windows" {
-			pterm.Warning.Println("ggt owned 仅支持 Windows 系统")
+			WarnMsg("ggt owned 仅支持 Windows 系统")
 			return
 		}
 		repos := MustGetRepoList()
-		pterm.Info.Printf("共 %d 个仓库，开始获取所有权...\n\n", len(repos))
+		Infof("共 %d 个仓库，开始获取所有权...\n", len(repos))
 
 		// 并发执行 takeown（worker.Map 保证输出顺序）
-		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(repoPath string) takeownResult {
-			return takeownResult{name: getRepoName(repoPath), err: takeownRepo(repoPath)}
+		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(ctx context.Context, repoPath string) takeownResult {
+			return takeownResult{name: getRepoName(repoPath), err: takeownRepo(ctx, repoPath)}
 		})
 
 		var successCount, failCount int
 		for _, r := range results {
 			if r.err != nil {
 				failCount++
-				ErrorMsg(fmt.Sprintf("处理失败: %s - %s", r.name, r.err))
+				Errorf("处理失败: %s - %s", r.name, r.err)
 			} else {
 				successCount++
-				SuccessMsg(fmt.Sprintf("成功处理: %s", r.name))
+				Successf("成功处理: %s", r.name)
 			}
 		}
 
 		pterm.Println()
-		pterm.Info.Printf("处理完成: 成功 %d, 失败 %d\n", successCount, failCount)
+		Infof("处理完成: 成功 %d, 失败 %d", successCount, failCount)
 	},
 }
 
@@ -70,7 +69,12 @@ var ownedCmd = &cobra.Command{
 // 1. 主仓库目录本身（takeown /F <path>）
 // 2. .git 目录（通常有权限保护）
 // 3. 所有子模块的目录和 .git 目录
-func takeownRepo(repoPath string) error {
+// takeownRepo 获取一个仓库的完整所有权：
+// 1. 主仓库目录本身（takeown /F <path>）
+// 2. .git 目录（通常有权限保护）
+// 3. 所有子模块的目录和 .git 目录
+// 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
+func takeownRepo(ctx context.Context, repoPath string) error {
 	// 获取主仓库目录的所有权
 	if err := runTakeown(repoPath); err != nil {
 		return err
@@ -85,7 +89,7 @@ func takeownRepo(repoPath string) error {
 	}
 
 	// 处理子模块：遍历所有子模块，获取其目录、.git 文件、以及元数据目录的所有权
-	submoduleOutput, err := git.Run(repoPath, "submodule", "foreach", "--quiet", "echo $name")
+	submoduleOutput, err := git.RunContext(ctx, repoPath, "submodule", "foreach", "--quiet", "echo $name")
 	if err == nil && strings.TrimSpace(submoduleOutput) != "" {
 		lines := strings.Split(strings.TrimSpace(submoduleOutput), "\n")
 		for _, subPath := range lines {

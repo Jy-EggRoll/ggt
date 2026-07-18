@@ -19,13 +19,13 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "显示所有仓库的 git 状态",
 	Long: `遍历所有已配置的仓库，显示每个仓库的 git 状态。
-	
+
 使用示例:
   ggt status          显示所有仓库状态
   ggt st             简写形式`,
 	Run: func(cmd *cobra.Command, args []string) {
 		repos := MustGetRepoList()
-		pterm.Info.Printf("共 %d 个仓库，开始检查状态...\n\n", len(repos))
+		Infof("共 %d 个仓库，开始检查状态...\n", len(repos))
 
 		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, showRepoStatus)
 		for _, r := range results {
@@ -36,8 +36,9 @@ var statusCmd = &cobra.Command{
 
 // showRepoStatus 检查单个仓库的 git 状态并返回格式化字符串。
 // 使用 --short --branch --untracked-files 选项输出紧凑状态。
-func showRepoStatus(repoPath string) string {
-	output, err := git.Run(repoPath, "status", "--short", "--branch", "--untracked-files")
+// 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
+func showRepoStatus(ctx context.Context, repoPath string) string {
+	output, err := git.RunContext(ctx, repoPath, "status", "--short", "--branch", "--untracked-files")
 	if err != nil {
 		return pterm.Warning.Sprintf("仓库 %s: git 执行失败 - %v\n", repoPath, err)
 	}

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 
 	"ggt/internal/config"
-	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +33,7 @@ var repoListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		repos := GetRepoList()
 		if len(repos) == 0 {
-			pterm.Warning.Println("未配置任何仓库")
+			WarnMsg("未配置任何仓库")
 			return
 		}
 		PrintRepoList(repos)

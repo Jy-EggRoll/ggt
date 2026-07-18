@@ -33,11 +33,11 @@ var summaryCmd = &cobra.Command{
   ggt sum             简写形式`,
 	Run: func(cmd *cobra.Command, args []string) {
 		repos := MustGetRepoList()
-		pterm.Info.Printf("共 %d 个仓库，开始检查变更...\n\n", len(repos))
+		Infof("共 %d 个仓库，开始检查变更...\n", len(repos))
 
 		// 第一阶段：并发检查所有仓库的 git 状态
-		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(repoPath string) *dirtyRepo {
-			statusOutput, err := git.Run(repoPath, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
+		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(ctx context.Context, repoPath string) *dirtyRepo {
+			statusOutput, err := git.RunContext(ctx, repoPath, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
 			if err != nil {
 				return nil
 			}
@@ -85,7 +85,7 @@ var summaryCmd = &cobra.Command{
 			fmt.Printf("%s\n", pterm.FgCyan.Sprint("变动详情："))
 			diffOutput, err := git.Run(d.path, "diff", "--color=always", "--stat")
 			if err != nil {
-				pterm.Warning.Printfln("获取 diff 失败: %v", err)
+				Warnf("获取 diff 失败: %v", err)
 			} else if diffOutput != "" {
 				fmt.Print(diffOutput)
 			}
@@ -106,30 +106,30 @@ var summaryCmd = &cobra.Command{
 			if d.hasUncommitted {
 				// git add -A：暂存所有更改
 				if out, err := git.RunCombined(d.path, "add", "-A"); err != nil {
-					pterm.Error.Printf("git add 失败:\n%s\n", out)
+					Errorf("git add 失败:\n%s", out)
 					continue
 				}
 
 				// git commit：自动生成提交信息
 				msg := fmt.Sprintf("🔨 chore: 终端推送更新 %s", time.Now().Format("2006-01-02 15:04:05"))
 				if out, err := git.RunCombined(d.path, "commit", "-m", msg); err != nil {
-					pterm.Error.Printf("git commit 失败:\n%s\n", out)
+					Errorf("git commit 失败:\n%s", out)
 					continue
 				}
 			}
 
 			// git push：推送到远程，使用 RunCombined 确保捕获 stderr 错误信息
 			if out, err := git.RunCombined(d.path, "push"); err != nil {
-				pterm.Error.Printf("推送失败:\n%s\n", out)
+				Errorf("推送失败:\n%s", out)
 			} else {
-				pterm.Success.Println("推送完成！")
+				SuccessMsg("推送完成！")
 			}
 
 			// 显示提交后的仓库大小信息
 			fmt.Print("大小信息：\n")
 			countOutput, err := git.Run(d.path, "count-objects", "-vH")
 			if err != nil {
-				pterm.Warning.Printfln("获取大小信息失败: %v", err)
+				Warnf("获取大小信息失败: %v", err)
 			} else if countOutput != "" {
 				fmt.Print(countOutput)
 			}
