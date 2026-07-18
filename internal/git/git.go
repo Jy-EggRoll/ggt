@@ -15,10 +15,25 @@ const defaultTimeout = 120 * time.Second
 
 // Run 在指定仓库路径下执行 git 命令，返回标准输出。
 // 参数 repoPath 为仓库根目录，args 为 git 子命令及其参数。
-// 调用方只需关心字符串输出，无需处理 Context 和超时。
+// 调用方只需关心字符串输出，无需处理 Context 和超时；
+// 内部使用默认 120s 超时，即使上层无 ctx 也能自我保护。
 func Run(repoPath string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
+	return runWithOutput(ctx, repoPath, args...)
+}
+
+// RunContext 与 Run 相同，但使用调用方传入的 ctx 控制超时与取消。
+// 当上层 ctx 被取消（如 worker.Map 的并发整体取消）时，正在执行的
+// git 命令会立即收到信号而中断，避免无谓等待到默认 120s 超时。
+// 若上层 ctx 未设截止时间，命令仍受默认超时兜底保护。
+func RunContext(ctx context.Context, repoPath string, args ...string) (string, error) {
+	// 仅当上层 ctx 未设置截止时间时，叠加默认超时作为兜底
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultTimeout)
+		defer cancel()
+	}
 	return runWithOutput(ctx, repoPath, args...)
 }
 
@@ -27,6 +42,17 @@ func Run(repoPath string, args ...string) (string, error) {
 func RunCombined(repoPath string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
+	return runWithCombinedOutput(ctx, repoPath, args...)
+}
+
+// RunCombinedContext 与 RunCombined 相同，但使用调用方传入的 ctx
+// 控制超时与取消，语义同 RunContext。
+func RunCombinedContext(ctx context.Context, repoPath string, args ...string) (string, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultTimeout)
+		defer cancel()
+	}
 	return runWithCombinedOutput(ctx, repoPath, args...)
 }
 
