@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"ggt/internal/config"
 	"github.com/pterm/pterm"
@@ -118,9 +119,88 @@ func Warnf(format string, args ...any) {
 	pterm.Warning.Printfln(format, args...)
 }
 
-// PrintPath 以黄色缩进格式打印一个路径。
+// PrintPath 以统一列表项格式打印一个路径（灰色 "  - path"）。
+// 与 ListItem 共用样式，避免不同命令的列表前缀/颜色割裂。
 func PrintPath(path string) {
-	pterm.FgYellow.Printf("  - %s\n", path)
+	ListItem(path)
+}
+
+// ——— 统一样式原子（所有命令的用户文本输出都应经由本区块，
+// 不得再直接调用 pterm.* 原色或 fmt.Print*，git 自身着色输出除外，统一走 PrintRaw）———
+
+// Muted 返回灰色（次要/细节）文本字符串，不立即打印。
+// 用于 URL、说明性标签（如"变动详情："）等不希望抢占视觉重心的文本。
+func Muted(text string) string {
+	return pterm.FgGray.Sprint(text)
+}
+
+// ListItem 以统一的灰色项目符号打印一行列表项："  - text"。
+// 全仓所有列表（仓库路径、分桶名、操作明细）共用此格式，
+// 消除此前 FgYellow 的 "  - "、FgGray 的 "    - "、以及 "  takeown on ..." 三种割裂风格。
+func ListItem(text string) {
+	pterm.FgGray.Printf("  - %s\n", text)
+}
+
+// PrintSeparator 打印一条全宽浅黄分隔线，用于区分不同仓库/区块。
+// 宽度取自当前终端宽度，保证跨命令一致（替代此前 size/summary 各自重复实现）。
+func PrintSeparator() {
+	pterm.FgLightYellow.Println(strings.Repeat("─", pterm.GetTerminalWidth()))
+}
+
+// buildSeparator 返回长度为 width 的浅黄分隔线字符串（纯函数，便于单测）。
+// 与 PrintSeparator 共享同一着色逻辑，仅不负责打印。
+func buildSeparator(width int) string {
+	return pterm.FgLightYellow.Sprint(strings.Repeat("─", width))
+}
+
+// RepoName 返回青色包裹的仓库名前缀 "[name]"，全仓统一仓库名着色。
+// 此前 status 用 FgYellow、size/summary/remote 用 FgCyan，同一语义三色并存，现收敛于此。
+func RepoName(name string) string {
+	return pterm.FgCyan.Sprintf("[%s]", name)
+}
+
+// RepoLine 打印一行"青色 [name] + 备注"，作为各命令的仓库标题行（不含分隔线）。
+// 需要分隔线时另行调用 PrintSeparator。
+func RepoLine(name, note string) {
+	if note == "" {
+		pterm.Println(RepoName(name))
+	} else {
+		pterm.Printf("%s %s\n", RepoName(name), note)
+	}
+}
+
+// PrintRaw 透传外部（如 git）自带 ANSI 着色的原始输出，仅做打印封装。
+// 调用处可明确这是"透传"而非本工具自身样式，避免与统一封装混淆。
+func PrintRaw(s string) {
+	fmt.Print(s)
+}
+
+// WarnS/InfoS/ErrorS/SuccessS 返回对应语义的着色字符串，
+// 供需要拼接多行后再统一返回/打印的场合（如 sync 的逐仓库结果）使用，
+// 替代直接调用 pterm.Warning.Sprintf 等造成的风格割裂。
+func WarnS(format string, args ...any) string {
+	return pterm.Warning.Sprintf(format, args...)
+}
+func InfoS(format string, args ...any) string {
+	return pterm.Info.Sprintf(format, args...)
+}
+func ErrorS(format string, args ...any) string {
+	return pterm.Error.Sprintf(format, args...)
+}
+func SuccessS(format string, args ...any) string {
+	return pterm.Success.Sprintf(format, args...)
+}
+
+// DoneBanner 打印一条完成类收尾横幅（成功绿），统一各命令的结尾提示样式。
+// 此前 sync 用 pterm.Success.Println、owned/remote 用 Infof("处理完成...")，现已收敛。
+func DoneBanner(msg string) {
+	pterm.Success.Println(msg)
+}
+
+// PrintProtocolSwitch 打印远程协议切换结果：青色 [name] + 灰色旧协议 → 绿色新协议。
+// 此前 remote 直接内联 FgRed/FgGreen，现已收敛到统一封装。
+func PrintProtocolSwitch(name, oldProto, newProto string) {
+	pterm.Success.Printfln("%s %s → %s", RepoName(name), Muted(oldProto), pterm.FgGreen.Sprint(newProto))
 }
 
 // ——— 仓库列表管理 ———

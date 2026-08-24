@@ -77,17 +77,17 @@ var summaryCmd = &cobra.Command{
 				continue
 			}
 
-			pterm.FgLightYellow.Println(strings.Repeat("─", pterm.GetTerminalWidth()))
-			pterm.FgCyan.Printfln("%s 检测到变动", d.name)
-			fmt.Print(d.statusOutput)
+			PrintSeparator()
+			RepoLine(d.name, "检测到变动")
+			PrintRaw(d.statusOutput)
 
 			// 显示详细的 diff 统计
-			fmt.Printf("%s\n", pterm.FgCyan.Sprint("变动详情："))
+			pterm.Println(Muted("变动详情："))
 			diffOutput, err := git.Run(d.path, "diff", "--color=always", "--stat")
 			if err != nil {
 				Warnf("获取 diff 失败: %v", err)
 			} else if diffOutput != "" {
-				fmt.Print(diffOutput)
+				PrintRaw(diffOutput)
 			}
 
 			// 交互式确认：根据仓库状态动态调整提示文案
@@ -100,7 +100,7 @@ var summaryCmd = &cobra.Command{
 				continue
 			}
 
-			pterm.FgYellow.Printfln("正在处理 %s ...", d.name)
+			Infof("正在处理 %s ...", d.name)
 
 			// 仅在存在未提交的文件变更时执行 add + commit
 			if d.hasUncommitted {
@@ -126,12 +126,12 @@ var summaryCmd = &cobra.Command{
 			}
 
 			// 显示提交后的仓库大小信息
-			fmt.Print("大小信息：\n")
+			pterm.Println(Muted("大小信息："))
 			countOutput, err := git.Run(d.path, "count-objects", "-vH")
 			if err != nil {
 				Warnf("获取大小信息失败: %v", err)
 			} else if countOutput != "" {
-				fmt.Print(countOutput)
+				PrintRaw(countOutput)
 			}
 		}
 	},

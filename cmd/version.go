@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 )
 
@@ -21,10 +19,11 @@ var versionCmd = &cobra.Command{
 使用示例:
   ggt version          显示版本号`,
 	Run: func(cmd *cobra.Command, args []string) {
+		Header("ggt")
 		if Version == "" {
-			fmt.Println("ggt (开发版本)")
+			InfoMsg("开发版本")
 		} else {
-			fmt.Printf("ggt %s\n", Version)
+			Infof("版本: %s", Version)
 		}
 	},
 }

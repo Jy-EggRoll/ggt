@@ -2,12 +2,10 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"ggt/internal/git"
 	"ggt/internal/worker"
-	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
@@ -44,9 +42,9 @@ var syncCmd = &cobra.Command{
 
 		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, syncRepo)
 		for _, r := range results {
-			fmt.Print(r)
+			PrintRaw(r)
 		}
-		pterm.Success.Println("所有仓库同步完成")
+		DoneBanner("所有仓库同步完成")
 	},
 }
 
@@ -58,55 +56,55 @@ func syncRepo(ctx context.Context, repoPath string) string {
 	// 第一步：检查工作目录是否干净（本地操作，快速返回）
 	status, err := git.RunContext(ctx, repoPath, "status", "--porcelain")
 	if err != nil {
-		return pterm.Warning.Sprintf("[%s] 检查状态失败: %s\n", name, err)
+		return WarnS("[%s] 检查状态失败: %s\n", name, err)
 	}
 
 	if strings.TrimSpace(status) != "" {
-		return pterm.Warning.Sprintf("[%s] 本地有未提交的更改，必须手动处理\n", name)
+		return WarnS("[%s] 本地有未提交的更改，必须手动处理\n", name)
 	}
 
 	// 第二步：拉取远程最新数据，修剪已删除的远程分支
 	_, err = git.RunContext(ctx, repoPath, "fetch", "--all", "--prune")
 	if err != nil {
-		return pterm.Warning.Sprintf("[%s] fetch 失败: %s\n", name, err)
+		return WarnS("[%s] fetch 失败: %s\n", name, err)
 	}
 
 	// 第三步：获取三个关键 commit hash
 	local, err := git.RunContext(ctx, repoPath, "rev-parse", "HEAD")
 	if err != nil {
-		return pterm.Warning.Sprintf("[%s] 获取本地 HEAD 失败\n", name)
+		return WarnS("[%s] 获取本地 HEAD 失败\n", name)
 	}
 	local = strings.TrimSpace(local)
 
 	remote, err := git.RunContext(ctx, repoPath, "rev-parse", "@{upstream}")
 	if err != nil {
-		return pterm.Warning.Sprintf("[%s] 获取远程分支失败\n", name)
+		return WarnS("[%s] 获取远程分支失败\n", name)
 	}
 	remote = strings.TrimSpace(remote)
 
 	base, err := git.RunContext(ctx, repoPath, "merge-base", "HEAD", "@{upstream}")
 	if err != nil {
-		return pterm.Warning.Sprintf("[%s] 获取共同祖先失败\n", name)
+		return WarnS("[%s] 获取共同祖先失败\n", name)
 	}
 	base = strings.TrimSpace(base)
 
 	// 第四步：比较决策
 	if local == remote {
-		return pterm.Info.Sprintf("[%s] 本地与远程一致，无需处理\n", name)
+		return InfoS("[%s] 本地与远程一致，无需处理\n", name)
 	} else if local == base {
 		// 本地落后于远程，且历史线性 → 可以用 fast-forward
-		output := pterm.Warning.Sprintf("[%s] 检测到线性更新，正在拉取...\n", name)
+		output := WarnS("[%s] 检测到线性更新，正在拉取...\n", name)
 		_, err := git.RunContext(ctx, repoPath, "pull", "--ff-only")
 		if err != nil {
-			output += pterm.Error.Sprintf("[%s] 拉取失败: %s\n", name, err)
+			output += ErrorS("[%s] 拉取失败: %s\n", name, err)
 		} else {
-			output += pterm.Success.Sprintf("[%s] 拉取成功\n", name)
+			output += SuccessS("[%s] 拉取成功\n", name)
 		}
 		return output
 	} else if remote == base {
-		return pterm.Warning.Sprintf("[%s] 本地领先于远程，请手动推送\n", name)
+		return WarnS("[%s] 本地领先于远程，请手动推送\n", name)
 	} else {
-		return pterm.Error.Sprintf("[%s] 非线性更新，必须手动处理\n", name)
+		return ErrorS("[%s] 非线性更新，必须手动处理\n", name)
 	}
 }
 

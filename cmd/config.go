@@ -33,7 +33,7 @@ var configPathCmd = &cobra.Command{
 	Use:   "path",
 	Short: "显示配置文件路径",
 	Run: func(cmd *cobra.Command, args []string) {
-		pterm.FgYellow.Println(config.GetDefaultConfigPath())
+		pterm.Println(Muted(config.GetDefaultConfigPath()))
 	},
 }
 
@@ -47,9 +47,9 @@ func showConfig(cmd *cobra.Command, args []string) {
 	}
 
 	Header("当前配置")
-	pterm.Println(string(jsonBytes))
+	PrintRaw(string(jsonBytes))
 	pterm.Println()
-	pterm.Info.Printf("配置文件: %s\n", config.GetDefaultConfigPath())
+	Infof("配置文件: %s", config.GetDefaultConfigPath())
 }
 
 func init() {

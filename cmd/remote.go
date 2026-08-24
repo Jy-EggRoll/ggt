@@ -135,7 +135,7 @@ func switchCurrentRepo(target string) {
 // 使用 worker.Map 并发收集结果后顺序打印统计信息。
 func switchAllRepos(target string) {
 	repos := MustGetRepoList()
-	Infof("共 %d 个仓库，开始切换协议至 [%s] ...\n", len(repos), pterm.Cyan(strings.ToUpper(target)))
+	Infof("共 %d 个仓库，开始切换协议至 %s ...\n", len(repos), pterm.Cyan(strings.ToUpper(target)))
 
 	type repoResult struct {
 		name   string
@@ -148,19 +148,15 @@ func switchAllRepos(target string) {
 
 	var success, skipped, failed int
 	for _, r := range results {
-		name := pterm.FgCyan.Sprintf("[%s]", r.name)
 		switch r.result.status {
 		case "switched":
-			pterm.Success.Printfln("%s %s → %s", name,
-				pterm.FgRed.Sprint(detectProtocol(r.result.oldURL)),
-				pterm.FgGreen.Sprint(strings.ToUpper(target)))
+			PrintProtocolSwitch(r.name, detectProtocol(r.result.oldURL), strings.ToUpper(target))
 			success++
 		case "same":
-			pterm.Info.Printfln("%s 已是 %s 协议，无需切换", name,
-				pterm.Cyan(detectProtocol(r.result.oldURL)))
+			Infof("%s 已是 %s 协议，无需切换", RepoName(r.name), detectProtocol(r.result.oldURL))
 			skipped++
 		case "error":
-			Errorf("%s %s", name, r.result.err)
+			Errorf("%s %s", RepoName(r.name), r.result.err)
 			failed++
 		}
 	}
@@ -218,13 +214,13 @@ func doSwitchRemote(ctx context.Context, repoPath string, target string) switchR
 func printRemoteResult(r switchRemoteResult) {
 	switch r.status {
 	case "switched":
-		pterm.Success.Printf("已切换协议: %s → %s\n",
-			pterm.FgRed.Sprint(detectProtocol(r.oldURL)),
+		pterm.Success.Printfln("已切换协议: %s → %s",
+			Muted(detectProtocol(r.oldURL)),
 			pterm.FgGreen.Sprint(detectProtocol(r.newURL)))
-		pterm.FgYellow.Printfln("  └ 旧: %s", r.oldURL)
-		pterm.FgYellow.Printfln("  └ 新: %s", r.newURL)
+		ListItem("旧: " + r.oldURL)
+		ListItem("新: " + r.newURL)
 	case "same":
-		pterm.Info.Printf("已是 %s 协议，无需切换\n", pterm.Cyan(detectProtocol(r.oldURL)))
+		Infof("已是 %s 协议，无需切换", detectProtocol(r.oldURL))
 	case "error":
 		ErrorMsg(r.err)
 	}

@@ -52,7 +52,7 @@ var sizeCmd = &cobra.Command{
   ggt size --low 200 --high 600 --unit binary  自定义阈值与口径`,
 	Run: func(cmd *cobra.Command, args []string) {
 		repos := MustGetRepoList()
-		pterm.Info.Printf("共 %d 个仓库，开始统计大小...\n\n", len(repos))
+		Infof("共 %d 个仓库，开始统计大小...\n", len(repos))
 
 		width := pterm.GetTerminalWidth()
 		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(ctx context.Context, repoPath string) repoSizeResult {
@@ -61,7 +61,7 @@ var sizeCmd = &cobra.Command{
 
 		// 顺序打印各仓库的大小信息
 		for _, r := range results {
-			fmt.Print(r.output)
+			PrintRaw(r.output)
 		}
 
 		// 汇总计算总大小
@@ -112,7 +112,7 @@ func showRepoSize(ctx context.Context, repoPath string, width int) repoSizeResul
 	if err != nil {
 		return repoSizeResult{
 			name:   getRepoName(repoPath),
-			output: pterm.Warning.Sprintf("仓库 %s: 执行失败\n", repoPath),
+			output: WarnS("仓库 %s: 执行失败\n", repoPath),
 			size:   0,
 			ok:     false,
 		}
@@ -123,10 +123,11 @@ func showRepoSize(ctx context.Context, repoPath string, width int) repoSizeResul
 	name := getRepoName(repoPath)
 	var b strings.Builder
 
-	// 终端宽度分割线 + 仓库名
-	b.WriteString(pterm.FgLightYellow.Sprint(strings.Repeat("─", width)))
+	// 终端宽度分割线 + 仓库名（统一经 buildSeparator / RepoName 着色）
+	b.WriteString(buildSeparator(width))
 	b.WriteByte('\n')
-	b.WriteString(pterm.FgCyan.Sprintf("[%s]\n", name))
+	b.WriteString(RepoName(name))
+	b.WriteByte('\n')
 
 	// 主要指标：磁盘占用（size）和包文件大小（size-pack）
 	if v, ok := info["size"]; ok {
@@ -150,7 +151,7 @@ func showRepoSize(ctx context.Context, repoPath string, width int) repoSizeResul
 		}
 	}
 	if len(parts) > 0 {
-		b.WriteString(pterm.FgGray.Sprint("  " + strings.Join(parts, " | ")))
+		b.WriteString(Muted("  " + strings.Join(parts, " | ")))
 		b.WriteByte('\n')
 	}
 
@@ -201,7 +202,7 @@ func classifyBySize(results []repoSizeResult, lowMB, highMB int, unit string) (s
 func printSizeBucket(title string, names []string) {
 	Infof("%s：%d 个", title, len(names))
 	for _, n := range names {
-		pterm.FgGray.Printf("    - %s\n", n)
+		ListItem(n)
 	}
 }
 

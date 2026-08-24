@@ -6,7 +6,6 @@ import (
 
 	"ggt/internal/git"
 	"ggt/internal/worker"
-	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
@@ -40,16 +39,16 @@ var statusCmd = &cobra.Command{
 func showRepoStatus(ctx context.Context, repoPath string) string {
 	output, err := git.RunContext(ctx, repoPath, "status", "--short", "--branch", "--untracked-files")
 	if err != nil {
-		return pterm.Warning.Sprintf("仓库 %s: git 执行失败 - %v\n", repoPath, err)
+		return WarnS("仓库 %s: git 执行失败 - %v\n", repoPath, err)
 	}
 
 	name := getRepoName(repoPath)
 	// 如果输出为空（极少出现，因为 --branch 至少输出分支行），表示完全干净
 	if output == "" {
-		return pterm.FgGreen.Sprintf("[%s] ", name) + "已就绪\n"
+		return RepoName(name) + " 已就绪\n"
 	}
 	// status 输出自带末尾换行，直接拼接即可，无需额外空行
-	return pterm.FgYellow.Sprintf("[%s]\n", name) + output
+	return RepoName(name) + "\n" + output
 }
 
 func init() {

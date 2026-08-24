@@ -122,7 +122,7 @@ func runTakeown(path string) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// takeown 在已经拥有所有权时也会失败，忽略此类错误
-		pterm.FgYellow.Printf("  takeown on %s: %s\n", path, string(output))
+		ListItem("takeown on " + path + ": " + strings.TrimSpace(string(output)))
 	}
 	return nil
 }
