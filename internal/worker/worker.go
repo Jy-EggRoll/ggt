@@ -14,7 +14,7 @@ import (
 // ctx 用于取消/超时控制：若 ctx 已取消则停止启动新 goroutine，
 // 且 ctx 会被透传给 fn，使正在执行的任务（如 git 命令）也能感知取消。
 // fn 内 panic 会被 recover，对应位置写入 T 的零值，并通过标准 log 记录。
-func Map[T any](ctx context.Context, items []string, concurrency int, fn func(ctx context.Context, item string) T) []T {
+func Map[I any, T any](ctx context.Context, items []I, concurrency int, fn func(ctx context.Context, item I) T) []T {
 	results := make([]T, len(items))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, concurrency)
@@ -28,7 +28,7 @@ func Map[T any](ctx context.Context, items []string, concurrency int, fn func(ct
 		}
 
 		wg.Add(1)
-		go func(idx int, it string) {
+		go func(idx int, it I) {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {

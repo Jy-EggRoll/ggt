@@ -17,6 +17,7 @@ import (
 type dirtyRepo struct {
 	path           string
 	name           string
+	isSubmodule    bool
 	statusOutput   string
 	hasUncommitted bool
 }
@@ -32,12 +33,12 @@ var summaryCmd = &cobra.Command{
   ggt summary          查看变更并提交
   ggt sum             简写形式`,
 	Run: func(cmd *cobra.Command, args []string) {
-		repos := MustGetRepoList()
+		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
 		Infof("共 %d 个仓库，开始检查变更...\n", len(repos))
 
-		// 第一阶段：并发检查所有仓库的 git 状态
-		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(ctx context.Context, repoPath string) *dirtyRepo {
-			statusOutput, err := git.RunContext(ctx, repoPath, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
+		// 第一阶段：并发检查所有仓库（含子模块）的 git 状态
+		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) *dirtyRepo {
+			statusOutput, err := git.RunContext(ctx, e.Path, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
 			if err != nil {
 				return nil
 			}
@@ -56,16 +57,18 @@ var summaryCmd = &cobra.Command{
 				}
 				// 仅有 ahead，无未提交的文件变更
 				return &dirtyRepo{
-					path:           repoPath,
-					name:           getRepoName(repoPath),
+					path:           e.Path,
+					name:           e.Name,
+					isSubmodule:    e.IsSubmodule,
 					statusOutput:   statusOutput,
 					hasUncommitted: false,
 				}
 			}
 
 			return &dirtyRepo{
-				path:           repoPath,
-				name:           getRepoName(repoPath),
+				path:           e.Path,
+				name:           e.Name,
+				isSubmodule:    e.IsSubmodule,
 				statusOutput:   statusOutput,
 				hasUncommitted: true,
 			}
@@ -78,7 +81,7 @@ var summaryCmd = &cobra.Command{
 			}
 
 			PrintSeparator()
-			RepoLine(d.name, "检测到变动")
+			RepoLine(d.name, "检测到变动", d.isSubmodule)
 			PrintRaw(d.statusOutput)
 
 			// 显示详细的 diff 统计
@@ -111,7 +114,7 @@ var summaryCmd = &cobra.Command{
 				}
 
 				// git commit：自动生成提交信息
-				msg := fmt.Sprintf("🔨 chore: 终端推送更新 %s", time.Now().Format("2006-01-02 15:04:05"))
+				msg := fmt.Sprintf("chore: 终端自动提交更新 %s", time.Now().Format("2006-01-02 15:04:05"))
 				if out, err := git.RunCombined(d.path, "commit", "-m", msg); err != nil {
 					Errorf("git commit 失败:\n%s", out)
 					continue

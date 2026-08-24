@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"ggt/internal/config"
@@ -39,9 +40,10 @@ var rootCmd = &cobra.Command{
 			return fmt.Errorf("加载配置失败: %w", err)
 		}
 
-		// 命令行的 -c 参数优先级高于配置文件
+		// 命令行的 -c 参数优先级高于配置文件；-c 传的是具体数字，
+		// 覆盖为数字串（如 "8"），语义串常量（CPUHalf 等）仅在配置文件未显式设置时生效。
 		if concurrency > 0 {
-			cfg.Concurrency = concurrency
+			cfg.Concurrency = strconv.Itoa(concurrency)
 		}
 
 		return nil
@@ -60,7 +62,7 @@ func init() {
 	// -c 的默认值为 0，表示"未显式指定"；在 PersistentPreRunE 中仅当 >0 时才
 	// 覆盖配置文件里的并发数。真正生效的默认值（CPU 核心数的一半）由
 	// config 包的 getDefaultConcurrency 统一计算，避免出现两处默认值逻辑不一致。
-	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "并发数 (省略时取配置文件值，配置文件也未设则取 CPU 核心数的一半)")
+	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "并发数 (省略时取配置文件 concurrency 值；未设则默认语义值 CPUHalf，即 CPU 核心数的一半；也可写 CPUFull/CPUQuarter 或具体数字)")
 }
 
 // GetConfig 返回全局配置实例。
@@ -159,13 +161,28 @@ func RepoName(name string) string {
 	return pterm.FgCyan.Sprintf("[%s]", name)
 }
 
-// RepoLine 打印一行"青色 [name] + 备注"，作为各命令的仓库标题行（不含分隔线）。
+// RepoLabel 返回带"是否子模块"语义的仓库标签：
+//   - 顶层仓库：青色 [name]
+//   - 子模块：青色 [子] name
+//
+// 所有命令在打印仓库名时必须统一经此函数，消除此前各个命令对仓库名异色/无前缀的割裂处理，
+// 也让"子模块"这一身份在任意命令输出里都有一致的 [子] 标识。
+func RepoLabel(name string, isSubmodule bool) string {
+	if isSubmodule {
+		return pterm.FgCyan.Sprintf("[子] %s", name)
+	}
+	return RepoName(name)
+}
+
+// RepoLine 打印一行"仓库标签 + 备注"，作为各命令的仓库标题行（不含分隔线）。
+// 仓库标签统一经 RepoLabel 着色，子模块自动带 [子] 前缀。
 // 需要分隔线时另行调用 PrintSeparator。
-func RepoLine(name, note string) {
+func RepoLine(name, note string, isSubmodule bool) {
+	label := RepoLabel(name, isSubmodule)
 	if note == "" {
-		pterm.Println(RepoName(name))
+		pterm.Println(label)
 	} else {
-		pterm.Printf("%s %s\n", RepoName(name), note)
+		pterm.Printf("%s %s\n", label, note)
 	}
 }
 
@@ -197,10 +214,11 @@ func DoneBanner(msg string) {
 	pterm.Success.Println(msg)
 }
 
-// PrintProtocolSwitch 打印远程协议切换结果：青色 [name] + 灰色旧协议 → 绿色新协议。
+// PrintProtocolSwitch 打印远程协议切换结果：仓库标签 + 灰色旧协议 → 绿色新协议。
+// 仓库标签统一经 RepoLabel 着色，子模块自动带 [子] 前缀。
 // 此前 remote 直接内联 FgRed/FgGreen，现已收敛到统一封装。
-func PrintProtocolSwitch(name, oldProto, newProto string) {
-	pterm.Success.Printfln("%s %s → %s", RepoName(name), Muted(oldProto), pterm.FgGreen.Sprint(newProto))
+func PrintProtocolSwitch(name string, isSubmodule bool, oldProto, newProto string) {
+	pterm.Success.Printfln("%s %s → %s", RepoLabel(name, isSubmodule), Muted(oldProto), pterm.FgGreen.Sprint(newProto))
 }
 
 // ——— 仓库列表管理 ———

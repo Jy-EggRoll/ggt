@@ -106,19 +106,19 @@ func TestBytesToMB(t *testing.T) {
 // TestClassifyBySize 验证分桶边界与失败仓库排除。
 func TestClassifyBySize(t *testing.T) {
 	results := []repoSizeResult{
-		{name: "tiny", size: 100_000_000, ok: true},       // 100 MB < 500 → small
-		{name: "exact-low", size: 500_000_000, ok: true},  // 500 MB → mid
-		{name: "mid", size: 600_000_000, ok: true},        // 600 MB → mid
-		{name: "exact-high", size: 800_000_000, ok: true}, // 800 MB → mid
-		{name: "huge", size: 900_000_000, ok: true},       // 900 MB → large
-		{name: "failed", size: 0, ok: false},              // 不应入任何桶
+		{name: "tiny", isSubmodule: false, size: 100_000_000, ok: true},       // 100 MB < 500 → small
+		{name: "exact-low", isSubmodule: false, size: 500_000_000, ok: true},  // 500 MB → mid
+		{name: "mid", isSubmodule: false, size: 600_000_000, ok: true},        // 600 MB → mid
+		{name: "exact-high", isSubmodule: false, size: 800_000_000, ok: true}, // 800 MB → mid
+		{name: "huge", isSubmodule: false, size: 900_000_000, ok: true},       // 900 MB → large
+		{name: "failed", isSubmodule: false, size: 0, ok: false},              // 不应入任何桶
 	}
 
 	small, mid, large := classifyBySize(results, 500, 800, "decimal")
 
-	wantSmall := []string{"tiny"}
-	wantMid := []string{"exact-low", "mid", "exact-high"}
-	wantLarge := []string{"huge"}
+	wantSmall := []string{RepoLabel("tiny", false)}
+	wantMid := []string{RepoLabel("exact-low", false), RepoLabel("mid", false), RepoLabel("exact-high", false)}
+	wantLarge := []string{RepoLabel("huge", false)}
 
 	assertNames := func(got, want []string) {
 		if len(got) != len(want) {

@@ -8,21 +8,23 @@ import (
 	"runtime"
 	"strings"
 
-	"ggt/internal/git"
 	"ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
-// takeownResult 记录单个仓库的 takeown 处理结果。
+// takeownResult 记录单个仓库（含子模块）的 takeown 处理结果。
 type takeownResult struct {
-	name string
-	err  error
+	name        string
+	isSubmodule bool
+	err         error
 }
 
 // ownedCmd 实现 "ggt owned"。
 // 调用 Windows takeown 命令获取仓库文件所有权。
-// 严格遵循原有的 pwsh 脚本逻辑，处理主仓库目录、.git 目录、以及子模块。
+// 严格遵循原有的 pwsh 脚本逻辑，处理主仓库目录、.git 目录。
+// 子模块在 ggt 中被视为一等仓库，由统一的仓库发现（MustGetAllRepos）展开后
+// 逐个作为独立条目交给 takeownRepo 处理，无需在此命令内编写子模块专属循环。
 //
 // 注意：此命令仅适用于 Windows 系统（入口处 runtime.GOOS 检测提前返回）。
 var ownedCmd = &cobra.Command{
@@ -32,7 +34,7 @@ var ownedCmd = &cobra.Command{
 
 严格遵循当前的 pwsh 命令模仿实现。
 使用 takeown 命令获取目录及 .git 目录的所有权。
-处理子模块的所有权。
+子模块会作为独立仓库一并处理。
 	
 使用示例:
   ggt owned          获取所有仓库所有权`,
@@ -41,22 +43,23 @@ var ownedCmd = &cobra.Command{
 			WarnMsg("ggt owned 仅支持 Windows 系统")
 			return
 		}
-		repos := MustGetRepoList()
+		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
 		Infof("共 %d 个仓库，开始获取所有权...\n", len(repos))
 
-		// 并发执行 takeown（worker.Map 保证输出顺序）
-		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(ctx context.Context, repoPath string) takeownResult {
-			return takeownResult{name: getRepoName(repoPath), err: takeownRepo(ctx, repoPath)}
+		// 并发执行 takeown（worker.Map 保证输出顺序），子模块作为独立条目参与
+		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) takeownResult {
+			return takeownResult{name: e.Name, isSubmodule: e.IsSubmodule, err: takeownRepo(ctx, e.Path)}
 		})
 
 		var successCount, failCount int
 		for _, r := range results {
+			label := RepoLabel(r.name, r.isSubmodule)
 			if r.err != nil {
 				failCount++
-				Errorf("处理失败: %s - %s", r.name, r.err)
+				Errorf("处理失败: %s - %s", label, r.err)
 			} else {
 				successCount++
-				Successf("成功处理: %s", r.name)
+				Successf("成功处理: %s", label)
 			}
 		}
 
@@ -65,46 +68,21 @@ var ownedCmd = &cobra.Command{
 	},
 }
 
-// takeownRepo 获取一个仓库的完整所有权：
-// 1. 主仓库目录本身（takeown /F <path>）
-// 2. .git 目录（通常有权限保护）
-// 3. 所有子模块的目录和 .git 目录
-// takeownRepo 获取一个仓库的完整所有权：
-// 1. 主仓库目录本身（takeown /F <path>）
-// 2. .git 目录（通常有权限保护）
-// 3. 所有子模块的目录和 .git 目录
+// takeownRepo 获取一个仓库（或子模块）目录及其 .git 的所有权。
+// 子模块的 .git 可能是 gitdir 文件，这里统一对 .git 路径本身执行 takeown，
+// 覆盖大多数权限场景；子模块在 ggt 中作为独立仓库由外层统一展开，无需在此递归处理。
 // 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
 func takeownRepo(ctx context.Context, repoPath string) error {
-	// 获取主仓库目录的所有权
+	// 获取仓库目录本身的所有权
 	if err := runTakeown(repoPath); err != nil {
 		return err
 	}
 
-	// 获取 .git 目录的所有权
+	// 获取 .git 目录/文件的所有权
 	gitPath := filepath.Join(repoPath, ".git")
 	if _, err := os.Stat(gitPath); err == nil {
 		if err := runTakeown(gitPath); err != nil {
 			return err
-		}
-	}
-
-	// 处理子模块：遍历所有子模块，获取其目录、.git 文件、以及元数据目录的所有权
-	submoduleOutput, err := git.RunContext(ctx, repoPath, "submodule", "foreach", "--quiet", "echo $name")
-	if err == nil && strings.TrimSpace(submoduleOutput) != "" {
-		lines := strings.Split(strings.TrimSpace(submoduleOutput), "\n")
-		for _, subPath := range lines {
-			subPath = strings.TrimSpace(subPath)
-			if subPath == "" {
-				continue
-			}
-
-			fullSubPath := filepath.Join(repoPath, subPath)
-			subDotGit := filepath.Join(fullSubPath, ".git")
-			gitModuleMeta := filepath.Join(gitPath, "modules", subPath)
-
-			runTakeown(fullSubPath)
-			runTakeown(subDotGit)
-			runTakeown(gitModuleMeta)
 		}
 	}
 

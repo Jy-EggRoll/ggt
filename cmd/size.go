@@ -17,10 +17,11 @@ import (
 // ok 标记该仓库是否成功取得大小：失败的仓库 size 为 0，
 // 必须在分桶统计时排除，否则会被错误归入"<下界"桶。
 type repoSizeResult struct {
-	name   string
-	output string
-	size   int64
-	ok     bool
+	name        string
+	isSubmodule bool
+	output      string
+	size        int64
+	ok          bool
 }
 
 // sizeLow、sizeHigh、sizeUnit 是 size 命令的命令行覆盖参数。
@@ -51,12 +52,12 @@ var sizeCmd = &cobra.Command{
   ggt sz          简写形式
   ggt size --low 200 --high 600 --unit binary  自定义阈值与口径`,
 	Run: func(cmd *cobra.Command, args []string) {
-		repos := MustGetRepoList()
+		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
 		Infof("共 %d 个仓库，开始统计大小...\n", len(repos))
 
 		width := pterm.GetTerminalWidth()
-		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(ctx context.Context, repoPath string) repoSizeResult {
-			return showRepoSize(ctx, repoPath, width)
+		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) repoSizeResult {
+			return showRepoSize(ctx, e, width)
 		})
 
 		// 顺序打印各仓库的大小信息
@@ -107,26 +108,27 @@ var sizeCmd = &cobra.Command{
 // 从 git count-objects -vH 的输出中提取关键字段，
 // 主要展示"磁盘占用"和"包文件大小"两个核心指标。
 // 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
-func showRepoSize(ctx context.Context, repoPath string, width int) repoSizeResult {
-	output, err := git.RunContext(ctx, repoPath, "count-objects", "-vH")
+func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
+	output, err := git.RunContext(ctx, e.Path, "count-objects", "-vH")
 	if err != nil {
 		return repoSizeResult{
-			name:   getRepoName(repoPath),
-			output: WarnS("仓库 %s: 执行失败\n", repoPath),
-			size:   0,
-			ok:     false,
+			name:        e.Name,
+			isSubmodule: e.IsSubmodule,
+			output:      WarnS("仓库 %s: 执行失败\n", e.Path),
+			size:        0,
+			ok:          false,
 		}
 	}
 
 	// 解析 git count-objects 的输出为键值映射
 	info := parseSizeOutput(output)
-	name := getRepoName(repoPath)
+	label := RepoLabel(e.Name, e.IsSubmodule)
 	var b strings.Builder
 
-	// 终端宽度分割线 + 仓库名（统一经 buildSeparator / RepoName 着色）
+	// 终端宽度分割线 + 仓库名（统一经 buildSeparator / RepoLabel 着色，子模块带 [子] 前缀）
 	b.WriteString(buildSeparator(width))
 	b.WriteByte('\n')
-	b.WriteString(RepoName(name))
+	b.WriteString(label)
 	b.WriteByte('\n')
 
 	// 主要指标：磁盘占用（size）和包文件大小（size-pack）
@@ -156,10 +158,11 @@ func showRepoSize(ctx context.Context, repoPath string, width int) repoSizeResul
 	}
 
 	return repoSizeResult{
-		name:   name,
-		output: b.String(),
-		size:   calcTotalBytes(info),
-		ok:     true,
+		name:        e.Name,
+		isSubmodule: e.IsSubmodule,
+		output:      b.String(),
+		size:        calcTotalBytes(info),
+		ok:          true,
 	}
 }
 
@@ -179,6 +182,7 @@ func bytesToMB(b int64, unit string) float64 {
 //   - large: MB > highMB
 //
 // 失败的仓库（ok == false）直接跳过，不会因 size 为 0 而被误归入 small。
+// 仓库名统一经 RepoLabel 着色（子模块带 [子] 前缀），保持与详情输出一致。
 // 返回的切片保持 results 原有的顺序。
 func classifyBySize(results []repoSizeResult, lowMB, highMB int, unit string) (small, mid, large []string) {
 	for _, r := range results {
@@ -188,11 +192,11 @@ func classifyBySize(results []repoSizeResult, lowMB, highMB int, unit string) (s
 		mb := bytesToMB(r.size, unit)
 		switch {
 		case mb < float64(lowMB):
-			small = append(small, r.name)
+			small = append(small, RepoLabel(r.name, r.isSubmodule))
 		case mb > float64(highMB):
-			large = append(large, r.name)
+			large = append(large, RepoLabel(r.name, r.isSubmodule))
 		default:
-			mid = append(mid, r.name)
+			mid = append(mid, RepoLabel(r.name, r.isSubmodule))
 		}
 	}
 	return

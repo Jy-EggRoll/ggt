@@ -23,32 +23,32 @@ var statusCmd = &cobra.Command{
   ggt status          显示所有仓库状态
   ggt st             简写形式`,
 	Run: func(cmd *cobra.Command, args []string) {
-		repos := MustGetRepoList()
+		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
 		Infof("共 %d 个仓库，开始检查状态...\n", len(repos))
 
-		results := worker.Map(context.Background(), repos, GetConfig().Concurrency, showRepoStatus)
+		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoStatus)
 		for _, r := range results {
 			fmt.Print(r)
 		}
 	},
 }
 
-// showRepoStatus 检查单个仓库的 git 状态并返回格式化字符串。
+// showRepoStatus 检查单个仓库（含子模块）的 git 状态并返回格式化字符串。
 // 使用 --short --branch --untracked-files 选项输出紧凑状态。
 // 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
-func showRepoStatus(ctx context.Context, repoPath string) string {
-	output, err := git.RunContext(ctx, repoPath, "status", "--short", "--branch", "--untracked-files")
+func showRepoStatus(ctx context.Context, e RepoEntry) string {
+	output, err := git.RunContext(ctx, e.Path, "status", "--short", "--branch", "--untracked-files")
 	if err != nil {
-		return WarnS("仓库 %s: git 执行失败 - %v\n", repoPath, err)
+		return WarnS("仓库 %s: git 执行失败 - %v\n", e.Path, err)
 	}
 
-	name := getRepoName(repoPath)
+	label := RepoLabel(e.Name, e.IsSubmodule)
 	// 如果输出为空（极少出现，因为 --branch 至少输出分支行），表示完全干净
 	if output == "" {
-		return RepoName(name) + " 已就绪\n"
+		return label + " 已就绪\n"
 	}
 	// status 输出自带末尾换行，直接拼接即可，无需额外空行
-	return RepoName(name) + "\n" + output
+	return label + "\n" + output
 }
 
 func init() {

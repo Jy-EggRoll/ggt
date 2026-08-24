@@ -63,6 +63,23 @@ var remoteSshCmd = &cobra.Command{
 	},
 }
 
+// remoteToggleCmd 实现 "ggt remote toggle"：在当前仓库的 HTTPS 与 SSH 协议之间取反切换。
+// 仅操作当前目录下的仓库，不支持 --all（与 https/ssh 子命令的批量模式区分）。
+var remoteToggleCmd = &cobra.Command{
+	Use:   "toggle",
+	Short: "在当前仓库的 HTTPS 与 SSH 协议之间切换",
+	Long: `在当前仓库的 HTTPS 与 SSH 远程协议之间自动取反切换。
+
+与 https/ssh 子命令不同，本命令无需指定目标协议，会根据 origin 当前协议切换到相反的一方。
+仅作用于当前目录下的 git 仓库，不支持 --all 批量模式。
+
+使用示例:
+  ggt remote toggle        将当前仓库在 HTTPS/SSH 之间切换`,
+	Run: func(cmd *cobra.Command, args []string) {
+		toggleCurrentRepo()
+	},
+}
+
 // remoteURLRegex 匹配主流托管平台的远程 URL，提取 host 和 path 部分。
 // 支持三种格式：
 //   - https://HOST/PATH.git
@@ -105,16 +122,20 @@ func buildSSHURL(info *remoteInfo) string {
 	return fmt.Sprintf("git@%s:%s.git", info.host, info.path)
 }
 
-// detectProtocol 检测当前远程 URL 使用的协议。
+// detectProtocol 检测当前远程 URL 使用的协议（大小写不敏感）。
+// 此前用 HasPrefix(raw, "http") 做大小写敏感判断，而 targetProto 传入的是大写
+// "HTTPS"/"SSH"，导致 detectProtocol("HTTPS") 匹配不到 "http" 前缀、被误判为 SSH，
+// 出现 "SSH → SSH" 这类与实际切换方向相反的显示错误。统一转小写后再判定即可修复。
 func detectProtocol(raw string) string {
-	if strings.HasPrefix(raw, "http") {
+	if strings.HasPrefix(strings.ToLower(raw), "http") {
 		return "HTTPS"
 	}
 	return "SSH"
 }
 
-// switchCurrentRepo 切换当前目录下的 git 仓库的远程协议。
-// 此模式仅操作一个仓库，直接打印结果。
+// switchCurrentRepo 切换当前目录下的 git 仓库（含其已初始化子模块）的远程协议。
+// 子模块在 ggt 中被视为一等仓库，这里通过 expand 把当前仓库及其子模块一并展开处理，
+// 使 toggle / https / ssh 都能辐射到子模块（与 --all 行为一致）。
 func switchCurrentRepo(target string) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -127,36 +148,78 @@ func switchCurrentRepo(target string) {
 		return
 	}
 
-	result := doSwitchRemote(context.Background(), wd, target)
-	printRemoteResult(result)
+	entries := expand(context.Background(), []string{wd}, GetConfig().IgnoreSubmodules)
+	processSwitchResults(entries, target)
 }
 
-// switchAllRepos 切换所有配置仓库的远程协议。
-// 使用 worker.Map 并发收集结果后顺序打印统计信息。
-func switchAllRepos(target string) {
-	repos := MustGetRepoList()
-	Infof("共 %d 个仓库，开始切换协议至 %s ...\n", len(repos), pterm.Cyan(strings.ToUpper(target)))
-
-	type repoResult struct {
-		name   string
-		result switchRemoteResult
+// toggleCurrentRepo 在当前仓库（含子模块）的 HTTPS 与 SSH 协议之间取反切换。
+// 先读取当前仓库 origin 当前协议，再切换为相反协议；子模块复用同一目标协议。
+func toggleCurrentRepo() {
+	wd, err := os.Getwd()
+	if err != nil {
+		ErrorMsg("获取当前目录失败: " + err.Error())
+		return
 	}
 
-	results := worker.Map(context.Background(), repos, GetConfig().Concurrency, func(ctx context.Context, path string) repoResult {
-		return repoResult{name: getRepoName(path), result: doSwitchRemote(ctx, path, target)}
+	if !isGitRepo(wd) {
+		ErrorMsg("当前目录不是 git 仓库: " + wd)
+		return
+	}
+
+	raw, err := git.RunContext(context.Background(), wd, "remote", "get-url", remoteOrigin)
+	if err != nil {
+		ErrorMsg("获取远程地址失败: " + err.Error())
+		return
+	}
+
+	// detectProtocol 返回大写的 "HTTPS" 或 "SSH"，据此计算相反协议
+	current := detectProtocol(strings.TrimSpace(raw))
+	target := "https"
+	if current == "HTTPS" {
+		target = "ssh"
+	}
+
+	entries := expand(context.Background(), []string{wd}, GetConfig().IgnoreSubmodules)
+	processSwitchResults(entries, target)
+}
+
+// switchAllRepos 切换所有配置仓库（含子模块，受 ignore_submodules 控制）的远程协议。
+// 使用 worker.Map 并发收集结果后顺序打印统计信息。
+func switchAllRepos(target string) {
+	entries := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+	Infof("共 %d 个仓库，开始切换协议至 %s ...\n", len(entries), pterm.Cyan(strings.ToUpper(target)))
+	processSwitchResults(entries, target)
+}
+
+// processSwitchResults 对一组仓库条目并发执行远程协议切换，统一打印结果并汇总。
+// 子模块作为独立条目参与，打印时经 RepoLabel 呈现 [子] 前缀，计数把子模块一并计入。
+func processSwitchResults(entries []RepoEntry, target string) {
+	targetProto := detectProtocol(strings.ToUpper(target))
+	type switchOutcome struct {
+		name        string
+		isSubmodule bool
+		res         switchRemoteResult
+	}
+
+	results := worker.Map(context.Background(), entries, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) switchOutcome {
+		r := doSwitchRemote(ctx, e.Path, target)
+		r.name = e.Name
+		r.isSubmodule = e.IsSubmodule
+		return switchOutcome{e.Name, e.IsSubmodule, r}
 	})
 
 	var success, skipped, failed int
 	for _, r := range results {
-		switch r.result.status {
+		label := RepoLabel(r.name, r.isSubmodule)
+		switch r.res.status {
 		case "switched":
-			PrintProtocolSwitch(r.name, detectProtocol(r.result.oldURL), strings.ToUpper(target))
+			PrintProtocolSwitch(r.name, r.isSubmodule, detectProtocol(r.res.oldURL), targetProto)
 			success++
 		case "same":
-			Infof("%s 已是 %s 协议，无需切换", RepoName(r.name), detectProtocol(r.result.oldURL))
+			Infof("%s 已是 %s 协议，无需切换", label, detectProtocol(r.res.oldURL))
 			skipped++
 		case "error":
-			Errorf("%s %s", RepoName(r.name), r.result.err)
+			Errorf("%s %s", label, r.res.err)
 			failed++
 		}
 	}
@@ -165,16 +228,20 @@ func switchAllRepos(target string) {
 	Infof("处理完成: 成功 %d, 跳过 %d, 失败 %d", success, skipped, failed)
 }
 
-// switchRemoteResult 保存远程协议切换的结果。
+// switchRemoteResult 保存单个仓库（含子模块）远程协议切换的结果。
+// name / isSubmodule 由外层遍历填充，用于打印时呈现 [子] 标识。
 type switchRemoteResult struct {
-	oldURL string
-	newURL string
-	status string // "switched", "same", "error"
-	err    string
+	name        string
+	isSubmodule bool
+	oldURL      string
+	newURL      string
+	status      string // "switched", "same", "error"
+	err         string
 }
 
-// doSwitchRemote 执行单个仓库的远程协议切换。
+// doSwitchRemote 执行单个仓库（或子模块）的远程协议切换。
 // 流程：获取当前 URL → 解析 host+path → 构建新 URL → git remote set-url。
+// name/isSubmodule 由调用方填充，本函数只关注路径与协议。
 // 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
 func doSwitchRemote(ctx context.Context, repoPath string, target string) switchRemoteResult {
 	raw, err := git.RunContext(ctx, repoPath, "remote", "get-url", remoteOrigin)
@@ -210,25 +277,10 @@ func doSwitchRemote(ctx context.Context, repoPath string, target string) switchR
 	return switchRemoteResult{status: "switched", oldURL: oldURL, newURL: newURL}
 }
 
-// printRemoteResult 打印单个仓库的切换结果（用于单仓库模式）。
-func printRemoteResult(r switchRemoteResult) {
-	switch r.status {
-	case "switched":
-		pterm.Success.Printfln("已切换协议: %s → %s",
-			Muted(detectProtocol(r.oldURL)),
-			pterm.FgGreen.Sprint(detectProtocol(r.newURL)))
-		ListItem("旧: " + r.oldURL)
-		ListItem("新: " + r.newURL)
-	case "same":
-		Infof("已是 %s 协议，无需切换", detectProtocol(r.oldURL))
-	case "error":
-		ErrorMsg(r.err)
-	}
-}
-
 func init() {
 	rootCmd.AddCommand(remoteCmd)
 	remoteCmd.AddCommand(remoteHttpsCmd)
 	remoteCmd.AddCommand(remoteSshCmd)
+	remoteCmd.AddCommand(remoteToggleCmd)
 	remoteCmd.PersistentFlags().BoolVarP(&remoteAll, "all", "a", false, "切换所有已配置仓库的远程协议")
 }
