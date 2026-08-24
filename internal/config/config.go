@@ -5,6 +5,10 @@
 //   - repo_paths: 直接添加的仓库路径列表
 //   - parent_paths: 父目录列表（自动扫描其中的 git 仓库）
 //   - concurrency: 并发数，默认为 CPU 逻辑核数的一半
+//   - size_bucket_low_mb: size 命令分桶的下界阈值（MB），默认 500
+//   - size_bucket_high_mb: size 命令分桶的上界阈值（MB），默认 800
+//   - size_unit: size 命令分桶时 MB 的换算口径，"decimal"(1 MB = 1,000,000 字节)
+//     或 "binary"(1 MB = 1024*1024 字节，即 MiB)，默认 "decimal"
 package config
 
 import (
@@ -19,9 +23,12 @@ import (
 // Config 是 ggt 配置文件的 Go 结构体映射。
 // 字段标签同时兼容 viper (mapstructure) 和 JSON 序列化。
 type Config struct {
-	ParentPaths []string `mapstructure:"parent_paths" json:"parent_paths"`
-	RepoPaths   []string `mapstructure:"repo_paths" json:"repo_paths"`
-	Concurrency int      `mapstructure:"concurrency" json:"concurrency"`
+	ParentPaths      []string `mapstructure:"parent_paths" json:"parent_paths"`
+	RepoPaths        []string `mapstructure:"repo_paths" json:"repo_paths"`
+	Concurrency      int      `mapstructure:"concurrency" json:"concurrency"`
+	SizeBucketLowMB  int      `mapstructure:"size_bucket_low_mb" json:"size_bucket_low_mb"`
+	SizeBucketHighMB int      `mapstructure:"size_bucket_high_mb" json:"size_bucket_high_mb"`
+	SizeUnit         string   `mapstructure:"size_unit" json:"size_unit"`
 }
 
 // GetDefaultConfigPath 返回配置文件的默认路径。
@@ -42,9 +49,7 @@ func LoadConfig() (*Config, error) {
 
 	if err := viper.ReadInConfig(); err != nil {
 		if os.IsNotExist(err) {
-			return &Config{
-				Concurrency: getDefaultConcurrency(),
-			}, nil
+			return defaultConfig(), nil
 		}
 		return nil, err
 	}
@@ -54,11 +59,36 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
-	if config.Concurrency <= 0 {
-		config.Concurrency = getDefaultConcurrency()
-	}
+	applyConfigDefaults(&config)
 
 	return &config, nil
+}
+
+// defaultConfig 返回所有字段填好默认值的配置。
+// 配置文件不存在时直接返回此结构，避免与 applyConfigDefaults 出现两处默认值逻辑。
+func defaultConfig() *Config {
+	cfg := &Config{}
+	applyConfigDefaults(cfg)
+	return cfg
+}
+
+// applyConfigDefaults 对未显式设置的字段补默认值：
+//   - concurrency <= 0 时取 CPU 核心数一半
+//   - size_bucket_low_mb / size_bucket_high_mb <= 0 时取 500 / 800
+//   - size_unit 为空时取 "decimal"
+func applyConfigDefaults(cfg *Config) {
+	if cfg.Concurrency <= 0 {
+		cfg.Concurrency = getDefaultConcurrency()
+	}
+	if cfg.SizeBucketLowMB <= 0 {
+		cfg.SizeBucketLowMB = 500
+	}
+	if cfg.SizeBucketHighMB <= 0 {
+		cfg.SizeBucketHighMB = 800
+	}
+	if cfg.SizeUnit == "" {
+		cfg.SizeUnit = "decimal"
+	}
 }
 
 // SaveConfig 将配置写入默认路径的 JSON 文件。
@@ -75,6 +105,9 @@ func SaveConfig(cfg *Config) error {
 	viper.Set("parent_paths", cfg.ParentPaths)
 	viper.Set("repo_paths", cfg.RepoPaths)
 	viper.Set("concurrency", cfg.Concurrency)
+	viper.Set("size_bucket_low_mb", cfg.SizeBucketLowMB)
+	viper.Set("size_bucket_high_mb", cfg.SizeBucketHighMB)
+	viper.Set("size_unit", cfg.SizeUnit)
 
 	return viper.WriteConfig()
 }

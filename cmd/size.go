@@ -14,11 +14,23 @@ import (
 
 // repoSizeResult 保存单个仓库的大小分析结果。
 // output 是格式化后的终端输出字符串，size 是总字节数（用于最终汇总）。
+// ok 标记该仓库是否成功取得大小：失败的仓库 size 为 0，
+// 必须在分桶统计时排除，否则会被错误归入"<下界"桶。
 type repoSizeResult struct {
 	name   string
 	output string
 	size   int64
+	ok     bool
 }
+
+// sizeLow、sizeHigh、sizeUnit 是 size 命令的命令行覆盖参数。
+// 约定与根命令的 -c 一致：仅当显式指定时才覆盖配置文件里的值，且不持久化。
+// sizeLow/sizeHigh 默认 0 表示"未指定"；sizeUnit 默认空字符串表示"未指定"。
+var (
+	sizeLow  int
+	sizeHigh int
+	sizeUnit string
+)
 
 // sizeCmd 实现 "ggt size"（简写 ggt sz）。
 // 并发统计所有仓库的 git 对象存储大小，突出显示两个关键指标：
@@ -31,9 +43,13 @@ var sizeCmd = &cobra.Command{
 	Short: "显示所有仓库的大小统计信息",
 	Long: `遍历所有已配置的仓库，显示每个仓库的大小统计信息。
 
+统计完成后会按大小分桶：小于下界、介于上下界之间、大于上界，
+并分别列出各桶内的仓库名。分桶阈值与换算口径见下方参数说明。
+
 使用示例:
-  ggt size          显示所有仓库大小
-  ggt sz          简写形式`,
+  ggt size          显示所有仓库大小并输出分桶统计
+  ggt sz          简写形式
+  ggt size --low 200 --high 600 --unit binary  自定义阈值与口径`,
 	Run: func(cmd *cobra.Command, args []string) {
 		repos := MustGetRepoList()
 		pterm.Info.Printf("共 %d 个仓库，开始统计大小...\n\n", len(repos))
@@ -56,6 +72,34 @@ var sizeCmd = &cobra.Command{
 
 		pterm.Println()
 		Infof("总大小: %s", formatSize(totalSize))
+
+		// 分桶统计：命令行 flag 优先于配置文件，未指定时取配置默认值
+		low := GetConfig().SizeBucketLowMB
+		if sizeLow > 0 {
+			low = sizeLow
+		}
+		high := GetConfig().SizeBucketHighMB
+		if sizeHigh > 0 {
+			high = sizeHigh
+		}
+		unit := GetConfig().SizeUnit
+		if sizeUnit != "" {
+			unit = sizeUnit
+		}
+		if unit != "decimal" && unit != "binary" {
+			Warnf("size_unit 配置无效（%q），已回退为 decimal", unit)
+			unit = "decimal"
+		}
+
+		small, mid, large := classifyBySize(results, low, high, unit)
+		unitLabel := "十进制 MB (1 MB = 1,000,000 字节)"
+		if unit == "binary" {
+			unitLabel = "二进制 MB (1 MB = 1024×1024 字节，即 MiB)"
+		}
+		Header("大小分桶统计（" + unitLabel + "）")
+		printSizeBucket(fmt.Sprintf("<%dMB", low), small)
+		printSizeBucket(fmt.Sprintf("%d~%dMB", low, high), mid)
+		printSizeBucket(fmt.Sprintf(">%dMB", high), large)
 	},
 }
 
@@ -70,6 +114,7 @@ func showRepoSize(ctx context.Context, repoPath string, width int) repoSizeResul
 			name:   getRepoName(repoPath),
 			output: pterm.Warning.Sprintf("仓库 %s: 执行失败\n", repoPath),
 			size:   0,
+			ok:     false,
 		}
 	}
 
@@ -113,6 +158,50 @@ func showRepoSize(ctx context.Context, repoPath string, width int) repoSizeResul
 		name:   name,
 		output: b.String(),
 		size:   calcTotalBytes(info),
+		ok:     true,
+	}
+}
+
+// bytesToMB 将字节数按指定口径换算为 MB 数值。
+// unit 为 "decimal" 时 1 MB = 1,000,000 字节；为 "binary" 时 1 MB = 1024×1024 字节（即 MiB）。
+// 纯函数，不依赖任何外部状态，便于单元测试。
+func bytesToMB(b int64, unit string) float64 {
+	if unit == "binary" {
+		return float64(b) / (1024 * 1024)
+	}
+	return float64(b) / 1e6
+}
+
+// classifyBySize 按大小将所有成功统计的仓库分入三桶：
+//   - small: MB < lowMB
+//   - mid:   lowMB <= MB <= highMB
+//   - large: MB > highMB
+//
+// 失败的仓库（ok == false）直接跳过，不会因 size 为 0 而被误归入 small。
+// 返回的切片保持 results 原有的顺序。
+func classifyBySize(results []repoSizeResult, lowMB, highMB int, unit string) (small, mid, large []string) {
+	for _, r := range results {
+		if !r.ok {
+			continue
+		}
+		mb := bytesToMB(r.size, unit)
+		switch {
+		case mb < float64(lowMB):
+			small = append(small, r.name)
+		case mb > float64(highMB):
+			large = append(large, r.name)
+		default:
+			mid = append(mid, r.name)
+		}
+	}
+	return
+}
+
+// printSizeBucket 打印单个分桶：标题（含数量）+ 缩进列出每个仓库名。
+func printSizeBucket(title string, names []string) {
+	Infof("%s：%d 个", title, len(names))
+	for _, n := range names {
+		pterm.FgGray.Printf("    - %s\n", n)
 	}
 }
 
@@ -193,4 +282,10 @@ func formatSize(size int64) string {
 func init() {
 	rootCmd.AddCommand(sizeCmd)
 	sizeCmd.Aliases = []string{"sz"}
+
+	// 阈值与换算口径：flag 优先于配置文件，仅本次生效、不写入 JSON。
+	// 语义与根命令 -c 相同：默认 0/空字符串表示"未指定"。
+	sizeCmd.Flags().IntVar(&sizeLow, "low", 0, "分桶下界阈值（MB），省略时取配置文件 size_bucket_low_mb")
+	sizeCmd.Flags().IntVar(&sizeHigh, "high", 0, "分桶上界阈值（MB），省略时取配置文件 size_bucket_high_mb")
+	sizeCmd.Flags().StringVar(&sizeUnit, "unit", "", "分桶 MB 换算口径：decimal 或 binary，省略时取配置文件 size_unit")
 }

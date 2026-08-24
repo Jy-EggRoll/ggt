@@ -81,3 +81,57 @@ func TestFormatSize(t *testing.T) {
 		}
 	}
 }
+
+// TestBytesToMB 验证十进制与二进制两种口径的字节→MB 换算。
+func TestBytesToMB(t *testing.T) {
+	cases := []struct {
+		bytes int64
+		unit  string
+		want  float64
+	}{
+		{1_000_000, "decimal", 1.0},
+		{500_000_000, "decimal", 500.0},
+		{1024 * 1024, "binary", 1.0},
+		{500 * 1024 * 1024, "binary", 500.0},
+		// 非 binary 一律按 decimal 处理
+		{1_000_000, "whatever", 1.0},
+	}
+	for _, c := range cases {
+		if got := bytesToMB(c.bytes, c.unit); got != c.want {
+			t.Errorf("bytesToMB(%d, %q) = %v, 期望 %v", c.bytes, c.unit, got, c.want)
+		}
+	}
+}
+
+// TestClassifyBySize 验证分桶边界与失败仓库排除。
+func TestClassifyBySize(t *testing.T) {
+	results := []repoSizeResult{
+		{name: "tiny", size: 100_000_000, ok: true},       // 100 MB < 500 → small
+		{name: "exact-low", size: 500_000_000, ok: true},  // 500 MB → mid
+		{name: "mid", size: 600_000_000, ok: true},        // 600 MB → mid
+		{name: "exact-high", size: 800_000_000, ok: true}, // 800 MB → mid
+		{name: "huge", size: 900_000_000, ok: true},       // 900 MB → large
+		{name: "failed", size: 0, ok: false},              // 不应入任何桶
+	}
+
+	small, mid, large := classifyBySize(results, 500, 800, "decimal")
+
+	wantSmall := []string{"tiny"}
+	wantMid := []string{"exact-low", "mid", "exact-high"}
+	wantLarge := []string{"huge"}
+
+	assertNames := func(got, want []string) {
+		if len(got) != len(want) {
+			t.Errorf("分桶数量不符: 实际 %v, 期望 %v", got, want)
+			return
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("分桶顺序/内容不符: 实际 %v, 期望 %v", got, want)
+			}
+		}
+	}
+	assertNames(small, wantSmall)
+	assertNames(mid, wantMid)
+	assertNames(large, wantLarge)
+}
