@@ -16,6 +16,11 @@ func TestParseSizeValue(t *testing.T) {
 		{"2 MiB", 2 * 1024 * 1024},
 		{"1 GiB", 1024 * 1024 * 1024},
 		{"  3 KiB  ", 3 * 1024},
+		// 十进制无 i 单位容错（git 未来可能改用 KB/MB/GB）
+		{"1 KB", 1000},
+		{"1 MB", 1000 * 1000},
+		{"2 MB", 2 * 1000 * 1000},
+		{"1 GB", 1000 * 1000 * 1000},
 	}
 	for _, c := range cases {
 		if got := parseSizeValue(c.in); got != c.want {

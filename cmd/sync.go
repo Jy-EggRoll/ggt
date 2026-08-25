@@ -78,7 +78,9 @@ func syncRepo(ctx context.Context, e RepoEntry) string {
 
 	remote, err := git.RunContext(ctx, e.Path, "rev-parse", "@{upstream}")
 	if err != nil {
-		return WarnS("%s 获取远程分支失败\n", label)
+		// 通常是该分支未设置上游跟踪（@{upstream} 不存在），明确告知根因而非泛化的"获取失败"，
+		// 避免用户误以为是网络或权限问题。
+		return WarnS("%s 未设置上游跟踪分支（@{upstream} 不存在），跳过同步\n", label)
 	}
 	remote = strings.TrimSpace(remote)
 

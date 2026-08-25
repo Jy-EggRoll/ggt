@@ -240,22 +240,34 @@ func calcTotalBytes(info map[string]string) int64 {
 }
 
 // parseSizeValue 将带单位的大小字符串转为字节数。
-// 支持的单位: bytes, KiB, MiB, GiB
+// 支持的单位（参考 git count-objects -vH 官方输出，前缀 i 为二进制、无 i 为十进制）：
+// bytes、KiB/KiB、MiB/MB、GiB/GB。
 func parseSizeValue(s string) int64 {
-	// 先检测单位，再去除单位字符
+	// 先检测单位，再去除单位字符。二进制（KiB/MiB/GiB）按 1024 进位，
+	// 十进制（KB/MB/GB）按 1000 进位，兼容 git 未来改用无 i 单位的输出格式。
 	mult := int64(1)
-	if strings.Contains(s, "KiB") {
+	switch {
+	case strings.Contains(s, "KiB"):
 		mult = 1024
-	} else if strings.Contains(s, "MiB") {
+	case strings.Contains(s, "MiB"):
 		mult = 1024 * 1024
-	} else if strings.Contains(s, "GiB") {
+	case strings.Contains(s, "GiB"):
 		mult = 1024 * 1024 * 1024
+	case strings.Contains(s, "KB"):
+		mult = 1000
+	case strings.Contains(s, "MB"):
+		mult = 1000 * 1000
+	case strings.Contains(s, "GB"):
+		mult = 1000 * 1000 * 1000
 	}
 
 	s = strings.ReplaceAll(s, "bytes", "")
 	s = strings.ReplaceAll(s, "KiB", "")
 	s = strings.ReplaceAll(s, "MiB", "")
 	s = strings.ReplaceAll(s, "GiB", "")
+	s = strings.ReplaceAll(s, "KB", "")
+	s = strings.ReplaceAll(s, "MB", "")
+	s = strings.ReplaceAll(s, "GB", "")
 	s = strings.TrimSpace(s)
 
 	val, err := strconv.ParseFloat(s, 64)

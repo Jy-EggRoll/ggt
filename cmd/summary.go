@@ -33,11 +33,14 @@ var summaryCmd = &cobra.Command{
   ggt summary          查看变更并提交
   ggt sum             简写形式`,
 	Run: func(cmd *cobra.Command, args []string) {
-		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+		// 统一 ctx：第一阶段并发检查与第二阶段交互式操作（diff/count-objects/add/commit/push）
+		// 都复用同一 ctx，确保这些耗时 git 调用也受全局超时与取消约束，不再用无 ctx 的 git.Run。
+		ctx := context.Background()
+		repos := MustGetAllRepos(ctx, GetConfig().IgnoreSubmodules)
 		Infof("共 %d 个仓库，开始检查变更...\n", len(repos))
 
 		// 第一阶段：并发检查所有仓库（含子模块）的 git 状态
-		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) *dirtyRepo {
+		results := worker.Map(ctx, repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) *dirtyRepo {
 			statusOutput, err := git.RunContext(ctx, e.Path, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
 			if err != nil {
 				return nil
@@ -86,7 +89,7 @@ var summaryCmd = &cobra.Command{
 
 			// 显示详细的 diff 统计
 			pterm.Println(Muted("变动详情："))
-			diffOutput, err := git.Run(d.path, "diff", "--color=always", "--stat")
+			diffOutput, err := git.RunContext(ctx, d.path, "diff", "--color=always", "--stat")
 			if err != nil {
 				Warnf("获取 diff 失败: %v", err)
 			} else if diffOutput != "" {
@@ -108,21 +111,21 @@ var summaryCmd = &cobra.Command{
 			// 仅在存在未提交的文件变更时执行 add + commit
 			if d.hasUncommitted {
 				// git add -A：暂存所有更改
-				if out, err := git.RunCombined(d.path, "add", "-A"); err != nil {
+				if out, err := git.RunCombinedContext(ctx, d.path, "add", "-A"); err != nil {
 					Errorf("git add 失败:\n%s", out)
 					continue
 				}
 
 				// git commit：自动生成提交信息
 				msg := fmt.Sprintf("chore: 终端自动提交更新 %s", time.Now().Format("2006-01-02 15:04:05"))
-				if out, err := git.RunCombined(d.path, "commit", "-m", msg); err != nil {
+				if out, err := git.RunCombinedContext(ctx, d.path, "commit", "-m", msg); err != nil {
 					Errorf("git commit 失败:\n%s", out)
 					continue
 				}
 			}
 
-			// git push：推送到远程，使用 RunCombined 确保捕获 stderr 错误信息
-			if out, err := git.RunCombined(d.path, "push"); err != nil {
+			// git push：推送到远程，使用 RunCombinedContext 确保捕获 stderr 错误信息
+			if out, err := git.RunCombinedContext(ctx, d.path, "push"); err != nil {
 				Errorf("推送失败:\n%s", out)
 			} else {
 				SuccessMsg("推送完成！")
@@ -130,7 +133,7 @@ var summaryCmd = &cobra.Command{
 
 			// 显示提交后的仓库大小信息
 			pterm.Println(Muted("大小信息："))
-			countOutput, err := git.Run(d.path, "count-objects", "-vH")
+			countOutput, err := git.RunContext(ctx, d.path, "count-objects", "-vH")
 			if err != nil {
 				Warnf("获取大小信息失败: %v", err)
 			} else if countOutput != "" {
