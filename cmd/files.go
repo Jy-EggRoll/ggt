@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"ggt/internal/git"
@@ -15,18 +16,18 @@ import (
 )
 
 // filesOutput 保存单个仓库的文件列表结果。
+// path 是仓库的绝对路径，用于拼接完整文件路径；
 // files 是该仓库的所有文件路径列表（相对仓库根目录），
 // err 记录获取失败时的错误信息，用于跳过失败仓库。
 type filesOutput struct {
-	name        string
-	isSubmodule bool
-	files       []string
-	err         error
+	path  string
+	files []string
+	err   error
 }
 
 // filesCmd 实现 "ggt files"（简写 ggt fl）。
 // 并发获取所有仓库的文件列表，支持输出到控制台或文件。
-// 输出格式统一为 "[仓库名] 文件路径"，每个文件一行。
+// 输出格式为每行一个完整路径（仓库绝对路径文件路径）。
 var filesCmd = &cobra.Command{
 	Use:   "files",
 	Short: "显示所有仓库的文件列表",
@@ -45,15 +46,15 @@ var filesCmd = &cobra.Command{
 		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoFiles)
 		t.Done()
 
-		// 构建输出内容：格式为 "[仓库名] 文件路径"
+		// 构建输出内容：每行为仓库完整路径与文件路径拼接的合法路径
 		var output strings.Builder
 		for _, r := range results {
 			if r.err != nil {
-				Warnf("仓库 %s: 获取文件列表失败 - %v\n", r.name, r.err)
+				Warnf("仓库 %s: 获取文件列表失败 - %v\n", r.path, r.err)
 				continue
 			}
 			for _, file := range r.files {
-				output.WriteString(fmt.Sprintf("[%s] %s\n", r.name, file))
+				output.WriteString(filepath.Join(r.path, file) + "\n")
 			}
 		}
 
@@ -78,10 +79,9 @@ func showRepoFiles(ctx context.Context, e RepoEntry) filesOutput {
 	output, err := git.RunContext(ctx, e.Path, "ls-files", "--cached", "--others", "--exclude-standard")
 	if err != nil {
 		return filesOutput{
-			name:        e.Name,
-			isSubmodule: e.IsSubmodule,
-			files:       nil,
-			err:         err,
+			path:  e.Path,
+			files: nil,
+			err:   err,
 		}
 	}
 
@@ -89,19 +89,17 @@ func showRepoFiles(ctx context.Context, e RepoEntry) filesOutput {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
 		return filesOutput{
-			name:        e.Name,
-			isSubmodule: e.IsSubmodule,
-			files:       []string{},
-			err:         nil,
+			path:  e.Path,
+			files: []string{},
+			err:   nil,
 		}
 	}
 
 	files := strings.Split(trimmed, "\n")
 	return filesOutput{
-		name:        e.Name,
-		isSubmodule: e.IsSubmodule,
-		files:       files,
-		err:         nil,
+		path:  e.Path,
+		files: files,
+		err:   nil,
 	}
 }
 
