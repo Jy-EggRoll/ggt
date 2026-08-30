@@ -26,7 +26,10 @@ var statusCmd = &cobra.Command{
 		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
 		Infof("共 %d 个仓库，开始检查状态...\n", len(repos))
 
+		t := NewDebugTimer(fmt.Sprintf("状态检查 (%d 个仓库)", len(repos)))
 		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoStatus)
+		t.Done()
+
 		for _, r := range results {
 			fmt.Print(r)
 		}

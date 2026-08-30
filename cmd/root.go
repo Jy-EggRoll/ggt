@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"ggt/internal/config"
 	"github.com/pterm/pterm"
@@ -18,6 +19,8 @@ var (
 	// concurrency 通过 --concurrency / -c 命令行参数传入，
 	// 在 PersistentPreRunE 中覆盖配置文件的默认值。
 	concurrency int
+	// debug 通过 --debug 持久化 flag 传入，控制是否输出各阶段耗时计时。
+	debug bool
 	// cfg 是全局配置实例，在 PersistentPreRunE 中初始化。
 	cfg *config.Config
 )
@@ -34,6 +37,7 @@ var rootCmd = &cobra.Command{
 
 配置文件: ~/.config/go-git-ggt/ggt-config.json`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		t := NewDebugTimer("配置加载")
 		var err error
 		cfg, err = config.LoadConfig()
 		if err != nil {
@@ -45,6 +49,7 @@ var rootCmd = &cobra.Command{
 		if concurrency > 0 {
 			cfg.Concurrency = strconv.Itoa(concurrency)
 		}
+		t.Done()
 
 		return nil
 	},
@@ -63,11 +68,38 @@ func init() {
 	// 覆盖配置文件里的并发数。真正生效的默认值（CPU 核心数的一半）由
 	// config 包的 getDefaultConcurrency 统一计算，避免出现两处默认值逻辑不一致。
 	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "并发数 (省略时取配置文件 concurrency 值；未设则默认语义值 CPUHalf，即 CPU 核心数的一半；也可写 CPUFull/CPUQuarter 或具体数字)")
+	// --debug 持久化 flag：所有子命令均可使用，输出各阶段耗时用于性能诊断。
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "输出调试计时信息（各阶段耗时）")
 }
 
 // GetConfig 返回全局配置实例。
 func GetConfig() *config.Config {
 	return cfg
+}
+
+// GetDebug 返回 --debug flag 是否开启。
+// 各命令据此决定是否输出阶段耗时计时。
+func GetDebug() bool {
+	return debug
+}
+
+// DebugTimer 记录阶段耗时，仅 --debug 时输出灰色计时行。
+// 用法：t := NewDebugTimer("阶段名") ... defer t.Done() 或 t.Done()
+type DebugTimer struct {
+	label string
+	start time.Time
+}
+
+// NewDebugTimer 创建计时器并记录起始时间。
+func NewDebugTimer(label string) *DebugTimer {
+	return &DebugTimer{label: label, start: time.Now()}
+}
+
+// Done 计算并输出耗时（仅 --debug 模式）。
+func (t *DebugTimer) Done() {
+	if debug {
+		pterm.FgGray.Printf("  [debug] %s: %v\n", t.label, time.Since(t.start))
+	}
 }
 
 // ——— 统一的 pterm 输出辅助函数 ———

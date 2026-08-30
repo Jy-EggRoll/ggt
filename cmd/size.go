@@ -56,9 +56,11 @@ var sizeCmd = &cobra.Command{
 		Infof("共 %d 个仓库，开始统计大小...\n", len(repos))
 
 		width := pterm.GetTerminalWidth()
+		t := NewDebugTimer(fmt.Sprintf("大小统计 (%d 个仓库)", len(repos)))
 		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) repoSizeResult {
 			return showRepoSize(ctx, e, width)
 		})
+		t.Done()
 
 		// 顺序打印各仓库的大小信息
 		for _, r := range results {

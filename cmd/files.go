@@ -41,7 +41,9 @@ var filesCmd = &cobra.Command{
 		Infof("共 %d 个仓库，开始获取文件列表...\n", len(repos))
 
 		// 使用 worker.Map 并发获取每个仓库的文件列表
+		t := NewDebugTimer(fmt.Sprintf("文件列表 (%d 个仓库)", len(repos)))
 		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoFiles)
+		t.Done()
 
 		// 构建输出内容：格式为 "[仓库名] 文件路径"
 		var output strings.Builder

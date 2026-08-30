@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,12 +121,20 @@ func GetAllRepos(ctx context.Context, ignore bool) []RepoEntry {
 
 // MustGetAllRepos 同 GetAllRepos，但顶层仓库为空时打印提示并退出（正常无任务）。
 // 所有需要仓库集合的命令都应调用本函数而非 MustGetRepoList。
+// --debug 模式下分别输出仓库发现和子模块展开的耗时。
 func MustGetAllRepos(ctx context.Context, ignore bool) []RepoEntry {
+	t1 := NewDebugTimer("仓库发现")
 	top := GetRepoList()
 	if len(top) == 0 {
 		WarnMsg("未配置任何仓库路径，请先使用 'ggt repo add <path>' 或 'ggt repo add-parent <path>' 添加")
 		// 空列表属于"正常无任务可做"而非错误，因此退出码 0。
 		os.Exit(0)
 	}
-	return expand(ctx, top, ignore)
+	t1.Done()
+
+	t2 := NewDebugTimer(fmt.Sprintf("子模块展开 (%d 个仓库, 并发度=%d)", len(top), GetConfig().ConcurrencyValue()))
+	result := expand(ctx, top, ignore)
+	t2.Done()
+
+	return result
 }

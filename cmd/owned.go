@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,9 +48,11 @@ var ownedCmd = &cobra.Command{
 		Infof("共 %d 个仓库，开始获取所有权...\n", len(repos))
 
 		// 并发执行 takeown（worker.Map 保证输出顺序），子模块作为独立条目参与
+		t := NewDebugTimer(fmt.Sprintf("所有权获取 (%d 个仓库)", len(repos)))
 		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) takeownResult {
 			return takeownResult{name: e.Name, isSubmodule: e.IsSubmodule, err: takeownRepo(ctx, e.Path)}
 		})
+		t.Done()
 
 		var successCount, failCount int
 		for _, r := range results {

@@ -201,12 +201,14 @@ func processSwitchResults(entries []RepoEntry, target string) {
 		res         switchRemoteResult
 	}
 
+	t := NewDebugTimer(fmt.Sprintf("协议切换 (%d 个仓库)", len(entries)))
 	results := worker.Map(context.Background(), entries, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) switchOutcome {
 		r := doSwitchRemote(ctx, e.Path, target)
 		r.name = e.Name
 		r.isSubmodule = e.IsSubmodule
 		return switchOutcome{e.Name, e.IsSubmodule, r}
 	})
+	t.Done()
 
 	var success, skipped, failed int
 	for _, r := range results {

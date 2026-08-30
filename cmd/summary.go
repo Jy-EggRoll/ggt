@@ -40,6 +40,7 @@ var summaryCmd = &cobra.Command{
 		Infof("共 %d 个仓库，开始检查变更...\n", len(repos))
 
 		// 第一阶段：并发检查所有仓库（含子模块）的 git 状态
+		t := NewDebugTimer(fmt.Sprintf("状态检查 (%d 个仓库)", len(repos)))
 		results := worker.Map(ctx, repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) *dirtyRepo {
 			statusOutput, err := git.RunContext(ctx, e.Path, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
 			if err != nil {
@@ -76,6 +77,7 @@ var summaryCmd = &cobra.Command{
 				hasUncommitted: true,
 			}
 		})
+		t.Done()
 
 		// 第二阶段：顺序处理每个有变更的仓库（交互+提交需等待用户输入）
 		for _, d := range results {
