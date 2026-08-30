@@ -4,26 +4,42 @@ vars:
   APP: ggt
   VERSION:
     sh: date '+%Y-%m-%d-%H-%M-%S'
-  LDFLAGS: '-s -w -X ggt/cmd.Version={{.VERSION}}'
+  BUILDTIME:
+    sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+  LDFLAGS: '-s -w -X ggt/cmd.Version={{.VERSION}} -X ggt/cmd.BuildTime={{.BUILDTIME}}'
 
 tasks:
   default:
-    desc: 完整构建与验证：格式化检查 + 静态检查 + 单元测试 + 全平台编译
-    deps:
-      - fmt
-      - lint
-      - test
-      - build-all
+    desc: 完整构建与验证：格式化检查 + 静态检查 + 单元测试 + 竞态检测 + 全平台编译
+    cmds:
+      - task: verify
+      - task: build-all
 
-  # fmt 检查所有 Go 源文件是否已通过 gofmt 格式化
+  # verify 执行完整的代码质量检查，是发布构建的前置条件
+  # 串行执行确保任何一项失败都能立即阻止后续步骤
+  verify:
+    desc: 完整验证：格式化检查 + 静态检查 + 单元测试 + 竞态检测
+    cmds:
+      - task: fmt:check
+      - task: vet
+      - task: test
+      - task: test:race
+
+  # fmt:check 检查所有 Go 源文件是否已通过 gofmt 格式化
   # 若输出非空则说明有文件未格式化，命令以非零码退出，阻止构建
-  fmt:
+  fmt:check:
     desc: 检查 Go 代码格式 (gofmt)
     cmds:
       - 'test -z "$(gofmt -l .)" || (echo "以下文件未通过 gofmt 检查:"; gofmt -l .; exit 1)'
 
-  # lint 执行 go vet 静态检查，捕获明显的代码异味与可疑构造
-  lint:
+  # fmt 执行 gofmt 格式化所有 Go 源文件（自动修复）
+  fmt:
+    desc: 格式化 Go 代码 (gofmt)
+    cmds:
+      - gofmt -w .
+
+  # vet 执行 go vet 静态检查，捕获明显的代码异味与可疑构造
+  vet:
     desc: 静态检查 (go vet)
     cmds:
       - go vet ./...
@@ -34,101 +50,204 @@ tasks:
     cmds:
       - go test ./... -count=1
 
+  # test:race 运行带竞态检测的单元测试，用于检测并发数据竞争
+  # 仅在 CI/发布构建中执行，本地开发可跳过以加快反馈速度
+  test:race:
+    desc: 运行带竞态检测的单元测试
+    cmds:
+      - go test ./... -count=1 -race
+
   build-all:
-    desc: Build all platform binaries in parallel
+    desc: 并行构建所有平台二进制文件
     deps:
+      - build:windows:386
+      - build:windows:amd64
+      - build:windows:arm64
+      - build:linux:386
       - build:linux:amd64
+      - build:linux:arm
       - build:linux:arm64
       - build:darwin:amd64
       - build:darwin:arm64
-      - build:windows:amd64
-      - build:windows:arm64
-
+      - build:freebsd:amd64
+      - build:freebsd:arm64
 
   build:
-    desc: Build for current platform
+    desc: 构建当前平台二进制文件
     cmds:
-      - go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/{{.APP}}{{exeExt}} .
+      - go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}{{exeExt}} .
     sources:
       - ./**/*.go
       - go.mod
       - go.sum
     generates:
-      - dist/{{.APP}}{{exeExt}}
+      - build/{{.APP}}{{exeExt}}
+
+  build:linux:386:
+    desc: 交叉编译 linux/386
+    cmds:
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-linux-386 .
+    sources:
+      - ./**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - build/{{.APP}}-linux-386
 
   build:linux:amd64:
-    desc: Cross-compile linux/amd64
+    desc: 交叉编译 linux/amd64
     cmds:
-      - mkdir -p dist/linux-amd64
-      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/linux-amd64/{{.APP}} .
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-linux-amd64 .
     sources:
       - ./**/*.go
       - go.mod
       - go.sum
     generates:
-      - dist/linux-amd64/{{.APP}}
+      - build/{{.APP}}-linux-amd64
+
+  build:linux:arm:
+    desc: 交叉编译 linux/arm (v7)
+    cmds:
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-linux-arm .
+    sources:
+      - ./**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - build/{{.APP}}-linux-arm
 
   build:linux:arm64:
-    desc: Cross-compile linux/arm64
+    desc: 交叉编译 linux/arm64
     cmds:
-      - mkdir -p dist/linux-arm64
-      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/linux-arm64/{{.APP}} .
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-linux-arm64 .
     sources:
       - ./**/*.go
       - go.mod
       - go.sum
     generates:
-      - dist/linux-arm64/{{.APP}}
+      - build/{{.APP}}-linux-arm64
 
   build:darwin:amd64:
-    desc: Cross-compile darwin/amd64
+    desc: 交叉编译 darwin/amd64
     cmds:
-      - mkdir -p dist/darwin-amd64
-      - CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/darwin-amd64/{{.APP}} .
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-darwin-amd64 .
     sources:
       - ./**/*.go
       - go.mod
       - go.sum
     generates:
-      - dist/darwin-amd64/{{.APP}}
+      - build/{{.APP}}-darwin-amd64
 
   build:darwin:arm64:
-    desc: Cross-compile darwin/arm64
+    desc: 交叉编译 darwin/arm64 (Apple Silicon)
     cmds:
-      - mkdir -p dist/darwin-arm64
-      - CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/darwin-arm64/{{.APP}} .
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-darwin-arm64 .
     sources:
       - ./**/*.go
       - go.mod
       - go.sum
     generates:
-      - dist/darwin-arm64/{{.APP}}
+      - build/{{.APP}}-darwin-arm64
+
+  build:windows:386:
+    desc: 交叉编译 windows/386
+    cmds:
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=windows GOARCH=386 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-windows-386.exe .
+    sources:
+      - ./**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - build/{{.APP}}-windows-386.exe
 
   build:windows:amd64:
-    desc: Cross-compile windows/amd64
+    desc: 交叉编译 windows/amd64
     cmds:
-      - mkdir -p dist/windows-amd64
-      - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/windows-amd64/{{.APP}}.exe .
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-windows-amd64.exe .
     sources:
       - ./**/*.go
       - go.mod
       - go.sum
     generates:
-      - dist/windows-amd64/{{.APP}}.exe
+      - build/{{.APP}}-windows-amd64.exe
 
   build:windows:arm64:
-    desc: Cross-compile windows/arm64
+    desc: 交叉编译 windows/arm64
     cmds:
-      - mkdir -p dist/windows-arm64
-      - CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o dist/windows-arm64/{{.APP}}.exe .
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-windows-arm64.exe .
     sources:
       - ./**/*.go
       - go.mod
       - go.sum
     generates:
-      - dist/windows-arm64/{{.APP}}.exe
+      - build/{{.APP}}-windows-arm64.exe
+
+  build:freebsd:amd64:
+    desc: 交叉编译 freebsd/amd64
+    cmds:
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-freebsd-amd64 .
+    sources:
+      - ./**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - build/{{.APP}}-freebsd-amd64
+
+  build:freebsd:arm64:
+    desc: 交叉编译 freebsd/arm64
+    cmds:
+      - mkdir -p build
+      - CGO_ENABLED=0 GOOS=freebsd GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -trimpath -o build/{{.APP}}-freebsd-arm64 .
+    sources:
+      - ./**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - build/{{.APP}}-freebsd-arm64
+
+  # changelog 根据 VERSION 和 TYPE 环境变量生成发布日志
+  # TYPE=release（默认）：从 CHANGELOG.md 提取对应版本内容
+  # TYPE=dev：生成开发版发布日志，附加警告信息
+  changelog:
+    desc: 生成发布日志
+    cmds:
+      - |
+        if [ "{{.TYPE}}" = "dev" ]; then
+          echo "## 开发版 {{.VERSION}}"
+          echo ""
+          echo "> ⚠️ 此版本为开发版，仅供测试使用，不建议在生产环境中使用。"
+          echo ""
+          echo "### 构建信息"
+          echo ""
+          echo "- 版本: {{.VERSION}}"
+          echo "- 构建时间: {{.BUILDTIME}}"
+          echo "- 分支: $(git rev-parse --abbrev-ref HEAD)"
+          echo "- 提交: $(git rev-parse --short HEAD)"
+        else
+          if [ -f CHANGELOG.md ]; then
+            # 提取当前版本的 changelog 内容
+            awk '/^## {{.VERSION}}/{found=1; next} /^## [0-9]/{if(found) exit} found{print}' CHANGELOG.md
+          else
+            echo "## {{.VERSION}}"
+            echo ""
+            echo "正式版发布。"
+          fi
+        fi
+    vars:
+      TYPE:
+        sh: echo "${TYPE:-release}"
 
   clean:
-    desc: Remove all build artifacts
+    desc: 清除所有构建产物
     cmds:
-      - rm -rf dist/
+      - rm -rf build/

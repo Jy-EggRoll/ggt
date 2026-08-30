@@ -1,0 +1,76 @@
+name: Continuous Integration
+
+on:
+    pull_request: {}
+    push: {}
+
+permissions:
+    contents: read
+
+jobs:
+    # PR 只做验证，快速反馈，不构建
+    verify:
+        if: github.event_name == 'pull_request'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version-file: go.mod
+
+            - name: Setup Task
+              uses: go-task/setup-task@v2
+              with:
+                  version: 3.x
+
+            - name: Verify source
+              run: task verify
+
+    # push 时验证 + 构建 + 上传产物
+    build:
+        if: github.event_name == 'push'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version-file: go.mod
+
+            - name: Setup Task
+              uses: go-task/setup-task@v2
+              with:
+                  version: 3.x
+
+            - name: Get version
+              id: get_version
+              run: |
+                  VERSION=$(date '+%Y-%m-%d-%H-%M-%S')
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+            - name: Get build time
+              id: get_build_time
+              run: |
+                  BUILDTIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                  echo "buildtime=$BUILDTIME" >> $GITHUB_OUTPUT
+
+            - name: Verify source
+              run: task verify
+
+            - name: Build binaries for all platforms
+              run: task build-all
+              env:
+                  VERSION: ${{ steps.get_version.outputs.version }}
+                  BUILDTIME: ${{ steps.get_build_time.outputs.buildtime }}
+
+            - name: Upload build artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ggt-${{ steps.get_version.outputs.version }}
+                  path: build/*
+                  retention-days: 30
