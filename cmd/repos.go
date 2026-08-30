@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"ggt/internal/git"
+	"ggt/internal/worker"
 )
 
 // RepoEntry 是 ggt 遍历仓库时的统一单元。
@@ -70,26 +71,44 @@ func listSubmodulePaths(ctx context.Context, repoPath string) []string {
 // ignoreSubmodules 为 true 时完全跳过子模块，是全局唯一控制"是否忽略子模块"的接口
 // （对应配置项 ignore_submodules）。
 // 返回的切片中，顶层仓库 IsSubmodule=false，子模块 IsSubmodule=true。
+//
+// 子模块发现通过 worker.Map 并发执行（并发度取配置的 concurrency 值），
+// 避免串行调用 git submodule status --recursive 导致的启动延迟。
+// worker.Map 保证结果按原始顺序返回，因此最终 entries 的顺序与串行版本一致：
+// 每个顶层仓库按配置顺序出现，其子模块按 git submodule 输出顺序追加在其后。
 func expand(ctx context.Context, topPaths []string, ignoreSubmodules bool) []RepoEntry {
-	var entries []RepoEntry
+	// 第一步：收集所有顶层仓库条目（顺序与配置一致）
+	entries := make([]RepoEntry, 0, len(topPaths))
 	for _, top := range topPaths {
-		// 顶层仓库：名称取其目录名。
 		entries = append(entries, RepoEntry{
 			Path:        top,
 			Name:        filepath.Base(top),
 			IsSubmodule: false,
 		})
-		if ignoreSubmodules {
-			continue
-		}
-		for _, subRel := range listSubmodulePaths(ctx, top) {
+	}
+
+	if ignoreSubmodules {
+		return entries
+	}
+
+	// 第二步：并发发现所有顶层仓库的子模块。
+	// worker.Map 按 topPaths 顺序返回结果，每项对应一个仓库的子模块路径列表。
+	subsForEach := worker.Map(ctx, topPaths, GetConfig().ConcurrencyValue(),
+		func(ctx context.Context, top string) []string {
+			return listSubmodulePaths(ctx, top)
+		})
+
+	// 第三步：按顺序将子模块条目追加到 entries 中。
+	for i, subs := range subsForEach {
+		for _, subRel := range subs {
 			entries = append(entries, RepoEntry{
-				Path:        filepath.Join(top, subRel),
+				Path:        filepath.Join(topPaths[i], subRel),
 				Name:        subRel,
 				IsSubmodule: true,
 			})
 		}
 	}
+
 	return entries
 }
 
