@@ -18,12 +18,19 @@ tasks:
   # verify 执行完整的代码质量检查，是发布构建的前置条件
   # 串行执行确保任何一项失败都能立即阻止后续步骤
   verify:
-    desc: 完整验证：格式化检查 + 静态检查 + 单元测试 + 竞态检测
+    desc: 完整验证：依赖整理 + 格式化检查 + 静态检查 + 单元测试 + 竞态检测
     cmds:
+      - task: mod-tidy
       - task: fmt:check
       - task: vet
       - task: test
       - task: test:race
+
+  # mod-tidy 整理 go.mod 和 go.sum，确保依赖一致且无多余条目
+  mod-tidy:
+    desc: 整理 Go 模块依赖 (go mod tidy)
+    cmds:
+      - go mod tidy
 
   # fmt:check 检查所有 Go 源文件是否已通过 gofmt 格式化
   # 若输出非空则说明有文件未格式化，命令以非零码退出，阻止构建
