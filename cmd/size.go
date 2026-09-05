@@ -100,9 +100,10 @@ var sizeCmd = &cobra.Command{
 			unitLabel = "二进制 MB (1 MB = 1024×1024 字节，即 MiB)"
 		}
 		Header("大小分桶统计（" + unitLabel + "）")
-		printSizeBucket(fmt.Sprintf("<%dMB", low), small)
-		printSizeBucket(fmt.Sprintf("%d~%dMB", low, high), mid)
-		printSizeBucket(fmt.Sprintf(">%dMB", high), large)
+		// 不同分桶使用不同视觉级别：小仓库信息展示，中等仓库黄色警告，大仓库红色警告
+		printSizeBucket(fmt.Sprintf("<%dMB", low), small, Infof)
+		printSizeBucket(fmt.Sprintf("%d~%dMB", low, high), mid, Warnf)
+		printSizeBucket(fmt.Sprintf(">%dMB", high), large, Errorf)
 	},
 }
 
@@ -205,8 +206,10 @@ func classifyBySize(results []repoSizeResult, lowMB, highMB int, unit string) (s
 }
 
 // printSizeBucket 打印单个分桶：标题（含数量）+ 缩进列出每个仓库名。
-func printSizeBucket(title string, names []string) {
-	Infof("%s：%d 个", title, len(names))
+// printer 决定标题的视觉级别：Infof 浅蓝信息、Warnf 黄色警告、Errorf 红色错误，
+// 由调用方根据分桶的严重程度传入对应函数，保持列表项样式统一。
+func printSizeBucket(title string, names []string, printer func(string, ...any)) {
+	printer("%s：%d 个", title, len(names))
 	for _, n := range names {
 		ListItem(n)
 	}
