@@ -1,0 +1,23 @@
+{
+  "<{{.Low}}MB": "<{{.Low}}MB",
+  ">{{.High}}MB": ">{{.High}}MB",
+  "Disk usage": "磁盘占用",
+  "Execution failed: {{.Err}}": "执行失败: {{.Err}}",
+  "Invalid size_unit value (\"{{.Unit}}\"), falling back to \"decimal\"": "size_unit 配置无效（\"{{.Unit}}\"），已回退为 decimal",
+  "Iterate over all configured repositories and show each one's size statistics.\n\nWhen finished, repositories are bucketed by size: below the lower bound, between\nthe bounds, and above the upper bound, with repository names listed per bucket.\nThresholds and the conversion unit are described in the flags below.\n\nExamples:\n  ggt size          Show sizes and bucket statistics for all repositories\n  ggt sz            Short form\n  ggt size --low 200 --high 600 --unit binary  Custom thresholds and unit": "遍历所有已配置的仓库，显示每个仓库的大小统计信息。\n\n统计完成后会按大小分桶：小于下界、介于上下界之间、大于上界，\n并分别列出各桶内的仓库名。分桶阈值与换算口径见下方参数说明。\n\n使用示例:\n  ggt size          显示所有仓库大小并输出分桶统计\n  ggt sz          简写形式\n  ggt size --low 200 --high 600 --unit binary  自定义阈值与口径",
+  "Lower bucket bound in MB (defaults to the size_bucket_low_mb config value)": "分桶下界阈值（MB），省略时取配置文件 size_bucket_low_mb",
+  "MB conversion unit used for buckets: decimal or binary (defaults to the size_unit config value)": "分桶 MB 换算口径：decimal 或 binary，省略时取配置文件 size_unit",
+  "Output language (e.g. en, zh-CN); defaults to the language config value": "输出语言（如 en、zh-CN），省略时取配置文件 language",
+  "Package size": "包文件大小",
+  "Repositories: {{.Count}} — gathering sizes...": "仓库数: {{.Count}} — 开始统计大小...",
+  "Repository {{.Path}}: command failed": "仓库 {{.Path}}: 执行失败",
+  "Show size statistics for all repositories": "显示所有仓库的大小统计信息",
+  "Size buckets ({{.Unit}})": "大小分桶统计（{{.Unit}}）",
+  "Size stats (repositories: {{.Count}})": "大小统计 (仓库数: {{.Count}})",
+  "Total size: {{.Size}}": "总大小: {{.Size}}",
+  "Upper bucket bound in MB (defaults to the size_bucket_high_mb config value)": "分桶上界阈值（MB），省略时取配置文件 size_bucket_high_mb",
+  "binary MB (1 MB = 1024×1024 bytes, i.e. MiB)": "二进制 MB (1 MB = 1024×1024 字节，即 MiB)",
+  "decimal MB (1 MB = 1,000,000 bytes)": "十进制 MB (1 MB = 1,000,000 字节)",
+  "{{.Low}}~{{.High}}MB": "{{.Low}}~{{.High}}MB",
+  "{{.Title}}: {{.Count}}": "{{.Title}}：{{.Count}} 个"
+}

@@ -14,26 +14,30 @@ import (
 //
 // 输出安全：使用 worker.Map 并发收集结果 → 主 goroutine 顺序打印，
 // 避免多个仓库的输出行互相插入。
-var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "显示所有仓库的 git 状态",
-	Long: `遍历所有已配置的仓库，显示每个仓库的 git 状态。
+func newStatusCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "status",
+		Short: "显示所有仓库的 git 状态",
+		Long: `遍历所有已配置的仓库，显示每个仓库的 git 状态。
 
 使用示例:
   ggt status          显示所有仓库状态
   ggt st             简写形式`,
-	Run: func(cmd *cobra.Command, args []string) {
-		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-		Infof("共 %d 个仓库，开始检查状态...\n", len(repos))
+		Run: func(cmd *cobra.Command, args []string) {
+			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+			Infof("共 %d 个仓库，开始检查状态...\n", len(repos))
 
-		t := NewDebugTimer(fmt.Sprintf("状态检查 (%d 个仓库)", len(repos)))
-		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoStatus)
-		t.Done()
+			t := NewDebugTimer(fmt.Sprintf("状态检查 (%d 个仓库)", len(repos)))
+			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoStatus)
+			t.Done()
 
-		for _, r := range results {
-			fmt.Print(r)
-		}
-	},
+			for _, r := range results {
+				fmt.Print(r)
+			}
+		},
+	}
+	c.Aliases = []string{"st"}
+	return c
 }
 
 // showRepoStatus 检查单个仓库（含子模块）的 git 状态并返回格式化字符串。
@@ -55,6 +59,5 @@ func showRepoStatus(ctx context.Context, e RepoEntry) string {
 }
 
 func init() {
-	rootCmd.AddCommand(statusCmd)
-	statusCmd.Aliases = []string{"st"}
+	register(func(root *cobra.Command) { root.AddCommand(newStatusCmd()) })
 }

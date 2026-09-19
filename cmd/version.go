@@ -16,26 +16,29 @@ var Version string
 var BuildTime string
 
 // versionCmd 实现 "ggt version"。
-var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "显示版本信息",
-	Long: `显示 ggt 的构建版本信息。
+func newVersionCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "version",
+		Short: "显示版本信息",
+		Long: `显示 ggt 的构建版本信息。
 
 使用示例:
   ggt version          显示版本信息`,
-	Run: func(cmd *cobra.Command, args []string) {
-		Header("ggt")
-		if Version == "" {
-			InfoMsg("版本: 开发版本")
-		} else {
-			Infof("版本: %s", Version)
-		}
-		if BuildTime != "" && BuildTime != "unknown" {
-			Infof("构建时间: %s", BuildTime)
-		}
-	},
+		Run: func(cmd *cobra.Command, args []string) {
+			Header("ggt")
+			if Version == "" {
+				InfoMsg("版本: 开发版本")
+			} else {
+				Infof("版本: %s", Version)
+			}
+			if BuildTime != "" && BuildTime != "unknown" {
+				Infof("构建时间: %s", BuildTime)
+			}
+		},
+	}
+	return c
 }
 
 func init() {
-	rootCmd.AddCommand(versionCmd)
+	register(func(root *cobra.Command) { root.AddCommand(newVersionCmd()) })
 }

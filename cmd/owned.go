@@ -28,10 +28,11 @@ type takeownResult struct {
 // 逐个作为独立条目交给 takeownRepo 处理，无需在此命令内编写子模块专属循环。
 //
 // 注意：此命令仅适用于 Windows 系统（入口处 runtime.GOOS 检测提前返回）。
-var ownedCmd = &cobra.Command{
-	Use:   "owned",
-	Short: "批量获取所有仓库的所有权",
-	Long: `批量获取所有仓库的所有权。
+func newOwnedCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "owned",
+		Short: "批量获取所有仓库的所有权",
+		Long: `批量获取所有仓库的所有权。
 
 严格遵循当前的 pwsh 命令模仿实现。
 使用 takeown 命令获取目录及 .git 目录的所有权。
@@ -39,36 +40,38 @@ var ownedCmd = &cobra.Command{
 	
 使用示例:
   ggt owned          获取所有仓库所有权`,
-	Run: func(cmd *cobra.Command, args []string) {
-		if runtime.GOOS != "windows" {
-			WarnMsg("ggt owned 仅支持 Windows 系统")
-			return
-		}
-		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-		Infof("共 %d 个仓库，开始获取所有权...\n", len(repos))
-
-		// 并发执行 takeown（worker.Map 保证输出顺序），子模块作为独立条目参与
-		t := NewDebugTimer(fmt.Sprintf("所有权获取 (%d 个仓库)", len(repos)))
-		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) takeownResult {
-			return takeownResult{name: e.Name, isSubmodule: e.IsSubmodule, err: takeownRepo(ctx, e.Path)}
-		})
-		t.Done()
-
-		var successCount, failCount int
-		for _, r := range results {
-			label := RepoLabel(r.name, r.isSubmodule)
-			if r.err != nil {
-				failCount++
-				Errorf("处理失败: %s - %s", label, r.err)
-			} else {
-				successCount++
-				Successf("成功处理: %s", label)
+		Run: func(cmd *cobra.Command, args []string) {
+			if runtime.GOOS != "windows" {
+				WarnMsg("ggt owned 仅支持 Windows 系统")
+				return
 			}
-		}
+			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+			Infof("共 %d 个仓库，开始获取所有权...\n", len(repos))
 
-		pterm.Println()
-		Infof("处理完成: 成功 %d, 失败 %d", successCount, failCount)
-	},
+			// 并发执行 takeown（worker.Map 保证输出顺序），子模块作为独立条目参与
+			t := NewDebugTimer(fmt.Sprintf("所有权获取 (%d 个仓库)", len(repos)))
+			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) takeownResult {
+				return takeownResult{name: e.Name, isSubmodule: e.IsSubmodule, err: takeownRepo(ctx, e.Path)}
+			})
+			t.Done()
+
+			var successCount, failCount int
+			for _, r := range results {
+				label := RepoLabel(r.name, r.isSubmodule)
+				if r.err != nil {
+					failCount++
+					Errorf("处理失败: %s - %s", label, r.err)
+				} else {
+					successCount++
+					Successf("成功处理: %s", label)
+				}
+			}
+
+			pterm.Println()
+			Infof("处理完成: 成功 %d, 失败 %d", successCount, failCount)
+		},
+	}
+	return c
 }
 
 // takeownRepo 获取一个仓库（或子模块）目录及其 .git 的所有权。
@@ -109,5 +112,5 @@ func runTakeown(path string) error {
 }
 
 func init() {
-	rootCmd.AddCommand(ownedCmd)
+	register(func(root *cobra.Command) { root.AddCommand(newOwnedCmd()) })
 }

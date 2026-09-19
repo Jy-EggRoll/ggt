@@ -9,6 +9,10 @@ vars:
   LDFLAGS: '-s -w -X ggt/cmd.Version={{.VERSION}} -X ggt/cmd.BuildTime={{.BUILDTIME}}'
 
 tasks:
+  # 注意：各 build 任务的 sources 里除了 Go 源码还列了 internal/i18n/locales/*.json。
+  # 语言文件由 go:embed 打进二进制，改动它同样需要重新构建，只列 ./**/*.go 的话
+  # Task 会把任务误判为 up-to-date 而沿用旧译文。以后新增任何被 embed 的资源目录，
+  # 记得同步加到下面每个 build 任务的 sources 中。
   default:
     desc: 完整构建与验证：格式化检查 + 静态检查 + 单元测试 + 竞态检测 + 全平台编译
     cmds:
@@ -18,13 +22,29 @@ tasks:
   # verify 执行完整的代码质量检查，是发布构建的前置条件
   # 串行执行确保任何一项失败都能立即阻止后续步骤
   verify:
-    desc: 完整验证：依赖整理 + 格式化检查 + 静态检查 + 单元测试 + 竞态检测
+    desc: 完整验证：依赖整理 + 格式化检查 + 静态检查 + 语言文件校验 + 单元测试 + 竞态检测
     cmds:
       - task: mod-tidy
       - task: fmt:check
       - task: vet
+      - task: l10n:check
       - task: test
       - task: test:race
+
+  # l10n:check 是语言文件的只读门禁：校验 en.json 与源码一致、语言文件均已按字典序
+  # 排列且能被 go-i18n 正常解析、译文没有失效条目。语言由英文源串充当 id，详见
+  # internal/i18n 的包注释
+  l10n:check:
+    desc: 校验语言文件（与源码一致、已排序、可被 go-i18n 解析）
+    cmds:
+      - go run ./tools/l10n check
+
+  # l10n:export 是 l10n:check 的修复动作：重新生成 en.json、重排译文文件，并打印
+  # 待翻译清单与尚未迁移的存量中文文案（迁移进度指标）
+  l10n:export:
+    desc: 重新生成语言文件（覆盖 en.json、重排译文、打印待翻译与待迁移清单）
+    cmds:
+      - go run ./tools/l10n export
 
   # mod-tidy 整理 go.mod 和 go.sum，确保依赖一致且无多余条目
   mod-tidy:
@@ -87,6 +107,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}{{exeExt}}
 
@@ -99,6 +120,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-linux-386
 
@@ -111,6 +133,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-linux-amd64
 
@@ -123,6 +146,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-linux-arm
 
@@ -135,6 +159,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-linux-arm64
 
@@ -147,6 +172,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-darwin-amd64
 
@@ -159,6 +185,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-darwin-arm64
 
@@ -171,6 +198,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-windows-386.exe
 
@@ -183,6 +211,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-windows-amd64.exe
 
@@ -195,6 +224,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-windows-arm64.exe
 
@@ -207,6 +237,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-freebsd-amd64
 
@@ -219,6 +250,7 @@ tasks:
       - ./**/*.go
       - go.mod
       - go.sum
+      - internal/i18n/locales/*.json
     generates:
       - build/{{.APP}}-freebsd-arm64
 

@@ -9,6 +9,7 @@ ggt（Git 仓库管理工具）是一个用于集中管理多个 Git 仓库的�
 - 子模块在 ggt 中被视为一等仓库，自动随主仓库一并处理（带 `[子]` 标识）
 - 远程协议（HTTPS / SSH）一键切换，支持 `--all` 批量模式与 `toggle` 取反
 - 统一的彩色输出样式，信息层次清晰
+- 内置中英双语，默认英文，可通过 `--lang` 或配置项 `language` 切换
 
 ## 安装
 
@@ -81,6 +82,7 @@ ggt config path     # 打印配置文件绝对路径
 | `size_bucket_low_mb` | int | `500` | `size` 命令分桶的下界阈值（MB） |
 | `size_bucket_high_mb` | int | `800` | `size` 命令分桶的上界阈值（MB） |
 | `size_unit` | string | `decimal` | `size` 命令的 MB 换算口径：`decimal`（1 MB = 1,000,000 字节）或 `binary`（1 MB = 1024×1024 字节，即 MiB） |
+| `language` | string | `en` | 输出语言，可选 `en` 或 `zh-CN`。命令行 `--lang` / `-l` 优先于此项 |
 
 示例配置：
 
@@ -92,11 +94,66 @@ ggt config path     # 打印配置文件绝对路径
   "ignore_submodules": false,
   "size_bucket_low_mb": 500,
   "size_bucket_high_mb": 800,
-  "size_unit": "decimal"
+  "size_unit": "decimal",
+  "language": "en"
 }
 ```
 
 `concurrency` 同时兼容旧版的数字写法（如 `"36"`），加载时会自动按字符串处理。
+
+## 语言
+
+ggt 内置中英双语，**默认英文**，中文作为兼容层按需启用。
+
+语言按以下优先级确定，前一项优先：
+
+1. 命令行 `--lang` / `-l`，如 `ggt --lang zh-CN size`
+2. 配置文件的 `language` 字段
+3. 默认值 `en`
+
+语言串大小写不敏感，且同语种的地区/字形变体会自动收敛到已发布的那一种：
+`zh`、`zh-Hans`、`zh-hans`、`zh-TW` 都会被识别为 `zh-CN`，`en-US` 会被识别为 `en`。
+无法识别的取值不会报错，一律回退到 `en`。
+
+已知限制：
+
+- cobra 框架自身的帮助骨架（`Usage:`、`Available Commands:`、`Flags:`、`-h` 的说明、`completion` 子命令、`unknown flag` 等报错）始终是英文，不随语言切换
+- 文案迁移是**逐个命令**推进的，当前只有 `size` 已迁移；未迁移的命令在任何语言下都输出中文原文
+- 语言只认命令行与配置文件，不读取 `LANG` / `LC_ALL` 等环境变量
+- **不支持同一句英文的多义翻译**：消息 id 就是英文原文，两处相同的英文必然共用一条译文。
+  需要区分时只能把英文写得更具体
+- **不支持复数**：`{{.Count}} repositories` 在 `Count` 为 1 时仍会输出 `repositories`。
+  涉及数量的文案请改用语序回避（如 `Repositories: {{.Count}}`）
+
+### 文案与翻译
+
+文案采用与 VSCode `l10n` 相同的模型：**英文原文本身就是消息 id**。
+
+- 源码里直接写英文原文，交给 `i18n.T` 翻译并插值：
+  `i18n.T("Total size: {{.Size}}", map[string]any{"Size": s})`
+- `internal/i18n/locales/en.json` 是**生成物**，内容为 `{英文原文: 英文原文}` 的自映射，
+  **不要手工编辑**——它由工具扫描源码覆盖写入
+- `internal/i18n/locales/zh-CN.json` 是**人工维护**的译文，形如 `{英文原文: 中文}`
+- 缺失译文时回退显示英文原文，所以漏翻只会表现为"这句还是英文"，不会出现空串或裸 key
+
+两个任务（沿用 `fmt:check` / `fmt` 的"门禁 / 修复"成对约定）：
+
+```bash
+task l10n:export   # 改过文案后重新生成语言文件，并打印待翻译与待迁移清单
+task l10n:check    # 只读门禁，已接入 task verify，CI 会跑
+```
+
+写文案时的约定，违反其中任何一条都会被 `tools/l10n` 拦下：
+
+- 消息调用的首个参数**必须是字符串字面量**，不能是变量或拼接结果——工具靠它确定消息 id。
+  任何透传封装都会被判为违规，因此 `cmd` 包刻意不提供 `T` 薄封装，各命令直接调用 `i18n.T`
+- 变量插值用 go-i18n 的 `{{.Var}}` 模板语法，不要用 Go 的 `%s` / `%d`
+- 含非 ASCII 字符的 Go 字面量必须包在 `i18n.T` 里，否则会被 `l10n:export` 列为"待迁移文案"
+- 多行原文（如命令的 `Long` 描述）不得含制表符、行尾空白或首尾空行：id 就是原文，
+  源码重排会让 id 漂移、既有译文静默失效
+- 消息 id 不能是 `other`、`one`、`hash`、`id`、`description` 等 go-i18n 保留字（忽略大小写），
+  否则整份语言文件会解析失败或条目被丢弃
+- flag 说明中不能出现反引号对：pflag 会把第一对反引号里的内容当成类型名显示，并从说明文本中移除
 
 ## 子命令
 

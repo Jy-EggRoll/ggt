@@ -26,10 +26,11 @@ var remoteAll bool
 // HTTPS → SSH 示例：
 //
 //	https://github.com/user/repo.git  →  git@github.com:user/repo.git
-var remoteCmd = &cobra.Command{
-	Use:   "remote",
-	Short: "切换远程仓库协议 (HTTPS ↔ SSH)",
-	Long: `切换 git 仓库的远程 origin 协议，支持在 HTTPS 和 SSH 之间互相切换。
+func newRemoteCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "remote",
+		Short: "切换远程仓库协议 (HTTPS ↔ SSH)",
+		Long: `切换 git 仓库的远程 origin 协议，支持在 HTTPS 和 SSH 之间互相切换。
 
 默认操作当前目录下的 git 仓库，使用 --all 可切换所有已配置仓库。
 
@@ -37,47 +38,60 @@ var remoteCmd = &cobra.Command{
   ggt remote https        将当前仓库切换为 HTTPS
   ggt remote ssh          将当前仓库切换为 SSH
   ggt remote https --all  将所有仓库切换为 HTTPS`,
+	}
+	c.AddCommand(newRemoteHttpsCmd(), newRemoteSshCmd(), newRemoteToggleCmd())
+	c.PersistentFlags().BoolVarP(&remoteAll, "all", "a", false, "切换所有已配置仓库的远程协议")
+	return c
 }
 
-var remoteHttpsCmd = &cobra.Command{
-	Use:   "https",
-	Short: "将远程 origin 切换为 HTTPS 协议",
-	Run: func(cmd *cobra.Command, args []string) {
-		if remoteAll {
-			switchAllRepos("https")
-		} else {
-			switchCurrentRepo("https")
-		}
-	},
+func newRemoteHttpsCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "https",
+		Short: "将远程 origin 切换为 HTTPS 协议",
+		Run: func(cmd *cobra.Command, args []string) {
+			if remoteAll {
+				switchAllRepos("https")
+			} else {
+				switchCurrentRepo("https")
+			}
+		},
+	}
+	return c
 }
 
-var remoteSshCmd = &cobra.Command{
-	Use:   "ssh",
-	Short: "将远程 origin 切换为 SSH 协议",
-	Run: func(cmd *cobra.Command, args []string) {
-		if remoteAll {
-			switchAllRepos("ssh")
-		} else {
-			switchCurrentRepo("ssh")
-		}
-	},
+func newRemoteSshCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "ssh",
+		Short: "将远程 origin 切换为 SSH 协议",
+		Run: func(cmd *cobra.Command, args []string) {
+			if remoteAll {
+				switchAllRepos("ssh")
+			} else {
+				switchCurrentRepo("ssh")
+			}
+		},
+	}
+	return c
 }
 
 // remoteToggleCmd 实现 "ggt remote toggle"：在当前仓库的 HTTPS 与 SSH 协议之间取反切换。
 // 仅操作当前目录下的仓库，不支持 --all（与 https/ssh 子命令的批量模式区分）。
-var remoteToggleCmd = &cobra.Command{
-	Use:   "toggle",
-	Short: "在当前仓库的 HTTPS 与 SSH 协议之间切换",
-	Long: `在当前仓库的 HTTPS 与 SSH 远程协议之间自动取反切换。
+func newRemoteToggleCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "toggle",
+		Short: "在当前仓库的 HTTPS 与 SSH 协议之间切换",
+		Long: `在当前仓库的 HTTPS 与 SSH 远程协议之间自动取反切换。
 
 与 https/ssh 子命令不同，本命令无需指定目标协议，会根据 origin 当前协议切换到相反的一方。
 仅作用于当前目录下的 git 仓库，不支持 --all 批量模式。
 
 使用示例:
   ggt remote toggle        将当前仓库在 HTTPS/SSH 之间切换`,
-	Run: func(cmd *cobra.Command, args []string) {
-		toggleCurrentRepo()
-	},
+		Run: func(cmd *cobra.Command, args []string) {
+			toggleCurrentRepo()
+		},
+	}
+	return c
 }
 
 // remoteURLRegex 匹配主流托管平台的远程 URL，提取 host 和 path 部分。
@@ -280,9 +294,5 @@ func doSwitchRemote(ctx context.Context, repoPath string, target string) switchR
 }
 
 func init() {
-	rootCmd.AddCommand(remoteCmd)
-	remoteCmd.AddCommand(remoteHttpsCmd)
-	remoteCmd.AddCommand(remoteSshCmd)
-	remoteCmd.AddCommand(remoteToggleCmd)
-	remoteCmd.PersistentFlags().BoolVarP(&remoteAll, "all", "a", false, "切换所有已配置仓库的远程协议")
+	register(func(root *cobra.Command) { root.AddCommand(newRemoteCmd()) })
 }

@@ -11,9 +11,11 @@
 //   - size_bucket_high_mb: size 命令分桶的上界阈值（MB），默认 800
 //   - size_unit: size 命令分桶时 MB 的换算口径，"decimal"(1 MB = 1,000,000 字节)
 //     或 "binary"(1 MB = 1024*1024 字节，即 MiB)，默认 "decimal"
+//   - language: 输出语言（如 "en"、"zh-CN"），默认 "en"；命令行 --lang 优先级更高
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -39,16 +41,59 @@ type Config struct {
 	SizeBucketLowMB  int      `mapstructure:"size_bucket_low_mb" json:"size_bucket_low_mb"`
 	SizeBucketHighMB int      `mapstructure:"size_bucket_high_mb" json:"size_bucket_high_mb"`
 	SizeUnit         string   `mapstructure:"size_unit" json:"size_unit"`
+	Language         string   `mapstructure:"language" json:"language"`
+}
+
+// getConfigPath 计算配置文件的默认路径，失败时返回 error 而不终止进程。
+// 供 LoadLanguage 这类"必须永远可用"的路径使用——它们可能在 --help 之前被调用，
+// 此时直接退出进程会导致连帮助都打印不出来。
+func getConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "go-git-ggt", "ggt-config.json"), nil
 }
 
 // GetDefaultConfigPath 返回配置文件的默认路径。
+// 主目录不可用时打印错误并退出进程——这是命令运行期的合理兜底，
+// 但不要把它用在 --help 之前会被触发的路径上（那种场合用 getConfigPath）。
 func GetDefaultConfigPath() string {
-	home, err := os.UserHomeDir()
+	path, err := getConfigPath()
 	if err != nil {
 		pterm.Error.Println("获取用户主目录失败:", err)
 		os.Exit(1)
 	}
-	return filepath.Join(home, ".config", "go-git-ggt", "ggt-config.json")
+	return path
+}
+
+// LoadLanguage 只读取配置文件里的 language 字段，用于在命令行解析之前确定输出语言。
+//
+// 单独提供本函数而不是复用 LoadConfig，原因有二：
+//   - 语言必须在 rootCmd.Execute() 之前确定（cobra 的 --help 不会执行 PersistentPreRunE），
+//     而 LoadConfig 依赖的 GetDefaultConfigPath 在主目录不可用时会直接退出进程
+//   - 只取一个字段，避免为纯展示路径做一次全量解码与默认值补全
+//
+// 这里刻意只做裸 JSON 解析而不走 viper：viper 是包级全局单例，用它会往全局状态里
+// 写入本条配置，且 viper.Set 产生的 override 不会在下次 ReadInConfig 时清除。
+//
+// 配置文件不存在、不可读或格式非法时一律返回 error，由调用方回退到默认语言。
+func LoadLanguage() (string, error) {
+	path, err := getConfigPath()
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var probe struct {
+		Language string `json:"language"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(probe.Language), nil
 }
 
 // LoadConfig 从默认路径加载配置。
@@ -91,6 +136,7 @@ func defaultConfig() *Config {
 //   - concurrency 为空时取 DefaultConcurrency（"CPUHalf"，而非具体数字）
 //   - size_bucket_low_mb / size_bucket_high_mb <= 0 时取 500 / 800
 //   - size_unit 为空时取 "decimal"
+//   - language 为空时取 "en"（英文是默认语言，中文为兼容层）
 //   - ignore_submodules 为 bool，零值 false 即"默认包含子模块"，无需补默认值
 func applyConfigDefaults(cfg *Config) {
 	if strings.TrimSpace(cfg.Concurrency) == "" {
@@ -104,6 +150,9 @@ func applyConfigDefaults(cfg *Config) {
 	}
 	if cfg.SizeUnit == "" {
 		cfg.SizeUnit = "decimal"
+	}
+	if strings.TrimSpace(cfg.Language) == "" {
+		cfg.Language = "en"
 	}
 }
 
@@ -125,6 +174,7 @@ func SaveConfig(cfg *Config) error {
 	viper.Set("size_bucket_low_mb", cfg.SizeBucketLowMB)
 	viper.Set("size_bucket_high_mb", cfg.SizeBucketHighMB)
 	viper.Set("size_unit", cfg.SizeUnit)
+	viper.Set("language", cfg.Language)
 
 	return viper.WriteConfig()
 }

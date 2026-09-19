@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"ggt/internal/git"
+	"ggt/internal/i18n"
 	"ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -39,72 +40,103 @@ var (
 //   - 包文件大小（size-pack）：打包后的大小
 //
 // 输出安全：worker.Map 并发收集 → 主 goroutine 顺序打印，无交错。
-var sizeCmd = &cobra.Command{
-	Use:   "size",
-	Short: "显示所有仓库的大小统计信息",
-	Long: `遍历所有已配置的仓库，显示每个仓库的大小统计信息。
+func newSizeCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use: "size",
+		// 描述直接写英文原文：它同时也是 i18n 的消息 id，缺失中文译文时回退为英文原文。
+		// 命令树在语言加载之后才构造（见 registry.go），所以这里的 T() 是真调用，
+		// 不存在"包级变量求值过早、语言尚未确定"的问题。
+		//
+		// Long 这类多行原文必须保持"干净"：不能含制表符、行尾空白或首尾空行，
+		// 否则源码重排会让 id 跟着变，既有译文会静默失效。提取器会强制这一点。
+		Short: i18n.T("Show size statistics for all repositories", nil),
+		Long: i18n.T(`Iterate over all configured repositories and show each one's size statistics.
 
-统计完成后会按大小分桶：小于下界、介于上下界之间、大于上界，
-并分别列出各桶内的仓库名。分桶阈值与换算口径见下方参数说明。
+When finished, repositories are bucketed by size: below the lower bound, between
+the bounds, and above the upper bound, with repository names listed per bucket.
+Thresholds and the conversion unit are described in the flags below.
 
-使用示例:
-  ggt size          显示所有仓库大小并输出分桶统计
-  ggt sz          简写形式
-  ggt size --low 200 --high 600 --unit binary  自定义阈值与口径`,
-	Run: func(cmd *cobra.Command, args []string) {
-		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-		Infof("共 %d 个仓库，开始统计大小...\n", len(repos))
+Examples:
+  ggt size          Show sizes and bucket statistics for all repositories
+  ggt sz            Short form
+  ggt size --low 200 --high 600 --unit binary  Custom thresholds and unit`, nil),
+		Run: func(cmd *cobra.Command, args []string) {
+			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+			// 这里刻意保留常量格式串 "%s\n" 而不是改用 InfoMsg：pterm 的 Sprintfln 会在
+			// 渲染结果之后再加一个换行，而 InfoMsg 走的 Println 会把结尾换行折叠掉，
+			// 两者视觉上相差一个空行。用常量格式串可与改造前的输出保持完全一致
+			Infof("%s\n", i18n.T("Repositories: {{.Count}} — gathering sizes...", map[string]any{"Count": len(repos)}))
 
-		width := pterm.GetTerminalWidth()
-		t := NewDebugTimer(fmt.Sprintf("大小统计 (%d 个仓库)", len(repos)))
-		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) repoSizeResult {
-			return showRepoSize(ctx, e, width)
-		})
-		t.Done()
+			width := pterm.GetTerminalWidth()
+			t := NewDebugTimer(i18n.T("Size stats (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
+			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) repoSizeResult {
+				return showRepoSize(ctx, e, width)
+			})
+			t.Done()
 
-		// 顺序打印各仓库的大小信息
-		for _, r := range results {
-			PrintRaw(r.output)
-		}
+			// 顺序打印各仓库的大小信息
+			for _, r := range results {
+				PrintRaw(r.output)
+			}
 
-		// 汇总计算总大小
-		var totalSize int64
-		for _, r := range results {
-			totalSize += r.size
-		}
+			// 汇总计算总大小
+			var totalSize int64
+			for _, r := range results {
+				totalSize += r.size
+			}
 
-		pterm.Println()
-		Infof("总大小: %s", formatSize(totalSize))
+			pterm.Println()
+			InfoMsg(i18n.T("Total size: {{.Size}}", map[string]any{"Size": formatSize(totalSize)}))
 
-		// 分桶统计：命令行 flag 优先于配置文件，未指定时取配置默认值
-		low := GetConfig().SizeBucketLowMB
-		if sizeLow > 0 {
-			low = sizeLow
-		}
-		high := GetConfig().SizeBucketHighMB
-		if sizeHigh > 0 {
-			high = sizeHigh
-		}
-		unit := GetConfig().SizeUnit
-		if sizeUnit != "" {
-			unit = sizeUnit
-		}
-		if unit != "decimal" && unit != "binary" {
-			Warnf("size_unit 配置无效（%q），已回退为 decimal", unit)
-			unit = "decimal"
-		}
+			// 分桶统计：命令行 flag 优先于配置文件，未指定时取配置默认值
+			low := GetConfig().SizeBucketLowMB
+			if sizeLow > 0 {
+				low = sizeLow
+			}
+			high := GetConfig().SizeBucketHighMB
+			if sizeHigh > 0 {
+				high = sizeHigh
+			}
+			unit := GetConfig().SizeUnit
+			if sizeUnit != "" {
+				unit = sizeUnit
+			}
+			if unit != "decimal" && unit != "binary" {
+				// 走 Msg 系列而非 Warnf：译文已由 T 渲染完毕，套 "%s" 只是多余的间接层。
+				// 译文里的 "decimal" 是配置枚举值，刻意保留原文，便于用户对照配置文件里的 size_unit
+				WarnMsg(i18n.T(`Invalid size_unit value ("{{.Unit}}"), falling back to "decimal"`, map[string]any{"Unit": unit}))
+				unit = "decimal"
+			}
 
-		small, mid, large := classifyBySize(results, low, high, unit)
-		unitLabel := "十进制 MB (1 MB = 1,000,000 字节)"
-		if unit == "binary" {
-			unitLabel = "二进制 MB (1 MB = 1024×1024 字节，即 MiB)"
-		}
-		Header("大小分桶统计（" + unitLabel + "）")
-		// 不同分桶使用不同视觉级别：小仓库信息展示，中等仓库黄色警告，大仓库红色警告
-		printSizeBucket(fmt.Sprintf("<%dMB", low), small, Infof)
-		printSizeBucket(fmt.Sprintf("%d~%dMB", low, high), mid, Warnf)
-		printSizeBucket(fmt.Sprintf(">%dMB", high), large, Errorf)
-	},
+			small, mid, large := classifyBySize(results, low, high, unit)
+			// 用 switch 而不是在消息 id 上做拼接（如 T("unit_"+unit)）：语义更明确，
+			// 也不会因将来新增配置取值而取到意料之外的文案
+			var unitLabel string
+			switch unit {
+			case "binary":
+				unitLabel = i18n.T("binary MB (1 MB = 1024×1024 bytes, i.e. MiB)", nil)
+			default:
+				unitLabel = i18n.T("decimal MB (1 MB = 1,000,000 bytes)", nil)
+			}
+			// 单位说明与标题合成单一完整模板，让译者能调整括号形态
+			Header(i18n.T("Size buckets ({{.Unit}})", map[string]any{"Unit": unitLabel}))
+			// 不同分桶使用不同视觉级别：小仓库信息展示，中等仓库黄色警告，大仓库红色警告
+			// 标题先经 T 渲染，故这里传 Msg 系列（纯文本通道）而非 f 系列
+			printSizeBucket(i18n.T("<{{.Low}}MB", map[string]any{"Low": low}), small, InfoMsg)
+			printSizeBucket(i18n.T("{{.Low}}~{{.High}}MB", map[string]any{"Low": low, "High": high}), mid, WarnMsg)
+			printSizeBucket(i18n.T(">{{.High}}MB", map[string]any{"High": high}), large, ErrorMsg)
+		},
+	}
+
+	c.Aliases = []string{"sz"}
+
+	// 阈值与换算口径：flag 优先于配置文件，仅本次生效、不写入 JSON。
+	// 语义与根命令 -c 相同：默认 0/空字符串表示"未指定"
+	c.Flags().IntVar(&sizeLow, "low", 0, i18n.T("Lower bucket bound in MB (defaults to the size_bucket_low_mb config value)", nil))
+	c.Flags().IntVar(&sizeHigh, "high", 0, i18n.T("Upper bucket bound in MB (defaults to the size_bucket_high_mb config value)", nil))
+	c.Flags().StringVar(&sizeUnit, "unit", "", i18n.T("MB conversion unit used for buckets: decimal or binary (defaults to the size_unit config value)", nil))
+
+	return c
 }
 
 // showRepoSize 分析单个仓库的大小并返回格式化结果。
@@ -117,9 +149,11 @@ func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 		return repoSizeResult{
 			name:        e.Name,
 			isSubmodule: e.IsSubmodule,
-			output:      WarnS("仓库 %s: 执行失败\n", e.Path),
-			size:        0,
-			ok:          false,
+			// WarnStr 走的是纯文本通道，入参以 \n 结尾时 pterm 会折叠为单个换行，
+			// 与改造前 WarnS(format, path) 的输出完全一致
+			output: WarnStr(i18n.T("Repository {{.Path}}: command failed", map[string]any{"Path": e.Path}) + "\n"),
+			size:   0,
+			ok:     false,
 		}
 	}
 
@@ -135,15 +169,19 @@ func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 	b.WriteByte('\n')
 
 	// 主要指标：磁盘占用（size）和包文件大小（size-pack）
+	// 制表符留在 Go 侧而不写进文案：它是排版手段而非文案内容，混进消息里既会让译者
+	// 困惑，也会让这个不可见字符成为消息 id 的一部分（提取器会拒绝含 \t 的消息）。
+	// 注意制表位对齐依赖标签的显示宽度，中文"磁盘占用"（8 列）与英文 "Disk usage"
+	// （10 列）恰好都落在同一制表位上；若将来新增语言导致错位，需改为显式列宽填充
 	if v, ok := info["size"]; ok {
 		b.WriteString("  ")
-		b.WriteString(pterm.FgGreen.Sprint("磁盘占用\t"))
+		b.WriteString(pterm.FgGreen.Sprint(i18n.T("Disk usage", nil) + "\t"))
 		b.WriteString(v)
 		b.WriteByte('\n')
 	}
 	if v, ok := info["size-pack"]; ok {
 		b.WriteString("  ")
-		b.WriteString(pterm.FgGreen.Sprint("包文件大小\t"))
+		b.WriteString(pterm.FgGreen.Sprint(i18n.T("Package size", nil) + "\t"))
 		b.WriteString(v)
 		b.WriteByte('\n')
 	}
@@ -206,10 +244,14 @@ func classifyBySize(results []repoSizeResult, lowMB, highMB int, unit string) (s
 }
 
 // printSizeBucket 打印单个分桶：标题（含数量）+ 缩进列出每个仓库名。
-// printer 决定标题的视觉级别：Infof 浅蓝信息、Warnf 黄色警告、Errorf 红色错误，
-// 由调用方根据分桶的严重程度传入对应函数，保持列表项样式统一。
-func printSizeBucket(title string, names []string, printer func(string, ...any)) {
-	printer("%s：%d 个", title, len(names))
+// title 必须是调用方经 T 渲染好的纯文本，本函数不再做任何格式化。
+//
+// printer 决定标题的视觉级别：InfoMsg 浅蓝信息、WarnMsg 黄色警告、ErrorMsg 红色错误，
+// 由调用方根据分桶的严重程度传入，保持列表项样式统一。
+// 这里传 Msg 系列而非 f 系列：标题已由 go-i18n 渲染完毕，若再走 Sprintf 通道，
+// 译文里出现的字面 % 会被 fmt 当成格式动词解析成 %!?(MISSING)。
+func printSizeBucket(title string, names []string, printer func(string)) {
+	printer(i18n.T("{{.Title}}: {{.Count}}", map[string]any{"Title": title, "Count": len(names)}))
 	for _, n := range names {
 		ListItem(n)
 	}
@@ -246,7 +288,7 @@ func calcTotalBytes(info map[string]string) int64 {
 
 // parseSizeValue 将带单位的大小字符串转为字节数。
 // 支持的单位（参考 git count-objects -vH 官方输出，前缀 i 为二进制、无 i 为十进制）：
-// bytes、KiB/KiB、MiB/MB、GiB/GB。
+// bytes、KiB/KB、MiB/MB、GiB/GB。
 func parseSizeValue(s string) int64 {
 	// 先检测单位，再去除单位字符。二进制（KiB/MiB/GiB）按 1024 进位，
 	// 十进制（KB/MB/GB）按 1000 进位，兼容 git 未来改用无 i 单位的输出格式。
@@ -302,12 +344,5 @@ func formatSize(size int64) string {
 }
 
 func init() {
-	rootCmd.AddCommand(sizeCmd)
-	sizeCmd.Aliases = []string{"sz"}
-
-	// 阈值与换算口径：flag 优先于配置文件，仅本次生效、不写入 JSON。
-	// 语义与根命令 -c 相同：默认 0/空字符串表示"未指定"。
-	sizeCmd.Flags().IntVar(&sizeLow, "low", 0, "分桶下界阈值（MB），省略时取配置文件 size_bucket_low_mb")
-	sizeCmd.Flags().IntVar(&sizeHigh, "high", 0, "分桶上界阈值（MB），省略时取配置文件 size_bucket_high_mb")
-	sizeCmd.Flags().StringVar(&sizeUnit, "unit", "", "分桶 MB 换算口径：decimal 或 binary，省略时取配置文件 size_unit")
+	register(func(root *cobra.Command) { root.AddCommand(newSizeCmd()) })
 }

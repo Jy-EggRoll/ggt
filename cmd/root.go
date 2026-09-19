@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"ggt/internal/config"
+	"ggt/internal/i18n"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -25,52 +26,85 @@ var (
 	cfg *config.Config
 )
 
-// rootCmd 是 ggt 的根命令，定义程序名称、简介、以及全局行为。
+// newRootCmd 构造根命令并注册全局持久化 flag。
+//
+// 命令树在语言加载之后才构造（见 registry.go），因此这里出现的 T() 都是真实翻译调用。
 // PersistentPreRunE 在每个子命令执行前自动运行，用于加载配置。
-var rootCmd = &cobra.Command{
-	Use:   "ggt",
-	Short: "ggt - Git 仓库管理工具",
-	Long: `一个用于管理多个 git 仓库的 CLI 工具，支持并发操作。
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "ggt",
+		Short: "ggt - Git 仓库管理工具",
+		Long: `一个用于管理多个 git 仓库的 CLI 工具，支持并发操作。
 	
 使用帮助:
   ggt --help 查看详细帮助
 
 配置文件: ~/.config/go-git-ggt/ggt-config.json`,
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		t := NewDebugTimer("配置加载")
-		var err error
-		cfg, err = config.LoadConfig()
-		if err != nil {
-			return fmt.Errorf("加载配置失败: %w", err)
-		}
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			t := NewDebugTimer("配置加载")
+			var err error
+			cfg, err = config.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("加载配置失败: %w", err)
+			}
 
-		// 命令行的 -c 参数优先级高于配置文件；-c 传的是具体数字，
-		// 覆盖为数字串（如 "8"），语义串常量（CPUHalf 等）仅在配置文件未显式设置时生效。
-		if concurrency > 0 {
-			cfg.Concurrency = strconv.Itoa(concurrency)
-		}
-		t.Done()
+			// 命令行的 -c 参数优先级高于配置文件；-c 传的是具体数字，
+			// 覆盖为数字串（如 "8"），语义串常量（CPUHalf 等）仅在配置文件未显式设置时生效。
+			if concurrency > 0 {
+				cfg.Concurrency = strconv.Itoa(concurrency)
+			}
+			t.Done()
 
-		return nil
-	},
+			return nil
+		},
+	}
+
+	// -c 的默认值为 0，表示"未显式指定"；在 PersistentPreRunE 中仅当 >0 时才
+	// 覆盖配置文件里的并发数。真正生效的默认值（CPU 核心数的一半）由
+	// config 包的 resolveConcurrency 统一计算，避免出现两处默认值逻辑不一致。
+	root.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "并发数 (省略时取配置文件 concurrency 值；未设则默认语义值 CPUHalf，即 CPU 核心数的一半；也可写 CPUFull/CPUQuarter 或具体数字)")
+	// --debug 持久化 flag：所有子命令均可使用，输出各阶段耗时用于性能诊断。
+	root.PersistentFlags().BoolVar(&debug, "debug", false, "输出调试计时信息（各阶段耗时）")
+	// --lang 持久化 flag：声明它的唯一目的是让 cobra 认可这个参数，否则命令行里
+	// 出现 --lang 会被判为 unknown flag。真正生效的取值由 resolveLanguage 预扫描
+	// os.Args 得到（语言必须早于 cobra 解析才能确定），所以这里刻意不绑定变量，
+	// 避免出现两个互相矛盾的取值来源。
+	root.PersistentFlags().StringP("lang", "l", "", i18n.T("Output language (e.g. en, zh-CN); defaults to the language config value", nil))
+
+	return root
 }
 
 // Execute 是程序的入口，由 main.go 调用。
+//
+// 三步顺序是有意为之，不能调换：
+//  1. 先确定并加载语言。cobra 的 --help 路径不会执行 PersistentPreRunE，而命令描述
+//     在构造时就要用到，所以语言解析必须走在最前面
+//  2. 再构造命令树。各命令的构造函数会调用 T()，此时语言已就绪
+//  3. 最后才交给 cobra 解析参数并执行
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		pterm.Error.Println("执行失败:", err)
+	if err := i18n.Init(resolveLanguage()); err != nil {
+		// 语言文件是 //go:embed 进来的，加载失败属于构建期错误，必须显式暴露。
+		// 静默降级只会表现为"中文界面变成了英文"，没有任何报错，极难排查
+		ErrorMsg(err.Error())
+		os.Exit(1)
+	}
+
+	if err := buildRoot().Execute(); err != nil {
+		ErrorMsg(i18n.T("Execution failed: {{.Err}}", map[string]any{"Err": err}))
 		os.Exit(1)
 	}
 }
 
-func init() {
-	// -c 的默认值为 0，表示"未显式指定"；在 PersistentPreRunE 中仅当 >0 时才
-	// 覆盖配置文件里的并发数。真正生效的默认值（CPU 核心数的一半）由
-	// config 包的 getDefaultConcurrency 统一计算，避免出现两处默认值逻辑不一致。
-	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "并发数 (省略时取配置文件 concurrency 值；未设则默认语义值 CPUHalf，即 CPU 核心数的一半；也可写 CPUFull/CPUQuarter 或具体数字)")
-	// --debug 持久化 flag：所有子命令均可使用，输出各阶段耗时用于性能诊断。
-	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "输出调试计时信息（各阶段耗时）")
-}
+// 关于文案：本包不提供 T 的薄封装，各命令一律直接调用 i18n.T("英文原文", data)。
+//
+// 这不是风格偏好，而是提取工具的硬性要求：tools/l10n 规定"消息调用的首个参数必须是
+// 字符串字面量才能确定消息 id"。任何一层透传封装都必然以变量为参转发
+// （func T(msg string, ...) { return i18n.T(msg, ...) }），会被提取器判为违规。
+// 去掉封装后规则全仓一致、无需任何例外，代价只是调用点多写一个包名前缀。
+//
+// 另注意 i18n.T 的返回值是已渲染好的纯文本，**不要**再当作 printf 的格式串传给
+// Infof/WarnS 等，否则译文里出现的字面 %（如"完成度 100%"）会被 fmt 解析成 %!?(MISSING)。
+// 需要输出时请使用 Msg 系列（InfoMsg 等）或 Str 系列（InfoStr 等）。
 
 // GetConfig 返回全局配置实例。
 func GetConfig() *config.Config {
@@ -239,6 +273,22 @@ func ErrorS(format string, args ...any) string {
 func SuccessS(format string, args ...any) string {
 	return pterm.Success.Sprintf(format, args...)
 }
+
+// WarnStr/InfoStr/ErrorStr/SuccessStr 返回对应语义的着色字符串，
+// 与 WarnS/InfoS/ErrorS/SuccessS 的唯一区别是接收"已渲染好的纯文本"而非格式串。
+//
+// 这四个函数是为 i18n 而加的：T() 返回的译文里可能含字面 %（如"完成度 100%"），
+// 若经 Sprintf 通道会被 fmt 当成格式动词解析成 %!?(MISSING)。使用约定是——
+// 需要变量插值的场合，一律用 go-i18n 的 {{.Var}} 模板在 T() 里渲染完，
+// 再走这四个函数着色；不要在译文上做二次 Sprintf。
+//
+// 换行行为与 pterm 保持一致：入参结尾的换行会被折叠为单个换行
+// （PrefixPrinter.Sprint 对结尾 \n 先 TrimRight 再补一个），
+// 所以需要保留末尾空行的场合要用常量格式串走 f 系列，例如 Infof("%s\n", T(...))。
+func WarnStr(s string) string    { return pterm.Warning.Sprint(s) }
+func InfoStr(s string) string    { return pterm.Info.Sprint(s) }
+func ErrorStr(s string) string   { return pterm.Error.Sprint(s) }
+func SuccessStr(s string) string { return pterm.Success.Sprint(s) }
 
 // DoneBanner 打印一条完成类收尾横幅（成功绿），统一各命令的结尾提示样式。
 // 此前 sync 用 pterm.Success.Println、owned/remote 用 Infof("处理完成...")，现已收敛。

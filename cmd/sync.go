@@ -33,10 +33,11 @@ type syncResult struct {
 //   - 其他 → 分叉，提示手动干预
 //
 // 输出安全：并发收集 → 顺序打印。
-var syncCmd = &cobra.Command{
-	Use:   "sync",
-	Short: "遍历所有仓库，自动同步",
-	Long: `遍历所有仓库，自动同步。
+func newSyncCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "sync",
+		Short: "遍历所有仓库，自动同步",
+		Long: `遍历所有仓库，自动同步。
 
 - 先执行 git fetch --all --prune
 - 比较本地、远程、共同祖先的 commit hash
@@ -48,37 +49,39 @@ var syncCmd = &cobra.Command{
 	
 使用示例:
   ggt sync          自动同步所有仓库`,
-	Run: func(cmd *cobra.Command, args []string) {
-		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-		Infof("共 %d 个仓库，开始同步...", len(repos))
+		Run: func(cmd *cobra.Command, args []string) {
+			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+			Infof("共 %d 个仓库，开始同步...", len(repos))
 
-		t := NewDebugTimer(fmt.Sprintf("同步 (%d 个仓库)", len(repos)))
-		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), syncRepo)
-		t.Done()
+			t := NewDebugTimer(fmt.Sprintf("同步 (%d 个仓库)", len(repos)))
+			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), syncRepo)
+			t.Done()
 
-		// 顺序打印所有仓库的同步结果（保持原有的输出行为）
-		for _, r := range results {
-			PrintRaw(r.output)
-		}
-
-		// 汇总需要手动处理的仓库清单
-		var manualList []syncResult
-		for _, r := range results {
-			if r.needsManual {
-				manualList = append(manualList, r)
+			// 顺序打印所有仓库的同步结果（保持原有的输出行为）
+			for _, r := range results {
+				PrintRaw(r.output)
 			}
-		}
 
-		if len(manualList) > 0 {
-			pterm.Warning.Println("以下仓库需要手动处理：")
-			for _, r := range manualList {
-				pterm.Printf("  %s %s\n", RepoName(r.name), Muted(r.path))
-				pterm.Printf("    -> %s\n", r.manualHint)
+			// 汇总需要手动处理的仓库清单
+			var manualList []syncResult
+			for _, r := range results {
+				if r.needsManual {
+					manualList = append(manualList, r)
+				}
 			}
-		}
 
-		DoneBanner("所有仓库同步完成")
-	},
+			if len(manualList) > 0 {
+				pterm.Warning.Println("以下仓库需要手动处理：")
+				for _, r := range manualList {
+					pterm.Printf("  %s %s\n", RepoName(r.name), Muted(r.path))
+					pterm.Printf("    -> %s\n", r.manualHint)
+				}
+			}
+
+			DoneBanner("所有仓库同步完成")
+		},
+	}
+	return c
 }
 
 // syncRepo 同步单个仓库（含子模块）：检查脏状态 → fetch → 分析 commit 关系 → 自动拉取或给出建议。
@@ -157,5 +160,5 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 }
 
 func init() {
-	rootCmd.AddCommand(syncCmd)
+	register(func(root *cobra.Command) { root.AddCommand(newSyncCmd()) })
 }

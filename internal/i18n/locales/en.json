@@ -1,0 +1,23 @@
+{
+  "<{{.Low}}MB": "<{{.Low}}MB",
+  ">{{.High}}MB": ">{{.High}}MB",
+  "Disk usage": "Disk usage",
+  "Execution failed: {{.Err}}": "Execution failed: {{.Err}}",
+  "Invalid size_unit value (\"{{.Unit}}\"), falling back to \"decimal\"": "Invalid size_unit value (\"{{.Unit}}\"), falling back to \"decimal\"",
+  "Iterate over all configured repositories and show each one's size statistics.\n\nWhen finished, repositories are bucketed by size: below the lower bound, between\nthe bounds, and above the upper bound, with repository names listed per bucket.\nThresholds and the conversion unit are described in the flags below.\n\nExamples:\n  ggt size          Show sizes and bucket statistics for all repositories\n  ggt sz            Short form\n  ggt size --low 200 --high 600 --unit binary  Custom thresholds and unit": "Iterate over all configured repositories and show each one's size statistics.\n\nWhen finished, repositories are bucketed by size: below the lower bound, between\nthe bounds, and above the upper bound, with repository names listed per bucket.\nThresholds and the conversion unit are described in the flags below.\n\nExamples:\n  ggt size          Show sizes and bucket statistics for all repositories\n  ggt sz            Short form\n  ggt size --low 200 --high 600 --unit binary  Custom thresholds and unit",
+  "Lower bucket bound in MB (defaults to the size_bucket_low_mb config value)": "Lower bucket bound in MB (defaults to the size_bucket_low_mb config value)",
+  "MB conversion unit used for buckets: decimal or binary (defaults to the size_unit config value)": "MB conversion unit used for buckets: decimal or binary (defaults to the size_unit config value)",
+  "Output language (e.g. en, zh-CN); defaults to the language config value": "Output language (e.g. en, zh-CN); defaults to the language config value",
+  "Package size": "Package size",
+  "Repositories: {{.Count}} — gathering sizes...": "Repositories: {{.Count}} — gathering sizes...",
+  "Repository {{.Path}}: command failed": "Repository {{.Path}}: command failed",
+  "Show size statistics for all repositories": "Show size statistics for all repositories",
+  "Size buckets ({{.Unit}})": "Size buckets ({{.Unit}})",
+  "Size stats (repositories: {{.Count}})": "Size stats (repositories: {{.Count}})",
+  "Total size: {{.Size}}": "Total size: {{.Size}}",
+  "Upper bucket bound in MB (defaults to the size_bucket_high_mb config value)": "Upper bucket bound in MB (defaults to the size_bucket_high_mb config value)",
+  "binary MB (1 MB = 1024×1024 bytes, i.e. MiB)": "binary MB (1 MB = 1024×1024 bytes, i.e. MiB)",
+  "decimal MB (1 MB = 1,000,000 bytes)": "decimal MB (1 MB = 1,000,000 bytes)",
+  "{{.Low}}~{{.High}}MB": "{{.Low}}~{{.High}}MB",
+  "{{.Title}}: {{.Count}}": "{{.Title}}: {{.Count}}"
+}

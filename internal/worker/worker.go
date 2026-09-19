@@ -33,7 +33,7 @@ func Map[I any, T any](ctx context.Context, items []I, concurrency int, fn func(
 			defer func() {
 				if r := recover(); r != nil {
 					// panic 不应让整个程序崩溃，记录后该位置保留零值
-					log.Printf("worker: panic 恢复 — %v", r)
+					log.Printf("worker: recovered from panic: %v", r)
 				}
 			}()
 			sem <- struct{}{}

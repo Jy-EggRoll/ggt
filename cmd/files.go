@@ -28,47 +28,52 @@ type filesOutput struct {
 // filesCmd 实现 "ggt files"（简写 ggt fl）。
 // 并发获取所有仓库的文件列表，支持输出到控制台或文件。
 // 输出格式为每行一个完整路径（仓库绝对路径文件路径）。
-var filesCmd = &cobra.Command{
-	Use:   "files",
-	Short: "显示所有仓库的文件列表",
-	Long: `遍历所有已配置的仓库，列出每个仓库的文件列表。
+func newFilesCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "files",
+		Short: "显示所有仓库的文件列表",
+		Long: `遍历所有已配置的仓库，列出每个仓库的文件列表。
 
 使用示例:
   ggt files              显示所有仓库的文件列表
   ggt fl                 简写形式
   ggt files -o out.txt   将文件列表写入 out.txt`,
-	Run: func(cmd *cobra.Command, args []string) {
-		repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-		Infof("共 %d 个仓库，开始获取文件列表...\n", len(repos))
+		Run: func(cmd *cobra.Command, args []string) {
+			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+			Infof("共 %d 个仓库，开始获取文件列表...\n", len(repos))
 
-		// 使用 worker.Map 并发获取每个仓库的文件列表
-		t := NewDebugTimer(fmt.Sprintf("文件列表 (%d 个仓库)", len(repos)))
-		results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoFiles)
-		t.Done()
+			// 使用 worker.Map 并发获取每个仓库的文件列表
+			t := NewDebugTimer(fmt.Sprintf("文件列表 (%d 个仓库)", len(repos)))
+			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoFiles)
+			t.Done()
 
-		// 构建输出内容：每行为仓库完整路径与文件路径拼接的合法路径
-		var output strings.Builder
-		for _, r := range results {
-			if r.err != nil {
-				Warnf("仓库 %s: 获取文件列表失败 - %v\n", r.path, r.err)
-				continue
+			// 构建输出内容：每行为仓库完整路径与文件路径拼接的合法路径
+			var output strings.Builder
+			for _, r := range results {
+				if r.err != nil {
+					Warnf("仓库 %s: 获取文件列表失败 - %v\n", r.path, r.err)
+					continue
+				}
+				for _, file := range r.files {
+					output.WriteString(filepath.Join(r.path, file) + "\n")
+				}
 			}
-			for _, file := range r.files {
-				output.WriteString(filepath.Join(r.path, file) + "\n")
-			}
-		}
 
-		// 根据 -o 参数决定输出到文件或控制台
-		if outputFile != "" {
-			if err := os.WriteFile(outputFile, []byte(output.String()), 0644); err != nil {
-				Errorf("写入文件失败: %v\n", err)
-				return
+			// 根据 -o 参数决定输出到文件或控制台
+			if outputFile != "" {
+				if err := os.WriteFile(outputFile, []byte(output.String()), 0644); err != nil {
+					Errorf("写入文件失败: %v\n", err)
+					return
+				}
+				Successf("文件列表已写入: %s\n", outputFile)
+			} else {
+				fmt.Print(output.String())
 			}
-			Successf("文件列表已写入: %s\n", outputFile)
-		} else {
-			fmt.Print(output.String())
-		}
-	},
+		},
+	}
+	c.Aliases = []string{"fl"}
+	c.Flags().StringVarP(&outputFile, "output", "o", "", "将文件列表写入指定文件（省略时输出到控制台）")
+	return c
 }
 
 // showRepoFiles 获取单个仓库的文件列表。
@@ -108,7 +113,5 @@ func showRepoFiles(ctx context.Context, e RepoEntry) filesOutput {
 var outputFile string
 
 func init() {
-	rootCmd.AddCommand(filesCmd)
-	filesCmd.Aliases = []string{"fl"}
-	filesCmd.Flags().StringVarP(&outputFile, "output", "o", "", "将文件列表写入指定文件（省略时输出到控制台）")
+	register(func(root *cobra.Command) { root.AddCommand(newFilesCmd()) })
 }
