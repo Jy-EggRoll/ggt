@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"ggt/internal/git"
+	"ggt/internal/i18n"
 	"ggt/internal/worker"
 	"github.com/spf13/cobra"
 )
@@ -17,17 +18,18 @@ import (
 func newStatusCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "status",
-		Short: "显示所有仓库的 git 状态",
-		Long: `遍历所有已配置的仓库，显示每个仓库的 git 状态。
+		Short: i18n.T("Show the git status of all repositories", nil),
+		Long: i18n.T(`Iterate over all configured repositories and show the git status of each.
 
-使用示例:
-  ggt status          显示所有仓库状态
-  ggt st             简写形式`,
+Examples:
+  ggt status          Show the status of all repositories
+  ggt st              Short form`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-			Infof("共 %d 个仓库，开始检查状态...\n", len(repos))
+			// 保留常量格式串 "%s\n" 以维持改造前的尾部空行（pterm 的 Println 会折叠结尾换行）
+			Infof("%s\n", i18n.T("Repositories: {{.Count}} — checking status...", map[string]any{"Count": len(repos)}))
 
-			t := NewDebugTimer(fmt.Sprintf("状态检查 (%d 个仓库)", len(repos)))
+			t := NewDebugTimer(i18n.T("Status check (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
 			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoStatus)
 			t.Done()
 
@@ -46,13 +48,16 @@ func newStatusCmd() *cobra.Command {
 func showRepoStatus(ctx context.Context, e RepoEntry) string {
 	output, err := git.RunContext(ctx, e.Path, "status", "--short", "--branch", "--untracked-files")
 	if err != nil {
-		return WarnS("仓库 %s: git 执行失败 - %v\n", e.Path, err)
+		// WarnStr 是纯文本通道；入参以 \n 结尾时 pterm 会折叠为单个换行，
+		// 与改造前 WarnS(format, args) 的输出一致
+		return WarnStr(i18n.T("Repository {{.Path}}: git failed - {{.Err}}",
+			map[string]any{"Path": e.Path, "Err": err}) + "\n")
 	}
 
 	label := RepoLabel(e.Name, e.IsSubmodule)
 	// 如果输出为空（极少出现，因为 --branch 至少输出分支行），表示完全干净
 	if output == "" {
-		return label + " 已就绪\n"
+		return label + " " + i18n.T("ready", nil) + "\n"
 	}
 	// status 输出自带末尾换行，直接拼接即可，无需额外空行
 	return label + "\n" + output

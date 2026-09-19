@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	"ggt/internal/git"
+	"ggt/internal/i18n"
 	"ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -27,21 +27,21 @@ type dirtyRepo struct {
 func newSummaryCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "summary",
-		Short: "遍历所有仓库，显示变更，询问一键提交",
-		Long: `遍历所有仓库，显示变更，询问一键提交。
+		Short: i18n.T("Iterate over all repositories, show changes, and offer to commit", nil),
+		Long: i18n.T(`Iterate over all repositories, show the changes, and offer to commit them.
 
-使用示例:
-  ggt summary          查看变更并提交
-  ggt sum             简写形式`,
+Examples:
+  ggt summary          Review changes and commit
+  ggt sum              Short form`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			// 统一 ctx：第一阶段并发检查与第二阶段交互式操作（diff/count-objects/add/commit/push）
 			// 都复用同一 ctx，确保这些耗时 git 调用也受全局超时与取消约束，不再用无 ctx 的 git.Run。
 			ctx := context.Background()
 			repos := MustGetAllRepos(ctx, GetConfig().IgnoreSubmodules)
-			Infof("共 %d 个仓库，开始检查变更...\n", len(repos))
+			Infof("%s\n", i18n.T("Repositories: {{.Count}} — checking for changes...", map[string]any{"Count": len(repos)}))
 
 			// 第一阶段：并发检查所有仓库（含子模块）的 git 状态
-			t := NewDebugTimer(fmt.Sprintf("状态检查 (%d 个仓库)", len(repos)))
+			t := NewDebugTimer(i18n.T("Status check (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
 			results := worker.Map(ctx, repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) *dirtyRepo {
 				statusOutput, err := git.RunContext(ctx, e.Path, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
 				if err != nil {
@@ -87,58 +87,59 @@ func newSummaryCmd() *cobra.Command {
 				}
 
 				PrintSeparator()
-				RepoLine(d.name, "检测到变动", d.isSubmodule)
+				RepoLine(d.name, i18n.T("changes detected", nil), d.isSubmodule)
 				PrintRaw(d.statusOutput)
 
 				// 显示详细的 diff 统计
-				pterm.Println(Muted("变动详情："))
+				pterm.Println(Muted(i18n.T("Change details:", nil)))
 				diffOutput, err := git.RunContext(ctx, d.path, "diff", "--color=always", "--stat")
 				if err != nil {
-					Warnf("获取 diff 失败: %v", err)
+					WarnMsg(i18n.T("Failed to get the diff: {{.Err}}", map[string]any{"Err": err}))
 				} else if diffOutput != "" {
 					PrintRaw(diffOutput)
 				}
 
 				// 交互式确认：根据仓库状态动态调整提示文案
-				promptText := "是否一键提交所有更改并推送？"
+				promptText := i18n.T("Commit all changes and push?", nil)
 				if !d.hasUncommitted {
-					promptText = "是否推送已提交的更改？"
+					promptText = i18n.T("Push the committed changes?", nil)
 				}
 				result, _ := pterm.DefaultInteractiveConfirm.WithDefaultValue(false).WithDefaultText(promptText).Show()
 				if !result {
 					continue
 				}
 
-				Infof("正在处理 %s ...", d.name)
+				InfoMsg(i18n.T("Processing {{.Name}} ...", map[string]any{"Name": d.name}))
 
 				// 仅在存在未提交的文件变更时执行 add + commit
 				if d.hasUncommitted {
 					// git add -A：暂存所有更改
 					if out, err := git.RunCombinedContext(ctx, d.path, "add", "-A"); err != nil {
-						Errorf("git add 失败:\n%s", out)
+						Errorf("%s\n%s", i18n.T("git add failed:", nil), out)
 						continue
 					}
 
 					// git commit：自动生成提交信息
-					msg := fmt.Sprintf("chore: 终端自动提交更新 %s", time.Now().Format("2006-01-02 15:04:05"))
+					msg := i18n.T("chore: automated terminal update {{.Time}}",
+						map[string]any{"Time": time.Now().Format("2006-01-02 15:04:05")})
 					if out, err := git.RunCombinedContext(ctx, d.path, "commit", "-m", msg); err != nil {
-						Errorf("git commit 失败:\n%s", out)
+						Errorf("%s\n%s", i18n.T("git commit failed:", nil), out)
 						continue
 					}
 				}
 
 				// git push：推送到远程，使用 RunCombinedContext 确保捕获 stderr 错误信息
 				if out, err := git.RunCombinedContext(ctx, d.path, "push"); err != nil {
-					Errorf("推送失败:\n%s", out)
+					Errorf("%s\n%s", i18n.T("push failed:", nil), out)
 				} else {
-					SuccessMsg("推送完成！")
+					SuccessMsg(i18n.T("Push complete!", nil))
 				}
 
 				// 显示提交后的仓库大小信息
-				pterm.Println(Muted("大小信息："))
+				pterm.Println(Muted(i18n.T("Size information:", nil)))
 				countOutput, err := git.RunContext(ctx, d.path, "count-objects", "-vH")
 				if err != nil {
-					Warnf("获取大小信息失败: %v", err)
+					WarnMsg(i18n.T("Failed to get size information: {{.Err}}", map[string]any{"Err": err}))
 				} else if countOutput != "" {
 					PrintRaw(countOutput)
 				}

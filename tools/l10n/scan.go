@@ -234,11 +234,14 @@ func validateMessage(text string, pos string) error {
 	return nil
 }
 
-// hasNonASCII 判断字符串是否含非 ASCII 字符。
-// 消息 id 一律是英文，所以非 ASCII 字面量就是"还没迁移的存量文案"。
+// hasNonASCII 判断字符串是否含非 ASCII **字母**。
+//
+// 判据刻意用 unicode.IsLetter 而不是"非 ASCII 字符"：消息 id 一律是英文，所以
+// 非 ASCII 字母就是还没迁移的存量文案；而制表符之外的排版符号——分隔线 "─"、
+// 箭头 "→"、"×" 等——是界面骨架而非文字，既不该翻译也不该被列为待办。
 func hasNonASCII(s string) bool {
 	for _, r := range s {
-		if r > unicode.MaxASCII {
+		if r > unicode.MaxASCII && unicode.IsLetter(r) {
 			return true
 		}
 	}

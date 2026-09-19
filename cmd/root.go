@@ -33,19 +33,20 @@ var (
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "ggt",
-		Short: "ggt - Git 仓库管理工具",
-		Long: `一个用于管理多个 git 仓库的 CLI 工具，支持并发操作。
-	
-使用帮助:
-  ggt --help 查看详细帮助
+		Short: i18n.T("ggt - Git repository manager", nil),
+		Long: i18n.T(`A CLI tool for managing multiple git repositories, with concurrent operations.
 
-配置文件: ~/.config/go-git-ggt/ggt-config.json`,
+Help:
+  ggt --help  Show detailed help
+
+Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			t := NewDebugTimer("配置加载")
+			t := NewDebugTimer(i18n.T("Loading configuration", nil))
 			var err error
 			cfg, err = config.LoadConfig()
 			if err != nil {
-				return fmt.Errorf("加载配置失败: %w", err)
+				// 错误包装保持 Go 侧拼接：go-i18n 模板没有 %w 等价物，塞进模板会丢掉错误链
+				return fmt.Errorf("%s: %w", i18n.T("Failed to load the configuration", nil), err)
 			}
 
 			// 命令行的 -c 参数优先级高于配置文件；-c 传的是具体数字，
@@ -62,9 +63,11 @@ func newRootCmd() *cobra.Command {
 	// -c 的默认值为 0，表示"未显式指定"；在 PersistentPreRunE 中仅当 >0 时才
 	// 覆盖配置文件里的并发数。真正生效的默认值（CPU 核心数的一半）由
 	// config 包的 resolveConcurrency 统一计算，避免出现两处默认值逻辑不一致。
-	root.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "并发数 (省略时取配置文件 concurrency 值；未设则默认语义值 CPUHalf，即 CPU 核心数的一半；也可写 CPUFull/CPUQuarter 或具体数字)")
+	root.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0,
+		i18n.T("Concurrency (defaults to the concurrency config value; when unset uses the CPUHalf semantic value, i.e. half of the CPU cores; CPUFull/CPUQuarter or an explicit number are also accepted)", nil))
 	// --debug 持久化 flag：所有子命令均可使用，输出各阶段耗时用于性能诊断。
-	root.PersistentFlags().BoolVar(&debug, "debug", false, "输出调试计时信息（各阶段耗时）")
+	root.PersistentFlags().BoolVar(&debug, "debug", false,
+		i18n.T("Print debug timing information (duration of each phase)", nil))
 	// --lang 持久化 flag：声明它的唯一目的是让 cobra 认可这个参数，否则命令行里
 	// 出现 --lang 会被判为 unknown flag。真正生效的取值由 resolveLanguage 预扫描
 	// os.Args 得到（语言必须早于 cobra 解析才能确定），所以这里刻意不绑定变量，
@@ -235,7 +238,7 @@ func RepoName(name string) string {
 // 也让"子模块"这一身份在任意命令输出里都有一致的 [子] 标识。
 func RepoLabel(name string, isSubmodule bool) string {
 	if isSubmodule {
-		return pterm.FgCyan.Sprintf("[子] %s", name)
+		return pterm.FgCyan.Sprintf("%s %s", i18n.T("[sub]", nil), name)
 	}
 	return RepoName(name)
 }
@@ -348,7 +351,7 @@ func isGitRepo(path string) bool {
 func MustGetRepoList() []string {
 	repos := GetRepoList()
 	if len(repos) == 0 {
-		WarnMsg("未配置任何仓库路径，请先使用 'ggt repo add <path>' 或 'ggt repo add-parent <path>' 添加")
+		WarnMsg(i18n.T("No repositories configured; add one with 'ggt repo add <path>' or 'ggt repo add-parent <path>'", nil))
 		os.Exit(0)
 	}
 	return repos
@@ -356,12 +359,12 @@ func MustGetRepoList() []string {
 
 // PrintRepoList 打印仓库列表的标题和所有路径。
 func PrintRepoList(repos []string) {
-	Header("仓库列表")
+	Header(i18n.T("Repositories", nil))
 	for _, repo := range repos {
 		PrintPath(repo)
 	}
 	pterm.Println()
-	Infof("共 %d 个仓库", len(repos))
+	InfoMsg(i18n.T("Total repositories: {{.Count}}", map[string]any{"Count": len(repos)}))
 }
 
 // getRepoName 从完整路径中提取仓库目录名。

@@ -2,10 +2,10 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"ggt/internal/git"
+	"ggt/internal/i18n"
 	"ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -36,24 +36,24 @@ type syncResult struct {
 func newSyncCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "sync",
-		Short: "遍历所有仓库，自动同步",
-		Long: `遍历所有仓库，自动同步。
+		Short: i18n.T("Iterate over all repositories and sync them", nil),
+		Long: i18n.T(`Iterate over all repositories and sync them automatically.
 
-- 先执行 git fetch --all --prune
-- 比较本地、远程、共同祖先的 commit hash
-- 根据情况执行:
-  - 本地与远程一致 → 跳过
-  - 本地落后于远程（线性更新）→ git pull --ff-only
-  - 本地领先于远程 → 跳过（提示用户手动推送）
-  - 非线性更新 → 提示用户手动干预
-	
-使用示例:
-  ggt sync          自动同步所有仓库`,
+- Runs git fetch --all --prune first
+- Compares the commit hashes of the local branch, the remote, and the merge base
+- Then acts accordingly:
+  - local same as remote -> skip
+  - local behind remote (fast-forwardable) -> git pull --ff-only
+  - local ahead of remote -> skip and tell the user to push manually
+  - divergent history -> tell the user to resolve it manually
+
+Examples:
+  ggt sync          Sync all repositories automatically`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-			Infof("共 %d 个仓库，开始同步...", len(repos))
+			InfoMsg(i18n.T("Repositories: {{.Count}} — syncing...", map[string]any{"Count": len(repos)}))
 
-			t := NewDebugTimer(fmt.Sprintf("同步 (%d 个仓库)", len(repos)))
+			t := NewDebugTimer(i18n.T("Sync (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
 			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), syncRepo)
 			t.Done()
 
@@ -71,14 +71,14 @@ func newSyncCmd() *cobra.Command {
 			}
 
 			if len(manualList) > 0 {
-				pterm.Warning.Println("以下仓库需要手动处理：")
+				WarnMsg(i18n.T("The following repositories need manual handling:", nil))
 				for _, r := range manualList {
 					pterm.Printf("  %s %s\n", RepoName(r.name), Muted(r.path))
 					pterm.Printf("    -> %s\n", r.manualHint)
 				}
 			}
 
-			DoneBanner("所有仓库同步完成")
+			DoneBanner(i18n.T("All repositories are in sync", nil))
 		},
 	}
 	return c
@@ -106,23 +106,27 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 	// 第一步：检查工作目录是否干净（本地操作，快速返回）
 	status, err := git.RunContext(ctx, e.Path, "status", "--porcelain")
 	if err != nil {
-		return warn(WarnS("%s 检查状态失败: %s\n", label, err), "请检查仓库状态")
+		return warn(WarnStr(i18n.T("{{.Label}}: failed to check status: {{.Err}}",
+			map[string]any{"Label": label, "Err": err})+"\n"), i18n.T("Check the repository state", nil))
 	}
 
 	if strings.TrimSpace(status) != "" {
-		return warn(WarnS("%s 本地有未提交的更改，必须手动处理\n", label), "请先 commit 或 stash")
+		return warn(WarnStr(i18n.T("{{.Label}}: uncommitted changes present, manual handling required",
+			map[string]any{"Label": label})+"\n"), i18n.T("Commit or stash your changes first", nil))
 	}
 
 	// 第二步：拉取远程最新数据，修剪已删除的远程分支
 	_, err = git.RunContext(ctx, e.Path, "fetch", "--all", "--prune")
 	if err != nil {
-		return warn(WarnS("%s fetch 失败: %s\n", label, err), "请检查网络或远程仓库权限")
+		return warn(WarnStr(i18n.T("{{.Label}}: fetch failed: {{.Err}}",
+			map[string]any{"Label": label, "Err": err})+"\n"), i18n.T("Check your network or the remote repository permissions", nil))
 	}
 
 	// 第三步：获取三个关键 commit hash
 	local, err := git.RunContext(ctx, e.Path, "rev-parse", "HEAD")
 	if err != nil {
-		return warn(WarnS("%s 获取本地 HEAD 失败\n", label), "请检查仓库状态")
+		return warn(WarnStr(i18n.T("{{.Label}}: failed to resolve local HEAD", map[string]any{"Label": label})+"\n"),
+			i18n.T("Check the repository state", nil))
 	}
 	local = strings.TrimSpace(local)
 
@@ -130,32 +134,37 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 	if err != nil {
 		// 通常是该分支未设置上游跟踪（@{upstream} 不存在），明确告知根因而非泛化的"获取失败"，
 		// 避免用户误以为是网络或权限问题。
-		return warn(WarnS("%s 未设置上游跟踪分支（@{upstream} 不存在），跳过同步\n", label),
-			"请执行 git branch --set-upstream-to=<remote>/<branch>")
+		return warn(WarnStr(i18n.T("{{.Label}}: no upstream tracking branch (@{upstream} does not exist), skipping",
+			map[string]any{"Label": label})+"\n"),
+			i18n.T("Run: git branch --set-upstream-to=<remote>/<branch>", nil))
 	}
 	remote = strings.TrimSpace(remote)
 
 	base, err := git.RunContext(ctx, e.Path, "merge-base", "HEAD", "@{upstream}")
 	if err != nil {
-		return warn(WarnS("%s 获取共同祖先失败\n", label), "请检查仓库状态")
+		return warn(WarnStr(i18n.T("{{.Label}}: failed to find the merge base", map[string]any{"Label": label})+"\n"),
+			i18n.T("Check the repository state", nil))
 	}
 	base = strings.TrimSpace(base)
 
 	// 第四步：比较决策
 	if local == remote {
-		return info(InfoS("%s 本地与远程一致，无需处理\n", label))
+		return info(InfoStr(i18n.T("{{.Label}}: already up to date with the remote", map[string]any{"Label": label}) + "\n"))
 	} else if local == base {
 		// 本地落后于远程，且历史线性 → 可以用 fast-forward
-		output := WarnS("%s 检测到线性更新，正在拉取...\n", label)
+		output := WarnStr(i18n.T("{{.Label}}: fast-forward available, pulling...", map[string]any{"Label": label}) + "\n")
 		_, err := git.RunContext(ctx, e.Path, "pull", "--ff-only")
 		if err != nil {
-			return warn(output+ErrorS("%s 拉取失败: %s\n", label, err), "请手动 git pull")
+			return warn(output+ErrorStr(i18n.T("{{.Label}}: pull failed: {{.Err}}",
+				map[string]any{"Label": label, "Err": err})+"\n"), i18n.T("Run git pull manually", nil))
 		}
-		return info(output + SuccessS("%s 拉取成功\n", label))
+		return info(output + SuccessStr(i18n.T("{{.Label}}: pulled successfully", map[string]any{"Label": label})+"\n"))
 	} else if remote == base {
-		return warn(WarnS("%s 本地领先于远程，请手动推送\n", label), "请手动 git push")
+		return warn(WarnStr(i18n.T("{{.Label}}: local branch is ahead of the remote, push manually",
+			map[string]any{"Label": label})+"\n"), i18n.T("Run git push manually", nil))
 	} else {
-		return warn(ErrorS("%s 非线性更新，必须手动处理\n", label), "请手动合并或 rebase")
+		return warn(ErrorStr(i18n.T("{{.Label}}: divergent history, manual handling required",
+			map[string]any{"Label": label})+"\n"), i18n.T("Merge or rebase manually", nil))
 	}
 }
 

@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
 
 	"ggt/internal/git"
+	"ggt/internal/i18n"
 	"ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -29,25 +31,27 @@ var remoteAll bool
 func newRemoteCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "remote",
-		Short: "切换远程仓库协议 (HTTPS ↔ SSH)",
-		Long: `切换 git 仓库的远程 origin 协议，支持在 HTTPS 和 SSH 之间互相切换。
+		Short: i18n.T("Switch the remote protocol (HTTPS ↔ SSH)", nil),
+		Long: i18n.T(`Switch a git repository's remote origin between HTTPS and SSH.
 
-默认操作当前目录下的 git 仓库，使用 --all 可切换所有已配置仓库。
+By default this operates on the git repository in the current directory;
+pass --all to switch every configured repository.
 
-使用示例:
-  ggt remote https        将当前仓库切换为 HTTPS
-  ggt remote ssh          将当前仓库切换为 SSH
-  ggt remote https --all  将所有仓库切换为 HTTPS`,
+Examples:
+  ggt remote https        Switch the current repository to HTTPS
+  ggt remote ssh          Switch the current repository to SSH
+  ggt remote https --all  Switch all repositories to HTTPS`, nil),
 	}
 	c.AddCommand(newRemoteHttpsCmd(), newRemoteSshCmd(), newRemoteToggleCmd())
-	c.PersistentFlags().BoolVarP(&remoteAll, "all", "a", false, "切换所有已配置仓库的远程协议")
+	c.PersistentFlags().BoolVarP(&remoteAll, "all", "a", false,
+		i18n.T("Switch the remote protocol of all configured repositories", nil))
 	return c
 }
 
 func newRemoteHttpsCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "https",
-		Short: "将远程 origin 切换为 HTTPS 协议",
+		Short: i18n.T("Switch the remote origin to HTTPS", nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			if remoteAll {
 				switchAllRepos("https")
@@ -62,7 +66,7 @@ func newRemoteHttpsCmd() *cobra.Command {
 func newRemoteSshCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "ssh",
-		Short: "将远程 origin 切换为 SSH 协议",
+		Short: i18n.T("Switch the remote origin to SSH", nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			if remoteAll {
 				switchAllRepos("ssh")
@@ -79,14 +83,15 @@ func newRemoteSshCmd() *cobra.Command {
 func newRemoteToggleCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "toggle",
-		Short: "在当前仓库的 HTTPS 与 SSH 协议之间切换",
-		Long: `在当前仓库的 HTTPS 与 SSH 远程协议之间自动取反切换。
+		Short: i18n.T("Toggle between HTTPS and SSH in the current repository", nil),
+		Long: i18n.T(`Toggle the current repository's remote protocol between HTTPS and SSH.
 
-与 https/ssh 子命令不同，本命令无需指定目标协议，会根据 origin 当前协议切换到相反的一方。
-仅作用于当前目录下的 git 仓库，不支持 --all 批量模式。
+Unlike the https/ssh subcommands, no target protocol is needed: it switches to
+whichever protocol the origin is not currently using.
+It only affects the git repository in the current directory and does not support --all.
 
-使用示例:
-  ggt remote toggle        将当前仓库在 HTTPS/SSH 之间切换`,
+Examples:
+  ggt remote toggle       Toggle the current repository between HTTPS and SSH`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			toggleCurrentRepo()
 		},
@@ -121,7 +126,7 @@ type remoteInfo struct {
 func parseRemoteURL(raw string) (*remoteInfo, error) {
 	matches := remoteURLRegex.FindStringSubmatch(strings.TrimSpace(raw))
 	if len(matches) < remoteURLIdxCount {
-		return nil, fmt.Errorf("无法解析 URL，仅支持主流托管平台 (GitHub/GitLab/Gitee 等)")
+		return nil, errors.New(i18n.T("Cannot parse the URL; only major hosting platforms (GitHub/GitLab/Gitee, etc.) are supported", nil))
 	}
 	return &remoteInfo{host: matches[remoteURLIdxHost], path: matches[remoteURLIdxPath]}, nil
 }
@@ -153,12 +158,12 @@ func detectProtocol(raw string) string {
 func switchCurrentRepo(target string) {
 	wd, err := os.Getwd()
 	if err != nil {
-		ErrorMsg("获取当前目录失败: " + err.Error())
+		ErrorMsg(i18n.T("Failed to get the current directory: {{.Err}}", map[string]any{"Err": err}))
 		return
 	}
 
 	if !isGitRepo(wd) {
-		ErrorMsg("当前目录不是 git 仓库: " + wd)
+		ErrorMsg(i18n.T("The current directory is not a git repository: {{.Path}}", map[string]any{"Path": wd}))
 		return
 	}
 
@@ -171,18 +176,18 @@ func switchCurrentRepo(target string) {
 func toggleCurrentRepo() {
 	wd, err := os.Getwd()
 	if err != nil {
-		ErrorMsg("获取当前目录失败: " + err.Error())
+		ErrorMsg(i18n.T("Failed to get the current directory: {{.Err}}", map[string]any{"Err": err}))
 		return
 	}
 
 	if !isGitRepo(wd) {
-		ErrorMsg("当前目录不是 git 仓库: " + wd)
+		ErrorMsg(i18n.T("The current directory is not a git repository: {{.Path}}", map[string]any{"Path": wd}))
 		return
 	}
 
 	raw, err := git.RunContext(context.Background(), wd, "remote", "get-url", remoteOrigin)
 	if err != nil {
-		ErrorMsg("获取远程地址失败: " + err.Error())
+		ErrorMsg(i18n.T("Failed to get the remote URL: {{.Err}}", map[string]any{"Err": err}))
 		return
 	}
 
@@ -201,7 +206,8 @@ func toggleCurrentRepo() {
 // 使用 worker.Map 并发收集结果后顺序打印统计信息。
 func switchAllRepos(target string) {
 	entries := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-	Infof("共 %d 个仓库，开始切换协议至 %s ...\n", len(entries), pterm.Cyan(strings.ToUpper(target)))
+	Infof("%s\n", i18n.T("Repositories: {{.Count}} — switching protocol to {{.Proto}}...",
+		map[string]any{"Count": len(entries), "Proto": pterm.Cyan(strings.ToUpper(target))}))
 	processSwitchResults(entries, target)
 }
 
@@ -215,7 +221,7 @@ func processSwitchResults(entries []RepoEntry, target string) {
 		res         switchRemoteResult
 	}
 
-	t := NewDebugTimer(fmt.Sprintf("协议切换 (%d 个仓库)", len(entries)))
+	t := NewDebugTimer(i18n.T("Protocol switch (repositories: {{.Count}})", map[string]any{"Count": len(entries)}))
 	results := worker.Map(context.Background(), entries, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) switchOutcome {
 		r := doSwitchRemote(ctx, e.Path, target)
 		r.name = e.Name
@@ -232,16 +238,18 @@ func processSwitchResults(entries []RepoEntry, target string) {
 			PrintProtocolSwitch(r.name, r.isSubmodule, detectProtocol(r.res.oldURL), targetProto)
 			success++
 		case "same":
-			Infof("%s 已是 %s 协议，无需切换", label, detectProtocol(r.res.oldURL))
+			InfoMsg(i18n.T("{{.Label}} is already using {{.Proto}}, nothing to do",
+				map[string]any{"Label": label, "Proto": detectProtocol(r.res.oldURL)}))
 			skipped++
 		case "error":
-			Errorf("%s %s", label, r.res.err)
+			ErrorMsg(i18n.T("{{.Label}} {{.Err}}", map[string]any{"Label": label, "Err": r.res.err}))
 			failed++
 		}
 	}
 
 	pterm.Println()
-	Infof("处理完成: 成功 %d, 跳过 %d, 失败 %d", success, skipped, failed)
+	InfoMsg(i18n.T("Finished: {{.Success}} switched, {{.Skipped}} skipped, {{.Failed}} failed",
+		map[string]any{"Success": success, "Skipped": skipped, "Failed": failed}))
 }
 
 // switchRemoteResult 保存单个仓库（含子模块）远程协议切换的结果。
@@ -262,7 +270,7 @@ type switchRemoteResult struct {
 func doSwitchRemote(ctx context.Context, repoPath string, target string) switchRemoteResult {
 	raw, err := git.RunContext(ctx, repoPath, "remote", "get-url", remoteOrigin)
 	if err != nil {
-		return switchRemoteResult{status: "error", err: fmt.Sprintf("获取远程地址失败: %v", err)}
+		return switchRemoteResult{status: "error", err: i18n.T("Failed to get the remote URL: {{.Err}}", map[string]any{"Err": err})}
 	}
 
 	oldURL := strings.TrimSpace(raw)
@@ -287,7 +295,7 @@ func doSwitchRemote(ctx context.Context, repoPath string, target string) switchR
 
 	_, err = git.RunContext(ctx, repoPath, "remote", "set-url", remoteOrigin, newURL)
 	if err != nil {
-		return switchRemoteResult{status: "error", err: fmt.Sprintf("切换失败: %v", err)}
+		return switchRemoteResult{status: "error", err: i18n.T("Switch failed: {{.Err}}", map[string]any{"Err": err})}
 	}
 
 	return switchRemoteResult{status: "switched", oldURL: oldURL, newURL: newURL}

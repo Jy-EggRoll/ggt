@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"ggt/internal/i18n"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/pterm/pterm"
 	"github.com/spf13/viper"
@@ -61,7 +62,9 @@ func getConfigPath() (string, error) {
 func GetDefaultConfigPath() string {
 	path, err := getConfigPath()
 	if err != nil {
-		pterm.Error.Println("获取用户主目录失败:", err)
+		// 这里的告警可能出现在 i18n.Init 之前（例如语言解析阶段），
+		// 那时 i18n.T 会安全地回退为英文原文，不会 panic
+		pterm.Error.Println(i18n.T("Failed to get the user home directory: {{.Err}}", map[string]any{"Err": err}))
 		os.Exit(1)
 	}
 	return path

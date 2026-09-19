@@ -2,13 +2,13 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"ggt/internal/i18n"
 	"ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -31,25 +31,26 @@ type takeownResult struct {
 func newOwnedCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "owned",
-		Short: "批量获取所有仓库的所有权",
-		Long: `批量获取所有仓库的所有权。
+		Short: i18n.T("Take ownership of all repositories", nil),
+		Long: i18n.T(`Take ownership of all repositories.
 
-严格遵循当前的 pwsh 命令模仿实现。
-使用 takeown 命令获取目录及 .git 目录的所有权。
-子模块会作为独立仓库一并处理。
-	
-使用示例:
-  ggt owned          获取所有仓库所有权`,
+Mirrors the original PowerShell implementation.
+Uses the takeown command to take ownership of each repository directory and
+its .git directory. Submodules are treated as standalone repositories.
+
+Examples:
+  ggt owned          Take ownership of all repositories`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			if runtime.GOOS != "windows" {
-				WarnMsg("ggt owned 仅支持 Windows 系统")
+				WarnMsg(i18n.T("ggt owned is only supported on Windows", nil))
 				return
 			}
 			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-			Infof("共 %d 个仓库，开始获取所有权...\n", len(repos))
+			// 保留常量格式串 "%s\n" 以维持改造前的尾部空行
+			Infof("%s\n", i18n.T("Repositories: {{.Count}} — taking ownership...", map[string]any{"Count": len(repos)}))
 
 			// 并发执行 takeown（worker.Map 保证输出顺序），子模块作为独立条目参与
-			t := NewDebugTimer(fmt.Sprintf("所有权获取 (%d 个仓库)", len(repos)))
+			t := NewDebugTimer(i18n.T("Ownership (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
 			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) takeownResult {
 				return takeownResult{name: e.Name, isSubmodule: e.IsSubmodule, err: takeownRepo(ctx, e.Path)}
 			})
@@ -60,15 +61,16 @@ func newOwnedCmd() *cobra.Command {
 				label := RepoLabel(r.name, r.isSubmodule)
 				if r.err != nil {
 					failCount++
-					Errorf("处理失败: %s - %s", label, r.err)
+					ErrorMsg(i18n.T("Failed: {{.Label}} - {{.Err}}", map[string]any{"Label": label, "Err": r.err}))
 				} else {
 					successCount++
-					Successf("成功处理: %s", label)
+					SuccessMsg(i18n.T("Done: {{.Label}}", map[string]any{"Label": label}))
 				}
 			}
 
 			pterm.Println()
-			Infof("处理完成: 成功 %d, 失败 %d", successCount, failCount)
+			InfoMsg(i18n.T("Finished: {{.Success}} succeeded, {{.Failed}} failed",
+				map[string]any{"Success": successCount, "Failed": failCount}))
 		},
 	}
 	return c
@@ -106,7 +108,8 @@ func runTakeown(path string) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// takeown 在已经拥有所有权时也会失败，忽略此类错误
-		ListItem("takeown on " + path + ": " + strings.TrimSpace(string(output)))
+		ListItem(i18n.T("takeown on {{.Path}}: {{.Output}}",
+			map[string]any{"Path": path, "Output": strings.TrimSpace(string(output))}))
 	}
 	return nil
 }

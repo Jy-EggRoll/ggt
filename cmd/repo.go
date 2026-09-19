@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"ggt/internal/config"
+	"ggt/internal/i18n"
 	"github.com/spf13/cobra"
 )
 
@@ -13,14 +14,14 @@ import (
 func newRepoCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "repo",
-		Short: "管理仓库路径配置",
-		Long: `管理已配置的仓库路径列表。
-	
-使用示例:
-  ggt repo list              列出所有仓库
-  ggt repo add <path>       添加仓库路径
-  ggt repo remove <path>  移除仓库路径
-  ggt repo add-parent <path> 添加父目录（自动扫描其中的 git 仓库）`,
+		Short: i18n.T("Manage repository path configuration", nil),
+		Long: i18n.T(`Manage the list of configured repository paths.
+
+Examples:
+  ggt repo list              List all repositories
+  ggt repo add <path>        Add a repository path
+  ggt repo remove <path>     Remove a repository path
+  ggt repo add-parent <path> Add a parent directory (auto-discovers git repositories inside)`, nil),
 	}
 	c.AddCommand(newRepoListCmd(), newRepoAddCmd(), newRepoRemoveCmd(), newRepoAddParentCmd())
 	return c
@@ -31,14 +32,14 @@ func newRepoCmd() *cobra.Command {
 func newRepoListCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "list",
-		Short: "列出所有已配置的仓库路径",
-		Long: `列出所有已配置的仓库路径。
-	
-包括直接添加的仓库和从父目录扫描到的仓库。`,
+		Short: i18n.T("List all configured repository paths", nil),
+		Long: i18n.T(`List all configured repository paths.
+
+Includes repositories added directly and those discovered under parent directories.`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			repos := GetRepoList()
 			if len(repos) == 0 {
-				WarnMsg("未配置任何仓库")
+				WarnMsg(i18n.T("No repositories configured", nil))
 				return
 			}
 			PrintRepoList(repos)
@@ -52,36 +53,36 @@ func newRepoListCmd() *cobra.Command {
 func newRepoAddCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add <path>",
-		Short: "添加一个仓库路径到配置文件",
+		Short: i18n.T("Add a repository path to the config file", nil),
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
 			absPath, err := filepath.Abs(path)
 			if err != nil {
-				ErrorMsg("解析路径失败: " + err.Error())
+				ErrorMsg(i18n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
 			if !isGitRepo(absPath) {
-				ErrorMsg("该路径不是 git 仓库: " + absPath)
+				ErrorMsg(i18n.T("Not a git repository: {{.Path}}", map[string]any{"Path": absPath}))
 				return
 			}
 
 			cfg := GetConfig()
 			for _, existing := range cfg.RepoPaths {
 				if existing == absPath {
-					ErrorMsg("该路径已存在: " + absPath)
+					ErrorMsg(i18n.T("Path already exists: {{.Path}}", map[string]any{"Path": absPath}))
 					return
 				}
 			}
 
 			cfg.RepoPaths = append(cfg.RepoPaths, absPath)
 			if err := config.SaveConfig(cfg); err != nil {
-				ErrorMsg("保存配置失败: " + err.Error())
+				ErrorMsg(i18n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
-			SuccessMsg("已添加仓库: " + absPath)
+			SuccessMsg(i18n.T("Repository added: {{.Path}}", map[string]any{"Path": absPath}))
 		},
 	}
 	return c
@@ -91,13 +92,13 @@ func newRepoAddCmd() *cobra.Command {
 func newRepoRemoveCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "remove <path>",
-		Short: "从配置文件移除一个仓库路径",
+		Short: i18n.T("Remove a repository path from the config file", nil),
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
 			absPath, err := filepath.Abs(path)
 			if err != nil {
-				ErrorMsg("解析路径失败: " + err.Error())
+				ErrorMsg(i18n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
@@ -113,17 +114,17 @@ func newRepoRemoveCmd() *cobra.Command {
 			}
 
 			if !found {
-				ErrorMsg("该路径不存在: " + absPath)
+				ErrorMsg(i18n.T("Path does not exist: {{.Path}}", map[string]any{"Path": absPath}))
 				return
 			}
 
 			cfg.RepoPaths = newPaths
 			if err := config.SaveConfig(cfg); err != nil {
-				ErrorMsg("保存配置失败: " + err.Error())
+				ErrorMsg(i18n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
-			SuccessMsg("已移除仓库: " + absPath)
+			SuccessMsg(i18n.T("Repository removed: {{.Path}}", map[string]any{"Path": absPath}))
 		},
 	}
 	return c
@@ -134,36 +135,36 @@ func newRepoRemoveCmd() *cobra.Command {
 func newRepoAddParentCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add-parent <path>",
-		Short: "添加一个父目录，自动扫描其中的所有 git 仓库路径",
+		Short: i18n.T("Add a parent directory and auto-discover all git repositories inside", nil),
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
 			absPath, err := filepath.Abs(path)
 			if err != nil {
-				ErrorMsg("解析路径失败: " + err.Error())
+				ErrorMsg(i18n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
 			if _, err := os.Stat(absPath); os.IsNotExist(err) {
-				ErrorMsg("目录不存在: " + absPath)
+				ErrorMsg(i18n.T("Directory does not exist: {{.Path}}", map[string]any{"Path": absPath}))
 				return
 			}
 
 			cfg := GetConfig()
 			for _, existing := range cfg.ParentPaths {
 				if existing == absPath {
-					ErrorMsg("该父目录已存在: " + absPath)
+					ErrorMsg(i18n.T("Parent directory already exists: {{.Path}}", map[string]any{"Path": absPath}))
 					return
 				}
 			}
 
 			cfg.ParentPaths = append(cfg.ParentPaths, absPath)
 			if err := config.SaveConfig(cfg); err != nil {
-				ErrorMsg("保存配置失败: " + err.Error())
+				ErrorMsg(i18n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
-			SuccessMsg("已添加父目录: " + absPath)
+			SuccessMsg(i18n.T("Parent directory added: {{.Path}}", map[string]any{"Path": absPath}))
 		},
 	}
 	return c

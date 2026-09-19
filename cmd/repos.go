@@ -13,11 +13,11 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"ggt/internal/i18n"
 	"ggt/internal/worker"
 )
 
@@ -180,16 +180,17 @@ func GetAllRepos(ctx context.Context, ignore bool) []RepoEntry {
 // 所有需要仓库集合的命令都应调用本函数而非 MustGetRepoList。
 // --debug 模式下分别输出仓库发现和子模块展开的耗时。
 func MustGetAllRepos(ctx context.Context, ignore bool) []RepoEntry {
-	t1 := NewDebugTimer("仓库发现")
+	t1 := NewDebugTimer(i18n.T("Repository discovery", nil))
 	top := GetRepoList()
 	if len(top) == 0 {
-		WarnMsg("未配置任何仓库路径，请先使用 'ggt repo add <path>' 或 'ggt repo add-parent <path>' 添加")
+		WarnMsg(i18n.T("No repositories configured; add one with 'ggt repo add <path>' or 'ggt repo add-parent <path>'", nil))
 		// 空列表属于"正常无任务可做"而非错误，因此退出码 0。
 		os.Exit(0)
 	}
 	t1.Done()
 
-	t2 := NewDebugTimer(fmt.Sprintf("子模块展开 (%d 个仓库, 并发度=%d)", len(top), GetConfig().ConcurrencyValue()))
+	t2 := NewDebugTimer(i18n.T("Submodule expansion (repositories: {{.Count}}, concurrency: {{.Concurrency}})",
+		map[string]any{"Count": len(top), "Concurrency": GetConfig().ConcurrencyValue()}))
 	result := expand(ctx, top, ignore)
 	t2.Done()
 

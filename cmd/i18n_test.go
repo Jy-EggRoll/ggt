@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"testing"
+	"unicode"
 
 	"ggt/internal/i18n"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // TestBuildRootRegistersAllCommands 断言 buildRoot 装配出完整的命令树。
@@ -105,21 +108,45 @@ func TestDescriptionsFollowLanguage(t *testing.T) {
 	}
 }
 
-// TestUnmigratedCommandsKeepOriginalText 验证渐进迁移：尚未迁移的命令其描述仍是中文原文，
-// 不会因为语言切换而变成别的内容或裸 key。
+// TestNoUntranslatedTextInCommandTree 断言命令树里不再残留中文描述。
 //
-// 这是"源串即 id"模型相较"符号 key"方案的一个直接好处——不需要任何"是否命中"的判定，
-// 没被 T() 包住的字段原样保留即可。
-func TestUnmigratedCommandsKeepOriginalText(t *testing.T) {
-	if err := i18n.Init("en"); err != nil {
+// 全仓文案迁移完成后，所有命令描述与 flag 说明都必须经 i18n.T()。若有人新写一个命令
+// 却忘了包裹，英文环境下它的描述仍会是中文；这条测试是运行期的兜底。
+// 与之互补的是 l10n:check，它在源码层面做同样的判定并给出文件行号。
+func TestNoUntranslatedTextInCommandTree(t *testing.T) {
+	if err := i18n.Init(i18n.DefaultLanguage); err != nil {
 		t.Fatalf("初始化失败: %v", err)
 	}
-	statusCmd, _, err := buildRoot().Find([]string{"status"})
-	if err != nil {
-		t.Fatalf("找不到 status 命令: %v", err)
+
+	var walk func(cmd *cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		fields := map[string]string{"Short": cmd.Short, "Long": cmd.Long, "Example": cmd.Example}
+		for field, value := range fields {
+			if hasNonASCIILetter(value) {
+				t.Errorf("%s 的 %s 仍含非 ASCII 文字，说明该文案没有经过 i18n.T(): %q",
+					cmd.CommandPath(), field, value)
+			}
+		}
+		cmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
+			if hasNonASCIILetter(f.Usage) {
+				t.Errorf("%s 的 flag --%s 说明仍含非 ASCII 文字: %q", cmd.CommandPath(), f.Name, f.Usage)
+			}
+		})
+		for _, child := range cmd.Commands() {
+			walk(child)
+		}
 	}
-	const want = "显示所有仓库的 git 状态"
-	if statusCmd.Short != want {
-		t.Errorf("未迁移命令的描述应保持原样，实得 %q", statusCmd.Short)
+	walk(buildRoot())
+}
+
+// hasNonASCIILetter 判断字符串是否含非 ASCII 字母。
+// 判据用 IsLetter 而非"非 ASCII 字符"：分隔线 "─"、"↔" 这类排版符号是界面骨架，
+// 不属于需要翻译的文字。
+func hasNonASCIILetter(s string) bool {
+	for _, r := range s {
+		if r > unicode.MaxASCII && unicode.IsLetter(r) {
+			return true
+		}
 	}
+	return false
 }

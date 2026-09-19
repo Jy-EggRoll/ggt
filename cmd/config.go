@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"ggt/internal/config"
+	"ggt/internal/i18n"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -12,13 +13,13 @@ import (
 func newConfigCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "config",
-		Short: "查看配置信息",
-		Long: `查看 ggt 的当前配置和配置文件路径。
+		Short: i18n.T("Show configuration information", nil),
+		Long: i18n.T(`Show the current configuration of ggt and the path to the config file.
 
-使用示例:
-  ggt config          显示当前配置
-  ggt config show    显示当前配置
-  ggt config path    显示配置文件路径`,
+Examples:
+  ggt config          Show the current configuration
+  ggt config show     Show the current configuration
+  ggt config path     Show the path to the config file`, nil),
 		Run: showConfig,
 	}
 	c.AddCommand(newConfigShowCmd(), newConfigPathCmd())
@@ -29,7 +30,7 @@ func newConfigCmd() *cobra.Command {
 func newConfigShowCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "show",
-		Short: "显示当前配置",
+		Short: i18n.T("Show the current configuration", nil),
 		Run:   showConfig,
 	}
 	return c
@@ -39,7 +40,7 @@ func newConfigShowCmd() *cobra.Command {
 func newConfigPathCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "path",
-		Short: "显示配置文件路径",
+		Short: i18n.T("Show the path to the config file", nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			pterm.Println(Muted(config.GetDefaultConfigPath()))
 		},
@@ -52,14 +53,14 @@ func showConfig(cmd *cobra.Command, args []string) {
 	cfg := GetConfig()
 	jsonBytes, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		ErrorMsg("序列化配置失败: " + err.Error())
+		ErrorMsg(i18n.T("Failed to serialize the configuration: {{.Err}}", map[string]any{"Err": err}))
 		return
 	}
 
-	Header("当前配置")
+	Header(i18n.T("Current configuration", nil))
 	PrintRaw(string(jsonBytes))
 	pterm.Println()
-	Infof("配置文件: %s", config.GetDefaultConfigPath())
+	InfoMsg(i18n.T("Config file: {{.Path}}", map[string]any{"Path": config.GetDefaultConfigPath()}))
 }
 
 func init() {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"ggt/internal/git"
+	"ggt/internal/i18n"
 	"ggt/internal/worker"
 	"github.com/spf13/cobra"
 )
@@ -31,19 +32,20 @@ type filesOutput struct {
 func newFilesCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "files",
-		Short: "显示所有仓库的文件列表",
-		Long: `遍历所有已配置的仓库，列出每个仓库的文件列表。
+		Short: i18n.T("Show the file list of all repositories", nil),
+		Long: i18n.T(`Iterate over all configured repositories and list the files of each.
 
-使用示例:
-  ggt files              显示所有仓库的文件列表
-  ggt fl                 简写形式
-  ggt files -o out.txt   将文件列表写入 out.txt`,
+Examples:
+  ggt files              Show the file list of all repositories
+  ggt fl                 Short form
+  ggt files -o out.txt   Write the file list to out.txt`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-			Infof("共 %d 个仓库，开始获取文件列表...\n", len(repos))
+			// 保留常量格式串 "%s\n" 以维持改造前的尾部空行
+			Infof("%s\n", i18n.T("Repositories: {{.Count}} — gathering file lists...", map[string]any{"Count": len(repos)}))
 
 			// 使用 worker.Map 并发获取每个仓库的文件列表
-			t := NewDebugTimer(fmt.Sprintf("文件列表 (%d 个仓库)", len(repos)))
+			t := NewDebugTimer(i18n.T("File lists (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
 			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoFiles)
 			t.Done()
 
@@ -51,7 +53,9 @@ func newFilesCmd() *cobra.Command {
 			var output strings.Builder
 			for _, r := range results {
 				if r.err != nil {
-					Warnf("仓库 %s: 获取文件列表失败 - %v\n", r.path, r.err)
+					// 原文案以 \n 结尾且走 Printfln，会多出一个空行；用常量格式串 "%s\n" 保持等价
+					Warnf("%s\n", i18n.T("Repository {{.Path}}: failed to list files - {{.Err}}",
+						map[string]any{"Path": r.path, "Err": r.err}))
 					continue
 				}
 				for _, file := range r.files {
@@ -62,17 +66,18 @@ func newFilesCmd() *cobra.Command {
 			// 根据 -o 参数决定输出到文件或控制台
 			if outputFile != "" {
 				if err := os.WriteFile(outputFile, []byte(output.String()), 0644); err != nil {
-					Errorf("写入文件失败: %v\n", err)
+					Errorf("%s\n", i18n.T("Failed to write file: {{.Err}}", map[string]any{"Err": err}))
 					return
 				}
-				Successf("文件列表已写入: %s\n", outputFile)
+				Successf("%s\n", i18n.T("File list written to: {{.Path}}", map[string]any{"Path": outputFile}))
 			} else {
 				fmt.Print(output.String())
 			}
 		},
 	}
 	c.Aliases = []string{"fl"}
-	c.Flags().StringVarP(&outputFile, "output", "o", "", "将文件列表写入指定文件（省略时输出到控制台）")
+	c.Flags().StringVarP(&outputFile, "output", "o", "",
+		i18n.T("Write the file list to this file (prints to the console when omitted)", nil))
 	return c
 }
 
