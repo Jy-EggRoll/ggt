@@ -17,8 +17,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ggt/internal/git"
 	"ggt/internal/i18n"
 	"ggt/internal/worker"
+	"github.com/pterm/pterm"
 )
 
 // RepoEntry 是 ggt 遍历仓库时的统一单元。
@@ -151,7 +153,7 @@ func expand(ctx context.Context, topPaths []string, ignoreSubmodules bool) []Rep
 	}
 
 	// 第二步：并发发现所有顶层仓库的子模块。
-	subsForEach := worker.Map(ctx, topPaths, GetConfig().ConcurrencyValue(),
+	subsForEach := worker.Map(ctx, topPaths, Concurrency(),
 		func(_ context.Context, top string) []string {
 			return discoverSubmodules(top)
 		})
@@ -170,14 +172,24 @@ func expand(ctx context.Context, topPaths []string, ignoreSubmodules bool) []Rep
 	return entries
 }
 
-// GetAllRepos 返回"顶层仓库 + 子模块"的全部条目（按 ignore 决定是否含子模块）。
-// 各遍历型命令应调用本函数取代 MustGetRepoList，从而自动获得子模块辐射能力。
-func GetAllRepos(ctx context.Context, ignore bool) []RepoEntry {
-	return expand(ctx, GetRepoList(), ignore)
+// AllRepos 按当前配置取全部仓库条目（含子模块，除非配置要求忽略）。
+//
+// 各遍历型命令统一用它，避免每处都写 GetConfig().IgnoreSubmodules——那是配置细节，
+// 不该泄漏到每个命令里；真要改"是否含子模块"的语义时也只需改这一处。
+func AllRepos(ctx context.Context) []RepoEntry {
+	return MustGetAllRepos(ctx, GetConfig().IgnoreSubmodules)
 }
 
-// MustGetAllRepos 同 GetAllRepos，但顶层仓库为空时打印提示并退出（正常无任务）。
-// 所有需要仓库集合的命令都应调用本函数而非 MustGetRepoList。
+// ExpandRepos 按当前配置展开给定的顶层仓库，语义同 AllRepos，
+// 但顶层列表由调用方提供（如 remote 用当前目录）。
+func ExpandRepos(ctx context.Context, top []string) []RepoEntry {
+	return expand(ctx, top, GetConfig().IgnoreSubmodules)
+}
+
+// MustGetAllRepos 返回"顶层仓库 + 子模块"的全部条目，顶层仓库为空时打印提示并退出
+// （空列表属于"正常无任务可做"而非错误，所以退出码 0）。
+// 需要仓库集合的命令一律调用它（或其封装 AllRepos），不要直接用 GetRepoList——
+// 只有经它展开才能获得子模块辐射能力。
 // --debug 模式下分别输出仓库发现和子模块展开的耗时。
 func MustGetAllRepos(ctx context.Context, ignore bool) []RepoEntry {
 	t1 := NewDebugTimer(i18n.T("Repository discovery", nil))
@@ -190,9 +202,47 @@ func MustGetAllRepos(ctx context.Context, ignore bool) []RepoEntry {
 	t1.Done()
 
 	t2 := NewDebugTimer(i18n.T("Submodule expansion (repositories: {{.Count}}, concurrency: {{.Concurrency}})",
-		map[string]any{"Count": len(top), "Concurrency": GetConfig().ConcurrencyValue()}))
+		map[string]any{"Count": len(top), "Concurrency": Concurrency()}))
 	result := expand(ctx, top, ignore)
 	t2.Done()
 
 	return result
+}
+
+// ——— 仓库列表管理 ———
+
+// GetRepoList 返回所有有效仓库路径的列表。
+// 合并直接添加的仓库（RepoPaths）和从父目录扫描到的仓库。
+// 父目录扫描会检查每个子目录是否包含 .git 目录。
+func GetRepoList() []string {
+	repos := GetConfig().RepoPaths
+
+	for _, parentPath := range GetConfig().ParentPaths {
+		entries, err := os.ReadDir(parentPath)
+		if err != nil {
+			// 父目录不存在或无权访问，跳过
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			repoPath := parentPath + string(os.PathSeparator) + entry.Name()
+			if git.IsRepo(repoPath) {
+				repos = append(repos, repoPath)
+			}
+		}
+	}
+
+	return repos
+}
+
+// PrintRepoList 打印仓库列表的标题和所有路径。
+func PrintRepoList(repos []string) {
+	Header(i18n.T("Repositories", nil))
+	for _, repo := range repos {
+		PrintPath(repo)
+	}
+	pterm.Println()
+	InfoMsg(i18n.T("Total repositories: {{.Count}}", map[string]any{"Count": len(repos)}))
 }

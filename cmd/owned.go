@@ -45,13 +45,13 @@ Examples:
 				WarnMsg(i18n.T("ggt owned is only supported on Windows", nil))
 				return
 			}
-			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+			repos := AllRepos(context.Background())
 			// 保留常量格式串 "%s\n" 以维持改造前的尾部空行
-			Infof("%s\n", i18n.T("Repositories: {{.Count}} — taking ownership...", map[string]any{"Count": len(repos)}))
+			InfoLn(i18n.T("Repositories: {{.Count}} — taking ownership...", map[string]any{"Count": len(repos)}))
 
 			// 并发执行 takeown（worker.Map 保证输出顺序），子模块作为独立条目参与
 			t := NewDebugTimer(i18n.T("Ownership (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
-			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) takeownResult {
+			results := worker.Map(context.Background(), repos, Concurrency(), func(ctx context.Context, e RepoEntry) takeownResult {
 				return takeownResult{name: e.Name, isSubmodule: e.IsSubmodule, err: takeownRepo(ctx, e.Path)}
 			})
 			t.Done()

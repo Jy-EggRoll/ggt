@@ -40,13 +40,13 @@ Examples:
   ggt fl                 Short form
   ggt files -o out.txt   Write the file list to out.txt`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
-			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+			repos := AllRepos(context.Background())
 			// 保留常量格式串 "%s\n" 以维持改造前的尾部空行
-			Infof("%s\n", i18n.T("Repositories: {{.Count}} — gathering file lists...", map[string]any{"Count": len(repos)}))
+			InfoLn(i18n.T("Repositories: {{.Count}} — gathering file lists...", map[string]any{"Count": len(repos)}))
 
 			// 使用 worker.Map 并发获取每个仓库的文件列表
 			t := NewDebugTimer(i18n.T("File lists (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
-			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoFiles)
+			results := worker.Map(context.Background(), repos, Concurrency(), showRepoFiles)
 			t.Done()
 
 			// 构建输出内容：每行为仓库完整路径与文件路径拼接的合法路径
@@ -54,7 +54,7 @@ Examples:
 			for _, r := range results {
 				if r.err != nil {
 					// 原文案以 \n 结尾且走 Printfln，会多出一个空行；用常量格式串 "%s\n" 保持等价
-					Warnf("%s\n", i18n.T("Repository {{.Path}}: failed to list files - {{.Err}}",
+					WarnLn(i18n.T("Repository {{.Path}}: failed to list files - {{.Err}}",
 						map[string]any{"Path": r.path, "Err": r.err}))
 					continue
 				}
@@ -66,10 +66,10 @@ Examples:
 			// 根据 -o 参数决定输出到文件或控制台
 			if outputFile != "" {
 				if err := os.WriteFile(outputFile, []byte(output.String()), 0644); err != nil {
-					Errorf("%s\n", i18n.T("Failed to write file: {{.Err}}", map[string]any{"Err": err}))
+					ErrorLn(i18n.T("Failed to write file: {{.Err}}", map[string]any{"Err": err}))
 					return
 				}
-				Successf("%s\n", i18n.T("File list written to: {{.Path}}", map[string]any{"Path": outputFile}))
+				SuccessLn(i18n.T("File list written to: {{.Path}}", map[string]any{"Path": outputFile}))
 			} else {
 				fmt.Print(output.String())
 			}

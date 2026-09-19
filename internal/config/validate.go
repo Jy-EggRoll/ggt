@@ -134,7 +134,7 @@ func validateKeys(raw map[string]any) []Issue {
 		if s.Parse == nil {
 			continue
 		}
-		text := valueToText(v)
+		text := ValueText(v)
 		if _, err := s.Parse(text); err != nil {
 			issues = append(issues, Issue{
 				Level: LevelError,
@@ -237,8 +237,12 @@ func checkPathList(key string, v any, mustBeRepo bool) []Issue {
 	return issues
 }
 
-// valueToText 把文件里的 JSON 值转成命令行形态的文本，以便复用 Setting.Parse 校验。
-func valueToText(v any) string {
+// ValueText 把配置值（JSON 解码后的形态）转成裸文本，去掉 JSON 的引号与类型包装。
+//
+// 有两个用途：validate 里复用 Setting.Parse 校验文件中的取值（Parse 接收字符串），
+// 以及 ggt config get 打印标量。两处共用一份实现，避免"校验时认得的写法"与
+// "展示出来的写法"不一致。
+func ValueText(v any) string {
 	switch t := v.(type) {
 	case nil:
 		return ""

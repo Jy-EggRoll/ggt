@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"ggt/internal/i18n"
+	"ggt/internal/jsonfile"
 )
 
 // localesRelDir 是语言文件所在目录（相对仓库根）。
@@ -261,8 +262,9 @@ func readFlat(path string) (map[string]string, error) {
 }
 
 // writeFlat 以规范形态写入语言文件：字典序、2 空格缩进、不做 HTML 转义。
+// 规范形态由 internal/jsonfile 提供，与配置文件写入共用同一份策略。
 func writeFlat(path string, entries map[string]string) error {
-	buf, err := marshalCanonical(entries)
+	buf, err := jsonfile.Marshal(entries)
 	if err != nil {
 		return err
 	}
@@ -282,7 +284,7 @@ func checkCanonical(path string) error {
 	if err != nil {
 		return err
 	}
-	want, err := marshalCanonical(entries)
+	want, err := jsonfile.Marshal(entries)
 	if err != nil {
 		return err
 	}
@@ -290,21 +292,6 @@ func checkCanonical(path string) error {
 		return fmt.Errorf("%s 未按字典序排列或格式不规范，请运行 task l10n:export", path)
 	}
 	return nil
-}
-
-// marshalCanonical 以规范形态序列化：json 编码器对 map 按键排序。
-//
-// SetEscapeHTML(false) 是必需的：分桶标签等文案含 < > 字符，默认转义会写成
-// \u003c / \u003e，既损害可读性也让 diff 无法评审。go-i18n 自身的 marshaler 同样关闭了该转义。
-func marshalCanonical(entries map[string]string) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(entries); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // findRepoRoot 从当前目录向上查找含 go.mod 的目录。

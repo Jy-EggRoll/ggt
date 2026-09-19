@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"ggt/internal/i18n"
+	"ggt/internal/jsonfile"
 )
 
 // ReadRawAt 读取配置文件的原始键值。
@@ -75,7 +76,9 @@ func WriteRawAt(path string, raw map[string]any) error {
 		return err
 	}
 
-	buf, err := marshalConfig(normalized)
+	// 统一的规范形态（字典序、2 空格缩进、不转义 HTML）由 internal/jsonfile 提供，
+	// 与语言文件写入共用同一份策略
+	buf, err := jsonfile.Marshal(normalized)
 	if err != nil {
 		return err
 	}
@@ -169,20 +172,6 @@ func resolveSymlink(path string) (string, error) {
 		return path, nil
 	}
 	return filepath.EvalSymlinks(path)
-}
-
-// marshalConfig 序列化为配置文件的规范形态：2 空格缩进、不转义 HTML、结尾带换行。
-//
-// SetEscapeHTML(false) 是必要的：路径里常见的 & 若被写成 \u0026，文件既难读也难 diff。
-func marshalConfig(raw map[string]any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(raw); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // writeFileAtomic 通过"同目录临时文件 + rename"原子替换目标文件。

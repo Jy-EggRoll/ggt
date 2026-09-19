@@ -167,7 +167,7 @@ func switchCurrentRepo(target string) {
 		return
 	}
 
-	entries := expand(context.Background(), []string{wd}, GetConfig().IgnoreSubmodules)
+	entries := ExpandRepos(context.Background(), []string{wd})
 	processSwitchResults(entries, target)
 }
 
@@ -198,15 +198,15 @@ func toggleCurrentRepo() {
 		target = "ssh"
 	}
 
-	entries := expand(context.Background(), []string{wd}, GetConfig().IgnoreSubmodules)
+	entries := ExpandRepos(context.Background(), []string{wd})
 	processSwitchResults(entries, target)
 }
 
 // switchAllRepos 切换所有配置仓库（含子模块，受 ignore_submodules 控制）的远程协议。
 // 使用 worker.Map 并发收集结果后顺序打印统计信息。
 func switchAllRepos(target string) {
-	entries := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
-	Infof("%s\n", i18n.T("Repositories: {{.Count}} — switching protocol to {{.Proto}}...",
+	entries := AllRepos(context.Background())
+	InfoLn(i18n.T("Repositories: {{.Count}} — switching protocol to {{.Proto}}...",
 		map[string]any{"Count": len(entries), "Proto": pterm.Cyan(strings.ToUpper(target))}))
 	processSwitchResults(entries, target)
 }
@@ -222,7 +222,7 @@ func processSwitchResults(entries []RepoEntry, target string) {
 	}
 
 	t := NewDebugTimer(i18n.T("Protocol switch (repositories: {{.Count}})", map[string]any{"Count": len(entries)}))
-	results := worker.Map(context.Background(), entries, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) switchOutcome {
+	results := worker.Map(context.Background(), entries, Concurrency(), func(ctx context.Context, e RepoEntry) switchOutcome {
 		r := doSwitchRemote(ctx, e.Path, target)
 		r.name = e.Name
 		r.isSubmodule = e.IsSubmodule

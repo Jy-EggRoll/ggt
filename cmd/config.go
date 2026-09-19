@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 
 	"ggt/internal/config"
 	"ggt/internal/i18n"
@@ -79,7 +78,7 @@ func showConfig(cmd *cobra.Command, args []string) error {
 
 	jsonBytes, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%s", i18n.T("Failed to serialize the configuration: {{.Err}}", map[string]any{"Err": err}))
+		return errors.New(i18n.T("Failed to serialize the configuration: {{.Err}}", map[string]any{"Err": err}))
 	}
 
 	Header(i18n.T("Current configuration", nil))
@@ -135,7 +134,7 @@ Examples:
 			v, err := config.EffectiveAt(config.GetDefaultConfigPath(), args[0])
 			if err != nil {
 				if errors.Is(err, config.ErrUnknownKey) {
-					return fmt.Errorf("%s", errUnknownKey(args[0]))
+					return errUnknownKey(args[0])
 				}
 				return err
 			}
@@ -164,22 +163,22 @@ Examples:
 
 			s, ok := config.Lookup(key)
 			if !ok {
-				return fmt.Errorf("%s", errUnknownKey(key))
+				return errUnknownKey(key)
 			}
 			if s.ManagedBy != "" {
-				return fmt.Errorf("%s", i18n.T("{{.Key}} is managed by \"{{.Command}}\" and cannot be set here",
+				return errors.New(i18n.T("{{.Key}} is managed by \"{{.Command}}\" and cannot be set here",
 					map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
 			}
 
 			parsed, err := s.Parse(value)
 			if err != nil {
-				return fmt.Errorf("%s", errInvalidValue(s.Key, value, s.Expected))
+				return errInvalidValue(s.Key, value, s.Expected)
 			}
 			if err := config.SetKey(s.Key, parsed); err != nil {
 				return err
 			}
 
-			SuccessMsg(i18n.T("{{.Key}} = {{.Value}}", map[string]any{"Key": s.Key, "Value": plainString(parsed)}))
+			SuccessMsg(i18n.T("{{.Key}} = {{.Value}}", map[string]any{"Key": s.Key, "Value": config.ValueText(parsed)}))
 			if s.Key == "language" {
 				// 语言在进程启动时就由 i18n.Init 定下了，改配置不会影响当前这次输出。
 				// 刻意不在这里重新 Init：那会违反 i18n 包"Init 之后状态只读"的契约
@@ -222,7 +221,7 @@ Examples:
 			// key 与 --all 必须恰有其一。两者都给或都不给都属语义不明，直接拒绝，
 			// 避免"我明明指定了 key，怎么把整个配置删了"这类误解
 			if all == (len(args) == 1) {
-				return fmt.Errorf("%s", i18n.T("Specify either a key or --all, but not both", nil))
+				return errors.New(i18n.T("Specify either a key or --all, but not both", nil))
 			}
 			if all {
 				return resetAllConfig(defaults, yes)
@@ -244,14 +243,14 @@ Examples:
 func resetOneKey(key string, writeDefault bool) error {
 	s, ok := config.Lookup(key)
 	if !ok {
-		return fmt.Errorf("%s", errUnknownKey(key))
+		return errUnknownKey(key)
 	}
 	if s.ManagedBy != "" {
-		return fmt.Errorf("%s", i18n.T("{{.Key}} is managed by \"{{.Command}}\"; use that command to change it",
+		return errors.New(i18n.T("{{.Key}} is managed by \"{{.Command}}\"; use that command to change it",
 			map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
 	}
 
-	defaultText := plainString(s.Default)
+	defaultText := config.ValueText(s.Default)
 	if writeDefault {
 		if err := config.SetKey(s.Key, s.Default); err != nil {
 			return err
@@ -283,7 +282,7 @@ func resetAllConfig(writeDefaults, yes bool) error {
 		if !yes {
 			// 非交互环境下 pterm 的确认会读到 EOF 或直接挂住，明确报错让用户加 --yes
 			if !stdinIsTerminal() {
-				return fmt.Errorf("%s", i18n.T("Refusing to delete {{.Path}} without confirmation; re-run with --yes",
+				return errors.New(i18n.T("Refusing to delete {{.Path}} without confirmation; re-run with --yes",
 					map[string]any{"Path": path}))
 			}
 			WarnMsg(i18n.T("This will delete {{.Path}} and forget every registered repository ({{.Count}} entries)",
@@ -371,17 +370,17 @@ Examples:
 var errSilent = errors.New("error already reported")
 
 // errUnknownKey 生成"未知键"的统一提示，顺带告诉用户怎么列出全部键。
-func errUnknownKey(key string) string {
-	return i18n.T("Unknown config key: {{.Key}} (run \"ggt config --help\" to see the available keys)",
-		map[string]any{"Key": key})
+func errUnknownKey(key string) error {
+	return errors.New(i18n.T("Unknown config key: {{.Key}} (run \"ggt config --help\" to see the available keys)",
+		map[string]any{"Key": key}))
 }
 
 // errInvalidValue 生成"值非法"的统一提示。
-// 把所有键的值错误收敛到这一条模板，中英双语各只需一条文案，
+// 所有键的值错误都收敛到这一条模板，中英双语各只需一条文案，
 // 否则文案数量会随校验规则数线性增长。
-func errInvalidValue(key, value, expected string) string {
-	return i18n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
-		map[string]any{"Key": key, "Value": value, "Expected": expected})
+func errInvalidValue(key, value, expected string) error {
+	return errors.New(i18n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
+		map[string]any{"Key": key, "Value": value, "Expected": expected}))
 }
 
 // levelTag 返回体检条目的级别标记。
@@ -414,30 +413,14 @@ func printConfigValue(v any) {
 	switch list := v.(type) {
 	case []any:
 		for _, item := range list {
-			fmt.Println(plainString(item))
+			fmt.Println(config.ValueText(item))
 		}
 	case []string:
 		for _, item := range list {
 			fmt.Println(item)
 		}
 	default:
-		fmt.Println(plainString(v))
-	}
-}
-
-// plainString 把配置值转成裸文本形式，去掉 JSON 的引号与类型包装。
-func plainString(v any) string {
-	switch t := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return t
-	case bool:
-		return strconv.FormatBool(t)
-	case json.Number:
-		return t.String()
-	default:
-		return fmt.Sprintf("%v", t)
+		fmt.Println(config.ValueText(v))
 	}
 }
 

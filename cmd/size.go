@@ -61,15 +61,15 @@ Examples:
   ggt sz            Short form
   ggt size --low 200 --high 600 --unit binary  Custom thresholds and unit`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
-			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+			repos := AllRepos(context.Background())
 			// 这里刻意保留常量格式串 "%s\n" 而不是改用 InfoMsg：pterm 的 Sprintfln 会在
 			// 渲染结果之后再加一个换行，而 InfoMsg 走的 Println 会把结尾换行折叠掉，
 			// 两者视觉上相差一个空行。用常量格式串可与改造前的输出保持完全一致
-			Infof("%s\n", i18n.T("Repositories: {{.Count}} — gathering sizes...", map[string]any{"Count": len(repos)}))
+			InfoLn(i18n.T("Repositories: {{.Count}} — gathering sizes...", map[string]any{"Count": len(repos)}))
 
 			width := pterm.GetTerminalWidth()
 			t := NewDebugTimer(i18n.T("Size stats (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
-			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), func(ctx context.Context, e RepoEntry) repoSizeResult {
+			results := worker.Map(context.Background(), repos, Concurrency(), func(ctx context.Context, e RepoEntry) repoSizeResult {
 				return showRepoSize(ctx, e, width)
 			})
 			t.Done()
@@ -149,9 +149,8 @@ func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 		return repoSizeResult{
 			name:        e.Name,
 			isSubmodule: e.IsSubmodule,
-			// WarnStr 走的是纯文本通道，入参以 \n 结尾时 pterm 会折叠为单个换行，
-			// 与改造前 WarnS(format, path) 的输出完全一致
-			output: WarnStr(i18n.T("Repository {{.Path}}: command failed", map[string]any{"Path": e.Path}) + "\n"),
+			// 入参以 \n 结尾：pterm 会把结尾换行折叠为单个换行，于是这行就是普通的单行告警
+			output: WarnStrLn(i18n.T("Repository {{.Path}}: command failed", map[string]any{"Path": e.Path})),
 			size:   0,
 			ok:     false,
 		}

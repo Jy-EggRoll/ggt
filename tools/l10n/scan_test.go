@@ -173,34 +173,5 @@ var _ = T("test-only message", nil)
 	}
 }
 
-// TestMarshalCanonicalKeepsAngleBrackets 断言序列化不转义 < > &。
-//
-// 分桶标签等文案含这些字符，默认的 HTML 转义会写成 \u003c，既伤可读性也让 diff
-// 无法评审；go-i18n 自身的 marshaler 同样关闭了该转义。
-func TestMarshalCanonicalKeepsAngleBrackets(t *testing.T) {
-	buf, err := marshalCanonical(map[string]string{"<{{.Low}}MB": "<{{.Low}}MB"})
-	if err != nil {
-		t.Fatalf("序列化失败: %v", err)
-	}
-	got := string(buf)
-	if !strings.Contains(got, "<{{.Low}}MB") {
-		t.Errorf("尖括号被转义了: %s", got)
-	}
-	if strings.Contains(got, `\u003c`) {
-		t.Errorf("不应出现 \\u003c 转义: %s", got)
-	}
-}
-
-// TestMarshalCanonicalSortsKeys 断言序列化按字典序排列。
-func TestMarshalCanonicalSortsKeys(t *testing.T) {
-	buf, err := marshalCanonical(map[string]string{"zeta": "z", "alpha": "a", "mid": "m"})
-	if err != nil {
-		t.Fatalf("序列化失败: %v", err)
-	}
-	iAlpha := strings.Index(string(buf), "alpha")
-	iMid := strings.Index(string(buf), "mid")
-	iZeta := strings.Index(string(buf), "zeta")
-	if !(iAlpha < iMid && iMid < iZeta) {
-		t.Errorf("键未按字典序排列: %s", buf)
-	}
-}
+// 规范 JSON 序列化（字典序、2 空格缩进、不转义 HTML）的实现与测试都在
+// internal/jsonfile 包，本工具直接复用，不再自行维护一份。

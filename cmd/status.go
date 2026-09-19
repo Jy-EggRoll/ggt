@@ -25,12 +25,12 @@ Examples:
   ggt status          Show the status of all repositories
   ggt st              Short form`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
-			repos := MustGetAllRepos(context.Background(), GetConfig().IgnoreSubmodules)
+			repos := AllRepos(context.Background())
 			// 保留常量格式串 "%s\n" 以维持改造前的尾部空行（pterm 的 Println 会折叠结尾换行）
-			Infof("%s\n", i18n.T("Repositories: {{.Count}} — checking status...", map[string]any{"Count": len(repos)}))
+			InfoLn(i18n.T("Repositories: {{.Count}} — checking status...", map[string]any{"Count": len(repos)}))
 
 			t := NewDebugTimer(i18n.T("Status check (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
-			results := worker.Map(context.Background(), repos, GetConfig().ConcurrencyValue(), showRepoStatus)
+			results := worker.Map(context.Background(), repos, Concurrency(), showRepoStatus)
 			t.Done()
 
 			for _, r := range results {
@@ -48,10 +48,9 @@ Examples:
 func showRepoStatus(ctx context.Context, e RepoEntry) string {
 	output, err := git.RunContext(ctx, e.Path, "status", "--short", "--branch", "--untracked-files")
 	if err != nil {
-		// WarnStr 是纯文本通道；入参以 \n 结尾时 pterm 会折叠为单个换行，
-		// 与改造前 WarnS(format, args) 的输出一致
-		return WarnStr(i18n.T("Repository {{.Path}}: git failed - {{.Err}}",
-			map[string]any{"Path": e.Path, "Err": err}) + "\n")
+		// 入参以 \n 结尾：pterm 会把结尾换行折叠为单个换行，于是这行就是普通的单行告警
+		return WarnStrLn(i18n.T("Repository {{.Path}}: git failed - {{.Err}}",
+			map[string]any{"Path": e.Path, "Err": err}))
 	}
 
 	label := RepoLabel(e.Name, e.IsSubmodule)

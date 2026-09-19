@@ -6,13 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"ggt/internal/config"
-	"ggt/internal/git"
 	"ggt/internal/i18n"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -135,10 +132,10 @@ func GetConfig() *config.Config {
 	return cfg
 }
 
-// GetDebug 返回 --debug flag 是否开启。
-// 各命令据此决定是否输出阶段耗时计时。
-func GetDebug() bool {
-	return debug
+// Concurrency 返回当前生效的并发数（已把配置里的语义串解析为具体整数）。
+// 各命令启动 worker 时统一调用它，避免每处都写 GetConfig().ConcurrencyValue()。
+func Concurrency() int {
+	return GetConfig().ConcurrencyValue()
 }
 
 // DebugTimer 记录阶段耗时，仅 --debug 时输出灰色计时行。
@@ -158,232 +155,4 @@ func (t *DebugTimer) Done() {
 	if debug {
 		pterm.FgGray.Printf("  [debug] %s: %v\n", t.label, time.Since(t.start))
 	}
-}
-
-// ——— 统一的 pterm 输出辅助函数 ———
-// 所有命令都应通过这些函数输出，不要直接在命令里调用 pterm.*。
-// 这样做的好处：未来若要统一换主题色、换输出库、或接入日志系统，
-// 只需修改本文件这一处，而不必改动各业务命令。
-// 命名约定：Msg 系列接收纯字符串；f 系列接收 format + 参数（对应 pterm 的 Printf/Printfln）。
-//
-// 唯一例外是**面向脚本消费**的输出（ggt config get / validate / path）：pterm 不检测
-// TTY，会把 ANSI 转义写进管道，让 `ggt config show | jq` 这类用法失败。那些命令
-// 直接走 fmt 的裸输出，且不受本区块的样式调整影响。
-
-// Header 打印带样式的标题（使用 Section 风格，比 DefaultHeader 方块更简洁）。
-func Header(title string) {
-	pterm.DefaultSection.Println(title)
-}
-
-// SuccessMsg 打印绿色成功消息。
-func SuccessMsg(msg string) {
-	pterm.Success.Println(msg)
-}
-
-// Successf 以绿色成功样式打印格式化消息。
-func Successf(format string, args ...any) {
-	pterm.Success.Printfln(format, args...)
-}
-
-// ErrorMsg 打印红色错误消息。
-func ErrorMsg(msg string) {
-	pterm.Error.Println(msg)
-}
-
-// Errorf 以红色错误样式打印格式化消息。
-func Errorf(format string, args ...any) {
-	pterm.Error.Printfln(format, args...)
-}
-
-// InfoMsg 打印浅蓝信息消息（区别于成功的绿色，用于客观状态通报）。
-func InfoMsg(msg string) {
-	pterm.Info.Println(msg)
-}
-
-// Infof 以浅蓝信息样式打印格式化消息。
-func Infof(format string, args ...any) {
-	pterm.Info.Printfln(format, args...)
-}
-
-// WarnMsg 打印黄色警告消息。
-func WarnMsg(msg string) {
-	pterm.Warning.Println(msg)
-}
-
-// Warnf 以黄色警告样式打印格式化消息。
-func Warnf(format string, args ...any) {
-	pterm.Warning.Printfln(format, args...)
-}
-
-// PrintPath 以统一列表项格式打印一个路径（灰色 "  - path"）。
-// 与 ListItem 共用样式，避免不同命令的列表前缀/颜色割裂。
-func PrintPath(path string) {
-	ListItem(path)
-}
-
-// ——— 统一样式原子（所有命令的用户文本输出都应经由本区块，
-// 不得再直接调用 pterm.* 原色或 fmt.Print*，git 自身着色输出除外，统一走 PrintRaw）———
-
-// Muted 返回灰色（次要/细节）文本字符串，不立即打印。
-// 用于 URL、说明性标签（如"变动详情："）等不希望抢占视觉重心的文本。
-func Muted(text string) string {
-	return pterm.FgGray.Sprint(text)
-}
-
-// ListItem 以统一的灰色项目符号打印一行列表项："  - text"。
-// 全仓所有列表（仓库路径、分桶名、操作明细）共用此格式，
-// 消除此前 FgYellow 的 "  - "、FgGray 的 "    - "、以及 "  takeown on ..." 三种割裂风格。
-func ListItem(text string) {
-	pterm.FgGray.Printf("  - %s\n", text)
-}
-
-// PrintSeparator 打印一条全宽浅黄分隔线，用于区分不同仓库/区块。
-// 宽度取自当前终端宽度，保证跨命令一致（替代此前 size/summary 各自重复实现）。
-func PrintSeparator() {
-	pterm.FgLightYellow.Println(strings.Repeat("─", pterm.GetTerminalWidth()))
-}
-
-// buildSeparator 返回长度为 width 的浅黄分隔线字符串（纯函数，便于单测）。
-// 与 PrintSeparator 共享同一着色逻辑，仅不负责打印。
-func buildSeparator(width int) string {
-	return pterm.FgLightYellow.Sprint(strings.Repeat("─", width))
-}
-
-// RepoName 返回青色包裹的仓库名前缀 "[name]"，全仓统一仓库名着色。
-// 此前 status 用 FgYellow、size/summary/remote 用 FgCyan，同一语义三色并存，现收敛于此。
-func RepoName(name string) string {
-	return pterm.FgCyan.Sprintf("[%s]", name)
-}
-
-// RepoLabel 返回带"是否子模块"语义的仓库标签：
-//   - 顶层仓库：青色 [name]
-//   - 子模块：青色 [子] name
-//
-// 所有命令在打印仓库名时必须统一经此函数，消除此前各个命令对仓库名异色/无前缀的割裂处理，
-// 也让"子模块"这一身份在任意命令输出里都有一致的 [子] 标识。
-func RepoLabel(name string, isSubmodule bool) string {
-	if isSubmodule {
-		return pterm.FgCyan.Sprintf("%s %s", i18n.T("[sub]", nil), name)
-	}
-	return RepoName(name)
-}
-
-// RepoLine 打印一行"仓库标签 + 备注"，作为各命令的仓库标题行（不含分隔线）。
-// 仓库标签统一经 RepoLabel 着色，子模块自动带 [子] 前缀。
-// 需要分隔线时另行调用 PrintSeparator。
-func RepoLine(name, note string, isSubmodule bool) {
-	label := RepoLabel(name, isSubmodule)
-	if note == "" {
-		pterm.Println(label)
-	} else {
-		pterm.Printf("%s %s\n", label, note)
-	}
-}
-
-// PrintRaw 透传外部（如 git）自带 ANSI 着色的原始输出，仅做打印封装。
-// 调用处可明确这是"透传"而非本工具自身样式，避免与统一封装混淆。
-func PrintRaw(s string) {
-	fmt.Print(s)
-}
-
-// WarnS/InfoS/ErrorS/SuccessS 返回对应语义的着色字符串，
-// 供需要拼接多行后再统一返回/打印的场合（如 sync 的逐仓库结果）使用，
-// 替代直接调用 pterm.Warning.Sprintf 等造成的风格割裂。
-func WarnS(format string, args ...any) string {
-	return pterm.Warning.Sprintf(format, args...)
-}
-func InfoS(format string, args ...any) string {
-	return pterm.Info.Sprintf(format, args...)
-}
-func ErrorS(format string, args ...any) string {
-	return pterm.Error.Sprintf(format, args...)
-}
-func SuccessS(format string, args ...any) string {
-	return pterm.Success.Sprintf(format, args...)
-}
-
-// WarnStr/InfoStr/ErrorStr/SuccessStr 返回对应语义的着色字符串，
-// 与 WarnS/InfoS/ErrorS/SuccessS 的唯一区别是接收"已渲染好的纯文本"而非格式串。
-//
-// 这四个函数是为 i18n 而加的：T() 返回的译文里可能含字面 %（如"完成度 100%"），
-// 若经 Sprintf 通道会被 fmt 当成格式动词解析成 %!?(MISSING)。使用约定是——
-// 需要变量插值的场合，一律用 go-i18n 的 {{.Var}} 模板在 T() 里渲染完，
-// 再走这四个函数着色；不要在译文上做二次 Sprintf。
-//
-// 换行行为与 pterm 保持一致：入参结尾的换行会被折叠为单个换行
-// （PrefixPrinter.Sprint 对结尾 \n 先 TrimRight 再补一个），
-// 所以需要保留末尾空行的场合要用常量格式串走 f 系列，例如 Infof("%s\n", T(...))。
-func WarnStr(s string) string    { return pterm.Warning.Sprint(s) }
-func InfoStr(s string) string    { return pterm.Info.Sprint(s) }
-func ErrorStr(s string) string   { return pterm.Error.Sprint(s) }
-func SuccessStr(s string) string { return pterm.Success.Sprint(s) }
-
-// DoneBanner 打印一条完成类收尾横幅（成功绿），统一各命令的结尾提示样式。
-// 此前 sync 用 pterm.Success.Println、owned/remote 用 Infof("处理完成...")，现已收敛。
-func DoneBanner(msg string) {
-	pterm.Success.Println(msg)
-}
-
-// PrintProtocolSwitch 打印远程协议切换结果：仓库标签 + 灰色旧协议 → 绿色新协议。
-// 仓库标签统一经 RepoLabel 着色，子模块自动带 [子] 前缀。
-// 此前 remote 直接内联 FgRed/FgGreen，现已收敛到统一封装。
-func PrintProtocolSwitch(name string, isSubmodule bool, oldProto, newProto string) {
-	pterm.Success.Printfln("%s %s → %s", RepoLabel(name, isSubmodule), Muted(oldProto), pterm.FgGreen.Sprint(newProto))
-}
-
-// ——— 仓库列表管理 ———
-
-// GetRepoList 返回所有有效仓库路径的列表。
-// 合并直接添加的仓库（RepoPaths）和从父目录扫描到的仓库。
-// 父目录扫描会检查每个子目录是否包含 .git 目录。
-func GetRepoList() []string {
-	repos := GetConfig().RepoPaths
-
-	for _, parentPath := range GetConfig().ParentPaths {
-		entries, err := os.ReadDir(parentPath)
-		if err != nil {
-			// 父目录不存在或无权访问，跳过
-			continue
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			repoPath := parentPath + string(os.PathSeparator) + entry.Name()
-			if git.IsRepo(repoPath) {
-				repos = append(repos, repoPath)
-			}
-		}
-	}
-
-	return repos
-}
-
-// MustGetRepoList 获取仓库列表，如果为空则打印提示并以退出码 0 结束进程。
-// 空列表属于"正常无任务可做"而非错误，因此用 os.Exit(0) 而非返回错误，
-// 避免上层命令再去处理一个必然为空的列表。
-// 所有需要仓库列表的命令都应调用此函数而非 GetRepoList。
-func MustGetRepoList() []string {
-	repos := GetRepoList()
-	if len(repos) == 0 {
-		WarnMsg(i18n.T("No repositories configured; add one with 'ggt repo add <path>' or 'ggt repo add-parent <path>'", nil))
-		os.Exit(0)
-	}
-	return repos
-}
-
-// PrintRepoList 打印仓库列表的标题和所有路径。
-func PrintRepoList(repos []string) {
-	Header(i18n.T("Repositories", nil))
-	for _, repo := range repos {
-		PrintPath(repo)
-	}
-	pterm.Println()
-	InfoMsg(i18n.T("Total repositories: {{.Count}}", map[string]any{"Count": len(repos)}))
-}
-
-// getRepoName 从完整路径中提取仓库目录名。
-// 如 "/home/user/GitRepo/my-project" → "my-project"
-func getRepoName(path string) string {
-	return filepath.Base(path)
 }
