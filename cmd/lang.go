@@ -13,25 +13,28 @@ import (
 	"strings"
 
 	"ggt/internal/config"
-	"ggt/internal/i18n"
 	"github.com/spf13/pflag"
 )
 
-// resolveLanguage 按优先级确定输出语言：
+// chooseLanguage 按优先级挑出要使用的语言串（**未经归一化**）：
 //
-//	命令行 --lang/-l  >  配置文件 language 字段  >  默认语言（英文）
+//	命令行 --lang/-l  >  配置文件 language 字段  >  空串（交由 l10n 用默认语言）
+//
+// 刻意不在这里归一化：语言白名单属于 l10n.Options，而 Options 要交给 l10n.Init，
+// 归一化在 Init 内部完成即可——否则这里就得再持有并手工维护一份语言列表，
+// 两份列表迟早会漂移。
 //
 // 任何一步失败都静默降级、绝不返回错误：语言只影响展示，不该让命令整体失败。
 // 尤其是配置文件损坏时也必须能正常输出帮助——这是 --help 路径会走到这里的前提。
-func resolveLanguage() string {
+func chooseLanguage() string {
 	if lang := scanLangFlag(os.Args[1:]); lang != "" {
-		return i18n.Normalize(lang)
+		return lang
 	}
 	// LoadLanguage 只做裸 JSON 读取，不会像 LoadConfig 那样在主目录不可用时退出进程
 	if lang, err := config.LoadLanguage(); err == nil && lang != "" {
-		return i18n.Normalize(lang)
+		return lang
 	}
-	return i18n.DefaultLanguage
+	return ""
 }
 
 // scanLangFlag 从原始命令行参数里预扫描 --lang/-l 的取值。
@@ -60,6 +63,6 @@ func scanLangFlag(args []string) string {
 	return strings.TrimSpace(lang)
 }
 
-// 语言串的归一化与白名单校验统一在 i18n 包（i18n.Normalize / i18n.IsSupported）。
+// 语言串的归一化与白名单校验统一在 i18n 包（l10n.Normalize / l10n.IsSupported）。
 // 放在那里是因为 config 包也要用（config set language 需要严格校验），而 config
 // 不能反向依赖 cmd。

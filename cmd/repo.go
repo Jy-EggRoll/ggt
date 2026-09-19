@@ -6,7 +6,7 @@ import (
 
 	"ggt/internal/config"
 	"ggt/internal/git"
-	"ggt/internal/i18n"
+	"ggt/pkg/l10n"
 	"github.com/spf13/cobra"
 )
 
@@ -15,8 +15,8 @@ import (
 func newRepoCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "repo",
-		Short: i18n.T("Manage repository path configuration", nil),
-		Long: i18n.T(`Manage the list of configured repository paths.
+		Short: l10n.T("Manage repository path configuration", nil),
+		Long: l10n.T(`Manage the list of configured repository paths.
 
 Examples:
   ggt repo list              List all repositories
@@ -33,14 +33,14 @@ Examples:
 func newRepoListCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "list",
-		Short: i18n.T("List all configured repository paths", nil),
-		Long: i18n.T(`List all configured repository paths.
+		Short: l10n.T("List all configured repository paths", nil),
+		Long: l10n.T(`List all configured repository paths.
 
 Includes repositories added directly and those discovered under parent directories.`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			repos := GetRepoList()
 			if len(repos) == 0 {
-				WarnMsg(i18n.T("No repositories configured", nil))
+				WarnMsg(l10n.T("No repositories configured", nil))
 				return
 			}
 			PrintRepoList(repos)
@@ -54,36 +54,36 @@ Includes repositories added directly and those discovered under parent directori
 func newRepoAddCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add <path>",
-		Short: i18n.T("Add a repository path to the config file", nil),
+		Short: l10n.T("Add a repository path to the config file", nil),
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
 			absPath, err := filepath.Abs(path)
 			if err != nil {
-				ErrorMsg(i18n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
+				ErrorMsg(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
 			if !git.IsRepo(absPath) {
-				ErrorMsg(i18n.T("Not a git repository: {{.Path}}", map[string]any{"Path": absPath}))
+				ErrorMsg(l10n.T("Not a git repository: {{.Path}}", map[string]any{"Path": absPath}))
 				return
 			}
 
 			cfg := GetConfig()
 			for _, existing := range cfg.RepoPaths {
 				if existing == absPath {
-					ErrorMsg(i18n.T("Path already exists: {{.Path}}", map[string]any{"Path": absPath}))
+					ErrorMsg(l10n.T("Path already exists: {{.Path}}", map[string]any{"Path": absPath}))
 					return
 				}
 			}
 
 			cfg.RepoPaths = append(cfg.RepoPaths, absPath)
 			if err := config.SaveConfig(cfg); err != nil {
-				ErrorMsg(i18n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
+				ErrorMsg(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
-			SuccessMsg(i18n.T("Repository added: {{.Path}}", map[string]any{"Path": absPath}))
+			SuccessMsg(l10n.T("Repository added: {{.Path}}", map[string]any{"Path": absPath}))
 		},
 	}
 	return c
@@ -93,13 +93,13 @@ func newRepoAddCmd() *cobra.Command {
 func newRepoRemoveCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "remove <path>",
-		Short: i18n.T("Remove a repository path from the config file", nil),
+		Short: l10n.T("Remove a repository path from the config file", nil),
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
 			absPath, err := filepath.Abs(path)
 			if err != nil {
-				ErrorMsg(i18n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
+				ErrorMsg(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
@@ -115,17 +115,17 @@ func newRepoRemoveCmd() *cobra.Command {
 			}
 
 			if !found {
-				ErrorMsg(i18n.T("Path does not exist: {{.Path}}", map[string]any{"Path": absPath}))
+				ErrorMsg(l10n.T("Path does not exist: {{.Path}}", map[string]any{"Path": absPath}))
 				return
 			}
 
 			cfg.RepoPaths = newPaths
 			if err := config.SaveConfig(cfg); err != nil {
-				ErrorMsg(i18n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
+				ErrorMsg(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
-			SuccessMsg(i18n.T("Repository removed: {{.Path}}", map[string]any{"Path": absPath}))
+			SuccessMsg(l10n.T("Repository removed: {{.Path}}", map[string]any{"Path": absPath}))
 		},
 	}
 	return c
@@ -136,36 +136,36 @@ func newRepoRemoveCmd() *cobra.Command {
 func newRepoAddParentCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add-parent <path>",
-		Short: i18n.T("Add a parent directory and auto-discover all git repositories inside", nil),
+		Short: l10n.T("Add a parent directory and auto-discover all git repositories inside", nil),
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
 			absPath, err := filepath.Abs(path)
 			if err != nil {
-				ErrorMsg(i18n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
+				ErrorMsg(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
 			if _, err := os.Stat(absPath); os.IsNotExist(err) {
-				ErrorMsg(i18n.T("Directory does not exist: {{.Path}}", map[string]any{"Path": absPath}))
+				ErrorMsg(l10n.T("Directory does not exist: {{.Path}}", map[string]any{"Path": absPath}))
 				return
 			}
 
 			cfg := GetConfig()
 			for _, existing := range cfg.ParentPaths {
 				if existing == absPath {
-					ErrorMsg(i18n.T("Parent directory already exists: {{.Path}}", map[string]any{"Path": absPath}))
+					ErrorMsg(l10n.T("Parent directory already exists: {{.Path}}", map[string]any{"Path": absPath}))
 					return
 				}
 			}
 
 			cfg.ParentPaths = append(cfg.ParentPaths, absPath)
 			if err := config.SaveConfig(cfg); err != nil {
-				ErrorMsg(i18n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
+				ErrorMsg(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
 
-			SuccessMsg(i18n.T("Parent directory added: {{.Path}}", map[string]any{"Path": absPath}))
+			SuccessMsg(l10n.T("Parent directory added: {{.Path}}", map[string]any{"Path": absPath}))
 		},
 	}
 	return c

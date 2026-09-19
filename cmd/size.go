@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"ggt/internal/git"
-	"ggt/internal/i18n"
 	"ggt/internal/worker"
+	"ggt/pkg/l10n"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -49,8 +49,8 @@ func newSizeCmd() *cobra.Command {
 		//
 		// Long 这类多行原文必须保持"干净"：不能含制表符、行尾空白或首尾空行，
 		// 否则源码重排会让 id 跟着变，既有译文会静默失效。提取器会强制这一点。
-		Short: i18n.T("Show size statistics for all repositories", nil),
-		Long: i18n.T(`Iterate over all configured repositories and show each one's size statistics.
+		Short: l10n.T("Show size statistics for all repositories", nil),
+		Long: l10n.T(`Iterate over all configured repositories and show each one's size statistics.
 
 When finished, repositories are bucketed by size: below the lower bound, between
 the bounds, and above the upper bound, with repository names listed per bucket.
@@ -65,10 +65,10 @@ Examples:
 			// 这里刻意保留常量格式串 "%s\n" 而不是改用 InfoMsg：pterm 的 Sprintfln 会在
 			// 渲染结果之后再加一个换行，而 InfoMsg 走的 Println 会把结尾换行折叠掉，
 			// 两者视觉上相差一个空行。用常量格式串可与改造前的输出保持完全一致
-			InfoLn(i18n.T("Repositories: {{.Count}} — gathering sizes...", map[string]any{"Count": len(repos)}))
+			InfoLn(l10n.T("Repositories: {{.Count}} — gathering sizes...", map[string]any{"Count": len(repos)}))
 
 			width := pterm.GetTerminalWidth()
-			t := NewDebugTimer(i18n.T("Size stats (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
+			t := NewDebugTimer(l10n.T("Size stats (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
 			results := worker.Map(context.Background(), repos, Concurrency(), func(ctx context.Context, e RepoEntry) repoSizeResult {
 				return showRepoSize(ctx, e, width)
 			})
@@ -86,7 +86,7 @@ Examples:
 			}
 
 			pterm.Println()
-			InfoMsg(i18n.T("Total size: {{.Size}}", map[string]any{"Size": formatSize(totalSize)}))
+			InfoMsg(l10n.T("Total size: {{.Size}}", map[string]any{"Size": formatSize(totalSize)}))
 
 			// 分桶统计：命令行 flag 优先于配置文件，未指定时取配置默认值
 			low := GetConfig().SizeBucketLowMB
@@ -104,7 +104,7 @@ Examples:
 			if unit != "decimal" && unit != "binary" {
 				// 走 Msg 系列而非 Warnf：译文已由 T 渲染完毕，套 "%s" 只是多余的间接层。
 				// 译文里的 "decimal" 是配置枚举值，刻意保留原文，便于用户对照配置文件里的 size_unit
-				WarnMsg(i18n.T(`Invalid size_unit value ("{{.Unit}}"), falling back to "decimal"`, map[string]any{"Unit": unit}))
+				WarnMsg(l10n.T(`Invalid size_unit value ("{{.Unit}}"), falling back to "decimal"`, map[string]any{"Unit": unit}))
 				unit = "decimal"
 			}
 
@@ -114,17 +114,17 @@ Examples:
 			var unitLabel string
 			switch unit {
 			case "binary":
-				unitLabel = i18n.T("binary MB (1 MB = 1024×1024 bytes, i.e. MiB)", nil)
+				unitLabel = l10n.T("binary MB (1 MB = 1024×1024 bytes, i.e. MiB)", nil)
 			default:
-				unitLabel = i18n.T("decimal MB (1 MB = 1,000,000 bytes)", nil)
+				unitLabel = l10n.T("decimal MB (1 MB = 1,000,000 bytes)", nil)
 			}
 			// 单位说明与标题合成单一完整模板，让译者能调整括号形态
-			Header(i18n.T("Size buckets ({{.Unit}})", map[string]any{"Unit": unitLabel}))
+			Header(l10n.T("Size buckets ({{.Unit}})", map[string]any{"Unit": unitLabel}))
 			// 不同分桶使用不同视觉级别：小仓库信息展示，中等仓库黄色警告，大仓库红色警告
 			// 标题先经 T 渲染，故这里传 Msg 系列（纯文本通道）而非 f 系列
-			printSizeBucket(i18n.T("<{{.Low}}MB", map[string]any{"Low": low}), small, InfoMsg)
-			printSizeBucket(i18n.T("{{.Low}}~{{.High}}MB", map[string]any{"Low": low, "High": high}), mid, WarnMsg)
-			printSizeBucket(i18n.T(">{{.High}}MB", map[string]any{"High": high}), large, ErrorMsg)
+			printSizeBucket(l10n.T("<{{.Low}}MB", map[string]any{"Low": low}), small, InfoMsg)
+			printSizeBucket(l10n.T("{{.Low}}~{{.High}}MB", map[string]any{"Low": low, "High": high}), mid, WarnMsg)
+			printSizeBucket(l10n.T(">{{.High}}MB", map[string]any{"High": high}), large, ErrorMsg)
 		},
 	}
 
@@ -132,9 +132,9 @@ Examples:
 
 	// 阈值与换算口径：flag 优先于配置文件，仅本次生效、不写入 JSON。
 	// 语义与根命令 -c 相同：默认 0/空字符串表示"未指定"
-	c.Flags().IntVar(&sizeLow, "low", 0, i18n.T("Lower bucket bound in MB (defaults to the size_bucket_low_mb config value)", nil))
-	c.Flags().IntVar(&sizeHigh, "high", 0, i18n.T("Upper bucket bound in MB (defaults to the size_bucket_high_mb config value)", nil))
-	c.Flags().StringVar(&sizeUnit, "unit", "", i18n.T("MB conversion unit used for buckets: decimal or binary (defaults to the size_unit config value)", nil))
+	c.Flags().IntVar(&sizeLow, "low", 0, l10n.T("Lower bucket bound in MB (defaults to the size_bucket_low_mb config value)", nil))
+	c.Flags().IntVar(&sizeHigh, "high", 0, l10n.T("Upper bucket bound in MB (defaults to the size_bucket_high_mb config value)", nil))
+	c.Flags().StringVar(&sizeUnit, "unit", "", l10n.T("MB conversion unit used for buckets: decimal or binary (defaults to the size_unit config value)", nil))
 
 	return c
 }
@@ -150,7 +150,7 @@ func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 			name:        e.Name,
 			isSubmodule: e.IsSubmodule,
 			// 入参以 \n 结尾：pterm 会把结尾换行折叠为单个换行，于是这行就是普通的单行告警
-			output: WarnStrLn(i18n.T("Repository {{.Path}}: command failed", map[string]any{"Path": e.Path})),
+			output: WarnStrLn(l10n.T("Repository {{.Path}}: command failed", map[string]any{"Path": e.Path})),
 			size:   0,
 			ok:     false,
 		}
@@ -174,13 +174,13 @@ func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 	// （10 列）恰好都落在同一制表位上；若将来新增语言导致错位，需改为显式列宽填充
 	if v, ok := info["size"]; ok {
 		b.WriteString("  ")
-		b.WriteString(pterm.FgGreen.Sprint(i18n.T("Disk usage", nil) + "\t"))
+		b.WriteString(pterm.FgGreen.Sprint(l10n.T("Disk usage", nil) + "\t"))
 		b.WriteString(v)
 		b.WriteByte('\n')
 	}
 	if v, ok := info["size-pack"]; ok {
 		b.WriteString("  ")
-		b.WriteString(pterm.FgGreen.Sprint(i18n.T("Package size", nil) + "\t"))
+		b.WriteString(pterm.FgGreen.Sprint(l10n.T("Package size", nil) + "\t"))
 		b.WriteString(v)
 		b.WriteByte('\n')
 	}
@@ -250,7 +250,7 @@ func classifyBySize(results []repoSizeResult, lowMB, highMB int, unit string) (s
 // 这里传 Msg 系列而非 f 系列：标题已由 go-i18n 渲染完毕，若再走 Sprintf 通道，
 // 译文里出现的字面 % 会被 fmt 当成格式动词解析成 %!?(MISSING)。
 func printSizeBucket(title string, names []string, printer func(string)) {
-	printer(i18n.T("{{.Title}}: {{.Count}}", map[string]any{"Title": title, "Count": len(names)}))
+	printer(l10n.T("{{.Title}}: {{.Count}}", map[string]any{"Title": title, "Count": len(names)}))
 	for _, n := range names {
 		ListItem(n)
 	}

@@ -13,7 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	"ggt/internal/i18n"
+	"ggt/internal/locales"
+	"ggt/pkg/l10n"
 )
 
 // ErrInvalidValue 表示用户输入的值不合法。
@@ -101,7 +102,7 @@ var settings = []Setting{
 	{
 		Key:      "language",
 		Kind:     KindString,
-		Default:  i18n.DefaultLanguage,
+		Default:  locales.Default,
 		Expected: "a supported language tag (see ggt --help for the current list)",
 		Parse:    parseLanguage,
 	},
@@ -192,13 +193,13 @@ func parseSizeUnit(s string) (any, error) {
 
 // parseLanguage 解析输出语言。
 //
-// 必须用 i18n.IsSupported 而不是 i18n.Normalize：后者对不认识的输入回退默认语言，
+// 必须用 l10n.IsSupported 而不是 l10n.Normalize：后者对不认识的输入回退默认语言，
 // 照搬会把用户输入的 fr 静默改写成 en——而"我要法语"和"我要英语"显然不是一回事。
 // 校验通过后存入归一化结果，使文件里只有规范形态（zh 与 zh-Hans 都存成 zh-CN）。
 func parseLanguage(s string) (any, error) {
 	v := strings.TrimSpace(s)
-	if !i18n.IsSupported(v) {
+	if !l10n.IsSupported(v, locales.Supported()) {
 		return nil, ErrInvalidValue
 	}
-	return i18n.Normalize(v), nil
+	return l10n.Normalize(v, locales.Supported(), locales.Default), nil
 }

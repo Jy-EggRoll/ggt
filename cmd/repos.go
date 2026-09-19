@@ -18,8 +18,8 @@ import (
 	"strings"
 
 	"ggt/internal/git"
-	"ggt/internal/i18n"
 	"ggt/internal/worker"
+	"ggt/pkg/l10n"
 	"github.com/pterm/pterm"
 )
 
@@ -192,16 +192,16 @@ func ExpandRepos(ctx context.Context, top []string) []RepoEntry {
 // 只有经它展开才能获得子模块辐射能力。
 // --debug 模式下分别输出仓库发现和子模块展开的耗时。
 func MustGetAllRepos(ctx context.Context, ignore bool) []RepoEntry {
-	t1 := NewDebugTimer(i18n.T("Repository discovery", nil))
+	t1 := NewDebugTimer(l10n.T("Repository discovery", nil))
 	top := GetRepoList()
 	if len(top) == 0 {
-		WarnMsg(i18n.T("No repositories configured; add one with 'ggt repo add <path>' or 'ggt repo add-parent <path>'", nil))
+		WarnMsg(l10n.T("No repositories configured; add one with 'ggt repo add <path>' or 'ggt repo add-parent <path>'", nil))
 		// 空列表属于"正常无任务可做"而非错误，因此退出码 0。
 		os.Exit(0)
 	}
 	t1.Done()
 
-	t2 := NewDebugTimer(i18n.T("Submodule expansion (repositories: {{.Count}}, concurrency: {{.Concurrency}})",
+	t2 := NewDebugTimer(l10n.T("Submodule expansion (repositories: {{.Count}}, concurrency: {{.Concurrency}})",
 		map[string]any{"Count": len(top), "Concurrency": Concurrency()}))
 	result := expand(ctx, top, ignore)
 	t2.Done()
@@ -239,10 +239,10 @@ func GetRepoList() []string {
 
 // PrintRepoList 打印仓库列表的标题和所有路径。
 func PrintRepoList(repos []string) {
-	Header(i18n.T("Repositories", nil))
+	Header(l10n.T("Repositories", nil))
 	for _, repo := range repos {
 		PrintPath(repo)
 	}
 	pterm.Println()
-	InfoMsg(i18n.T("Total repositories: {{.Count}}", map[string]any{"Count": len(repos)}))
+	InfoMsg(l10n.T("Total repositories: {{.Count}}", map[string]any{"Count": len(repos)}))
 }

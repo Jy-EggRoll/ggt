@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"ggt/internal/git"
-	"ggt/internal/i18n"
 	"ggt/internal/worker"
+	"ggt/pkg/l10n"
 	"github.com/spf13/cobra"
 )
 
@@ -32,8 +32,8 @@ type filesOutput struct {
 func newFilesCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "files",
-		Short: i18n.T("Show the file list of all repositories", nil),
-		Long: i18n.T(`Iterate over all configured repositories and list the files of each.
+		Short: l10n.T("Show the file list of all repositories", nil),
+		Long: l10n.T(`Iterate over all configured repositories and list the files of each.
 
 Examples:
   ggt files              Show the file list of all repositories
@@ -42,10 +42,10 @@ Examples:
 		Run: func(cmd *cobra.Command, args []string) {
 			repos := AllRepos(context.Background())
 			// 保留常量格式串 "%s\n" 以维持改造前的尾部空行
-			InfoLn(i18n.T("Repositories: {{.Count}} — gathering file lists...", map[string]any{"Count": len(repos)}))
+			InfoLn(l10n.T("Repositories: {{.Count}} — gathering file lists...", map[string]any{"Count": len(repos)}))
 
 			// 使用 worker.Map 并发获取每个仓库的文件列表
-			t := NewDebugTimer(i18n.T("File lists (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
+			t := NewDebugTimer(l10n.T("File lists (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
 			results := worker.Map(context.Background(), repos, Concurrency(), showRepoFiles)
 			t.Done()
 
@@ -54,7 +54,7 @@ Examples:
 			for _, r := range results {
 				if r.err != nil {
 					// 原文案以 \n 结尾且走 Printfln，会多出一个空行；用常量格式串 "%s\n" 保持等价
-					WarnLn(i18n.T("Repository {{.Path}}: failed to list files - {{.Err}}",
+					WarnLn(l10n.T("Repository {{.Path}}: failed to list files - {{.Err}}",
 						map[string]any{"Path": r.path, "Err": r.err}))
 					continue
 				}
@@ -66,10 +66,10 @@ Examples:
 			// 根据 -o 参数决定输出到文件或控制台
 			if outputFile != "" {
 				if err := os.WriteFile(outputFile, []byte(output.String()), 0644); err != nil {
-					ErrorLn(i18n.T("Failed to write file: {{.Err}}", map[string]any{"Err": err}))
+					ErrorLn(l10n.T("Failed to write file: {{.Err}}", map[string]any{"Err": err}))
 					return
 				}
-				SuccessLn(i18n.T("File list written to: {{.Path}}", map[string]any{"Path": outputFile}))
+				SuccessLn(l10n.T("File list written to: {{.Path}}", map[string]any{"Path": outputFile}))
 			} else {
 				fmt.Print(output.String())
 			}
@@ -77,7 +77,7 @@ Examples:
 	}
 	c.Aliases = []string{"fl"}
 	c.Flags().StringVarP(&outputFile, "output", "o", "",
-		i18n.T("Write the file list to this file (prints to the console when omitted)", nil))
+		l10n.T("Write the file list to this file (prints to the console when omitted)", nil))
 	return c
 }
 

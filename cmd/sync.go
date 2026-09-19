@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"ggt/internal/git"
-	"ggt/internal/i18n"
 	"ggt/internal/worker"
+	"ggt/pkg/l10n"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -36,8 +36,8 @@ type syncResult struct {
 func newSyncCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "sync",
-		Short: i18n.T("Iterate over all repositories and sync them", nil),
-		Long: i18n.T(`Iterate over all repositories and sync them automatically.
+		Short: l10n.T("Iterate over all repositories and sync them", nil),
+		Long: l10n.T(`Iterate over all repositories and sync them automatically.
 
 - Runs git fetch --all --prune first
 - Compares the commit hashes of the local branch, the remote, and the merge base
@@ -54,9 +54,9 @@ Examples:
 			// 这里刻意用 InfoMsg（不带空行），而其余遍历型命令用的是 InfoLn（带空行）。
 			// 原因是 sync 的输出直接就是逐仓库明细、之间没有分隔线，加空行反而把首个
 			// 仓库从标题里割裂出去。这是有意为之，不要当成漏改而"顺手统一"
-			InfoMsg(i18n.T("Repositories: {{.Count}} — syncing...", map[string]any{"Count": len(repos)}))
+			InfoMsg(l10n.T("Repositories: {{.Count}} — syncing...", map[string]any{"Count": len(repos)}))
 
-			t := NewDebugTimer(i18n.T("Sync (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
+			t := NewDebugTimer(l10n.T("Sync (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
 			results := worker.Map(context.Background(), repos, Concurrency(), syncRepo)
 			t.Done()
 
@@ -74,14 +74,14 @@ Examples:
 			}
 
 			if len(manualList) > 0 {
-				WarnMsg(i18n.T("The following repositories need manual handling:", nil))
+				WarnMsg(l10n.T("The following repositories need manual handling:", nil))
 				for _, r := range manualList {
 					pterm.Printf("  %s %s\n", RepoName(r.name), Muted(r.path))
 					pterm.Printf("    -> %s\n", r.manualHint)
 				}
 			}
 
-			DoneBanner(i18n.T("All repositories are in sync", nil))
+			DoneBanner(l10n.T("All repositories are in sync", nil))
 		},
 	}
 	return c
@@ -109,27 +109,27 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 	// 第一步：检查工作目录是否干净（本地操作，快速返回）
 	status, err := git.RunContext(ctx, e.Path, "status", "--porcelain")
 	if err != nil {
-		return warn(WarnStrLn(i18n.T("{{.Label}}: failed to check status: {{.Err}}",
-			map[string]any{"Label": label, "Err": err})), i18n.T("Check the repository state", nil))
+		return warn(WarnStrLn(l10n.T("{{.Label}}: failed to check status: {{.Err}}",
+			map[string]any{"Label": label, "Err": err})), l10n.T("Check the repository state", nil))
 	}
 
 	if strings.TrimSpace(status) != "" {
-		return warn(WarnStrLn(i18n.T("{{.Label}}: uncommitted changes present, manual handling required",
-			map[string]any{"Label": label})), i18n.T("Commit or stash your changes first", nil))
+		return warn(WarnStrLn(l10n.T("{{.Label}}: uncommitted changes present, manual handling required",
+			map[string]any{"Label": label})), l10n.T("Commit or stash your changes first", nil))
 	}
 
 	// 第二步：拉取远程最新数据，修剪已删除的远程分支
 	_, err = git.RunContext(ctx, e.Path, "fetch", "--all", "--prune")
 	if err != nil {
-		return warn(WarnStrLn(i18n.T("{{.Label}}: fetch failed: {{.Err}}",
-			map[string]any{"Label": label, "Err": err})), i18n.T("Check your network or the remote repository permissions", nil))
+		return warn(WarnStrLn(l10n.T("{{.Label}}: fetch failed: {{.Err}}",
+			map[string]any{"Label": label, "Err": err})), l10n.T("Check your network or the remote repository permissions", nil))
 	}
 
 	// 第三步：获取三个关键 commit hash
 	local, err := git.RunContext(ctx, e.Path, "rev-parse", "HEAD")
 	if err != nil {
-		return warn(WarnStrLn(i18n.T("{{.Label}}: failed to resolve local HEAD", map[string]any{"Label": label})),
-			i18n.T("Check the repository state", nil))
+		return warn(WarnStrLn(l10n.T("{{.Label}}: failed to resolve local HEAD", map[string]any{"Label": label})),
+			l10n.T("Check the repository state", nil))
 	}
 	local = strings.TrimSpace(local)
 
@@ -137,37 +137,37 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 	if err != nil {
 		// 通常是该分支未设置上游跟踪（@{upstream} 不存在），明确告知根因而非泛化的"获取失败"，
 		// 避免用户误以为是网络或权限问题。
-		return warn(WarnStrLn(i18n.T("{{.Label}}: no upstream tracking branch (@{upstream} does not exist), skipping",
+		return warn(WarnStrLn(l10n.T("{{.Label}}: no upstream tracking branch (@{upstream} does not exist), skipping",
 			map[string]any{"Label": label})),
-			i18n.T("Run: git branch --set-upstream-to=<remote>/<branch>", nil))
+			l10n.T("Run: git branch --set-upstream-to=<remote>/<branch>", nil))
 	}
 	remote = strings.TrimSpace(remote)
 
 	base, err := git.RunContext(ctx, e.Path, "merge-base", "HEAD", "@{upstream}")
 	if err != nil {
-		return warn(WarnStrLn(i18n.T("{{.Label}}: failed to find the merge base", map[string]any{"Label": label})),
-			i18n.T("Check the repository state", nil))
+		return warn(WarnStrLn(l10n.T("{{.Label}}: failed to find the merge base", map[string]any{"Label": label})),
+			l10n.T("Check the repository state", nil))
 	}
 	base = strings.TrimSpace(base)
 
 	// 第四步：比较决策
 	if local == remote {
-		return info(InfoStrLn(i18n.T("{{.Label}}: already up to date with the remote", map[string]any{"Label": label})))
+		return info(InfoStrLn(l10n.T("{{.Label}}: already up to date with the remote", map[string]any{"Label": label})))
 	} else if local == base {
 		// 本地落后于远程，且历史线性 → 可以用 fast-forward
-		output := WarnStrLn(i18n.T("{{.Label}}: fast-forward available, pulling...", map[string]any{"Label": label}))
+		output := WarnStrLn(l10n.T("{{.Label}}: fast-forward available, pulling...", map[string]any{"Label": label}))
 		_, err := git.RunContext(ctx, e.Path, "pull", "--ff-only")
 		if err != nil {
-			return warn(output+ErrorStrLn(i18n.T("{{.Label}}: pull failed: {{.Err}}",
-				map[string]any{"Label": label, "Err": err})), i18n.T("Run git pull manually", nil))
+			return warn(output+ErrorStrLn(l10n.T("{{.Label}}: pull failed: {{.Err}}",
+				map[string]any{"Label": label, "Err": err})), l10n.T("Run git pull manually", nil))
 		}
-		return info(output + SuccessStrLn(i18n.T("{{.Label}}: pulled successfully", map[string]any{"Label": label})))
+		return info(output + SuccessStrLn(l10n.T("{{.Label}}: pulled successfully", map[string]any{"Label": label})))
 	} else if remote == base {
-		return warn(WarnStrLn(i18n.T("{{.Label}}: local branch is ahead of the remote, push manually",
-			map[string]any{"Label": label})), i18n.T("Run git push manually", nil))
+		return warn(WarnStrLn(l10n.T("{{.Label}}: local branch is ahead of the remote, push manually",
+			map[string]any{"Label": label})), l10n.T("Run git push manually", nil))
 	} else {
-		return warn(ErrorStrLn(i18n.T("{{.Label}}: divergent history, manual handling required",
-			map[string]any{"Label": label})), i18n.T("Merge or rebase manually", nil))
+		return warn(ErrorStrLn(l10n.T("{{.Label}}: divergent history, manual handling required",
+			map[string]any{"Label": label})), l10n.T("Merge or rebase manually", nil))
 	}
 }
 

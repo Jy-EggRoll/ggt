@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	"ggt/internal/i18n"
+	"ggt/pkg/l10n"
 	"github.com/pterm/pterm"
 )
 
@@ -122,7 +122,7 @@ func RepoName(name string) string {
 // 也让"子模块"这一身份在任意命令输出里都有一致的 [子] 标识。
 func RepoLabel(name string, isSubmodule bool) string {
 	if isSubmodule {
-		return pterm.FgCyan.Sprintf("%s %s", i18n.T("[sub]", nil), name)
+		return pterm.FgCyan.Sprintf("%s %s", l10n.T("[sub]", nil), name)
 	}
 	return RepoName(name)
 }

@@ -15,7 +15,7 @@ import (
 	"strconv"
 
 	"ggt/internal/git"
-	"ggt/internal/i18n"
+	"ggt/pkg/l10n"
 )
 
 // Level 是体检问题的严重级别。
@@ -57,7 +57,7 @@ func ValidateAt(path string) ([]Issue, error) {
 	if bytes.HasPrefix(data, utf8BOM) {
 		issues = append(issues, Issue{
 			Level:   LevelError,
-			Message: i18n.T("The config file starts with a UTF-8 BOM, which breaks JSON parsing; re-save it as UTF-8 without BOM", nil),
+			Message: l10n.T("The config file starts with a UTF-8 BOM, which breaks JSON parsing; re-save it as UTF-8 without BOM", nil),
 		})
 		data = bytes.TrimPrefix(data, utf8BOM)
 	}
@@ -66,7 +66,7 @@ func ValidateAt(path string) ([]Issue, error) {
 	if err != nil {
 		issues = append(issues, Issue{
 			Level:   LevelError,
-			Message: i18n.T("Cannot parse the config file: {{.Err}}", map[string]any{"Err": err}),
+			Message: l10n.T("Cannot parse the config file: {{.Err}}", map[string]any{"Err": err}),
 		})
 		return issues, nil
 	}
@@ -97,7 +97,7 @@ func validateKeys(raw map[string]any) []Issue {
 	for _, k := range unknown {
 		issues = append(issues, Issue{
 			Level:   LevelError,
-			Message: i18n.T("Unknown config key {{.Key}} (possible typo); ggt silently ignores it", map[string]any{"Key": k}),
+			Message: l10n.T("Unknown config key {{.Key}} (possible typo); ggt silently ignores it", map[string]any{"Key": k}),
 		})
 	}
 
@@ -112,7 +112,7 @@ func validateKeys(raw map[string]any) []Issue {
 			if _, isList := v.([]any); !isList {
 				issues = append(issues, Issue{
 					Level: LevelError,
-					Message: i18n.T("Expected an array for {{.Key}}, got {{.Type}}", map[string]any{
+					Message: l10n.T("Expected an array for {{.Key}}, got {{.Type}}", map[string]any{
 						"Key": s.Key, "Type": jsonTypeName(v),
 					}),
 				})
@@ -125,7 +125,7 @@ func validateKeys(raw map[string]any) []Issue {
 		if !scalarTypeMatches(s.Kind, v) {
 			issues = append(issues, Issue{
 				Level: LevelWarning,
-				Message: i18n.T("Unexpected type for {{.Key}}: got {{.Type}}, expected {{.Kind}}; it still works but is better written as the expected type",
+				Message: l10n.T("Unexpected type for {{.Key}}: got {{.Type}}, expected {{.Kind}}; it still works but is better written as the expected type",
 					map[string]any{"Key": s.Key, "Type": jsonTypeName(v), "Kind": string(s.Kind)}),
 			})
 			continue
@@ -138,7 +138,7 @@ func validateKeys(raw map[string]any) []Issue {
 		if _, err := s.Parse(text); err != nil {
 			issues = append(issues, Issue{
 				Level: LevelError,
-				Message: i18n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
+				Message: l10n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
 					map[string]any{"Key": s.Key, "Value": text, "Expected": s.Expected}),
 			})
 		}
@@ -159,7 +159,7 @@ func validateBuckets(raw map[string]any) []Issue {
 	if low >= high {
 		return []Issue{{
 			Level: LevelWarning,
-			Message: i18n.T("size_bucket_low_mb ({{.Low}}) is not less than size_bucket_high_mb ({{.High}}), so the buckets are meaningless",
+			Message: l10n.T("size_bucket_low_mb ({{.Low}}) is not less than size_bucket_high_mb ({{.High}}), so the buckets are meaningless",
 				map[string]any{"Low": low, "High": high}),
 		}}
 	}
@@ -190,14 +190,14 @@ func checkPathList(key string, v any, mustBeRepo bool) []Issue {
 		if !ok {
 			issues = append(issues, Issue{
 				Level:   LevelError,
-				Message: i18n.T("Expected a path string in {{.Key}}, got {{.Type}}", map[string]any{"Key": key, "Type": jsonTypeName(item)}),
+				Message: l10n.T("Expected a path string in {{.Key}}, got {{.Type}}", map[string]any{"Key": key, "Type": jsonTypeName(item)}),
 			})
 			continue
 		}
 		if seen[p] {
 			issues = append(issues, Issue{
 				Level:   LevelWarning,
-				Message: i18n.T("Duplicate entry in {{.Key}}: {{.Path}}", map[string]any{"Key": key, "Path": p}),
+				Message: l10n.T("Duplicate entry in {{.Key}}: {{.Path}}", map[string]any{"Key": key, "Path": p}),
 			})
 			continue
 		}
@@ -206,7 +206,7 @@ func checkPathList(key string, v any, mustBeRepo bool) []Issue {
 		if !filepath.IsAbs(p) {
 			issues = append(issues, Issue{
 				Level: LevelWarning,
-				Message: i18n.T("Relative path in {{.Key}}: {{.Path}} — it is resolved against the current directory at runtime, so results vary",
+				Message: l10n.T("Relative path in {{.Key}}: {{.Path}} — it is resolved against the current directory at runtime, so results vary",
 					map[string]any{"Key": key, "Path": p}),
 			})
 			continue
@@ -216,7 +216,7 @@ func checkPathList(key string, v any, mustBeRepo bool) []Issue {
 		if err != nil {
 			issues = append(issues, Issue{
 				Level:   LevelWarning,
-				Message: i18n.T("Path in {{.Key}} does not exist: {{.Path}}", map[string]any{"Key": key, "Path": p}),
+				Message: l10n.T("Path in {{.Key}} does not exist: {{.Path}}", map[string]any{"Key": key, "Path": p}),
 			})
 			continue
 		}
@@ -225,12 +225,12 @@ func checkPathList(key string, v any, mustBeRepo bool) []Issue {
 		case mustBeRepo && !git.IsRepo(p):
 			issues = append(issues, Issue{
 				Level:   LevelWarning,
-				Message: i18n.T("Path in repo_paths is not a git repository: {{.Path}}", map[string]any{"Path": p}),
+				Message: l10n.T("Path in repo_paths is not a git repository: {{.Path}}", map[string]any{"Path": p}),
 			})
 		case !mustBeRepo && !info.IsDir():
 			issues = append(issues, Issue{
 				Level:   LevelWarning,
-				Message: i18n.T("Path in parent_paths is not a directory: {{.Path}}", map[string]any{"Path": p}),
+				Message: l10n.T("Path in parent_paths is not a directory: {{.Path}}", map[string]any{"Path": p}),
 			})
 		}
 	}

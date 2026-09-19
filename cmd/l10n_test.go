@@ -4,7 +4,8 @@ import (
 	"testing"
 	"unicode"
 
-	"ggt/internal/i18n"
+	"ggt/internal/locales"
+	"ggt/pkg/l10n"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -14,7 +15,7 @@ import (
 // 各命令通过自己的 init() 调用 register 登记装配动作，漏登记的命令会从帮助里
 // 静默消失（不报错、不影响编译），所以需要这条测试兜住。
 func TestBuildRootRegistersAllCommands(t *testing.T) {
-	if err := i18n.Init(i18n.DefaultLanguage); err != nil {
+	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
 		t.Fatalf("初始化 i18n 失败: %v", err)
 	}
 	root := buildRoot()
@@ -59,7 +60,7 @@ func TestBuildRootRegistersAllCommands(t *testing.T) {
 	}
 }
 
-// TestDescriptionsFollowLanguage 验证「i18n.Init → 命令构造函数 → i18n.T」整条链路：
+// TestDescriptionsFollowLanguage 验证「l10n.Init → 命令构造函数 → l10n.T」整条链路：
 // 命令描述与 flag 说明都应随语言切换。
 //
 // 这是重构后最关键的一条集成测试：命令树改为在语言加载之后构造，若哪一步的时序被
@@ -83,7 +84,7 @@ func TestDescriptionsFollowLanguage(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		if err := i18n.Init(c.lang); err != nil {
+		if err := l10n.Init(c.lang, locales.Options()); err != nil {
 			t.Fatalf("初始化 %s 失败: %v", c.lang, err)
 		}
 		sizeCmd, _, err := buildRoot().Find([]string{"size"})
@@ -103,18 +104,18 @@ func TestDescriptionsFollowLanguage(t *testing.T) {
 	}
 
 	// 复位，避免影响同包其他测试
-	if err := i18n.Init(i18n.DefaultLanguage); err != nil {
+	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
 		t.Fatal(err)
 	}
 }
 
 // TestNoUntranslatedTextInCommandTree 断言命令树里不再残留中文描述。
 //
-// 全仓文案迁移完成后，所有命令描述与 flag 说明都必须经 i18n.T()。若有人新写一个命令
+// 全仓文案迁移完成后，所有命令描述与 flag 说明都必须经 l10n.T()。若有人新写一个命令
 // 却忘了包裹，英文环境下它的描述仍会是中文；这条测试是运行期的兜底。
 // 与之互补的是 l10n:check，它在源码层面做同样的判定并给出文件行号。
 func TestNoUntranslatedTextInCommandTree(t *testing.T) {
-	if err := i18n.Init(i18n.DefaultLanguage); err != nil {
+	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
 		t.Fatalf("初始化失败: %v", err)
 	}
 
@@ -123,7 +124,7 @@ func TestNoUntranslatedTextInCommandTree(t *testing.T) {
 		fields := map[string]string{"Short": cmd.Short, "Long": cmd.Long, "Example": cmd.Example}
 		for field, value := range fields {
 			if hasNonASCIILetter(value) {
-				t.Errorf("%s 的 %s 仍含非 ASCII 文字，说明该文案没有经过 i18n.T(): %q",
+				t.Errorf("%s 的 %s 仍含非 ASCII 文字，说明该文案没有经过 l10n.T(): %q",
 					cmd.CommandPath(), field, value)
 			}
 		}

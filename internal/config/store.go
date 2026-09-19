@@ -17,8 +17,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"ggt/internal/i18n"
-	"ggt/internal/jsonfile"
+	"ggt/internal/locales"
+	"ggt/pkg/jsonfile"
+	"ggt/pkg/l10n"
 )
 
 // ReadRawAt 读取配置文件的原始键值。
@@ -148,7 +149,7 @@ func normalizeKeys(raw map[string]any) (map[string]any, error) {
 		lk := strings.ToLower(strings.TrimSpace(k))
 		if _, dup := out[lk]; dup {
 			return nil, fmt.Errorf("%s",
-				i18n.T("The config file has multiple keys that differ only in case ({{.Key}}), so which one wins is undefined; please keep just one",
+				l10n.T("The config file has multiple keys that differ only in case ({{.Key}}), so which one wins is undefined; please keep just one",
 					map[string]any{"Key": lk}))
 		}
 		out[lk] = v
@@ -235,8 +236,8 @@ func EffectiveAt(path, key string) (any, error) {
 	// 语言要归一化：文件里可能写着 zh 或 zh-Hans，而运行期实际生效的是 zh-CN，
 	// get 的输出应当与运行期一致
 	if s.Key == "language" {
-		if text, isStr := v.(string); isStr && i18n.IsSupported(text) {
-			return i18n.Normalize(text), nil
+		if text, isStr := v.(string); isStr && l10n.IsSupported(text, locales.Supported()) {
+			return l10n.Normalize(text, locales.Supported(), locales.Default), nil
 		}
 	}
 	return v, nil

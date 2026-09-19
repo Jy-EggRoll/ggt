@@ -2,7 +2,7 @@ package cmd
 
 import "testing"
 
-// 语言串的归一化与严格校验由 internal/i18n 负责，用例在 i18n 包内
+// 语言串的归一化与严格校验由 pkg/l10n 负责，用例在 l10n 包内
 // （TestNormalize / TestIsSupported）。本文件只覆盖 cmd 侧的预扫描。
 
 // TestScanLangFlag 验证命令行语言参数的预扫描。

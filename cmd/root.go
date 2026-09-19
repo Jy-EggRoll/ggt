@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"ggt/internal/config"
-	"ggt/internal/i18n"
+	"ggt/internal/locales"
+	"ggt/pkg/l10n"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -32,20 +33,20 @@ var (
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "ggt",
-		Short: i18n.T("ggt - Git repository manager", nil),
-		Long: i18n.T(`A CLI tool for managing multiple git repositories, with concurrent operations.
+		Short: l10n.T("ggt - Git repository manager", nil),
+		Long: l10n.T(`A CLI tool for managing multiple git repositories, with concurrent operations.
 
 Help:
   ggt --help  Show detailed help
 
 Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			t := NewDebugTimer(i18n.T("Loading configuration", nil))
+			t := NewDebugTimer(l10n.T("Loading configuration", nil))
 			var err error
 			cfg, err = config.LoadConfig()
 			if err != nil {
 				// 错误包装保持 Go 侧拼接：go-i18n 模板没有 %w 等价物，塞进模板会丢掉错误链
-				return fmt.Errorf("%s: %w", i18n.T("Failed to load the configuration", nil), err)
+				return fmt.Errorf("%s: %w", l10n.T("Failed to load the configuration", nil), err)
 			}
 
 			// 命令行的 -c 参数优先级高于配置文件；-c 传的是具体数字，
@@ -63,15 +64,15 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 	// 覆盖配置文件里的并发数。真正生效的默认值（CPU 核心数的一半）由
 	// config 包的 resolveConcurrency 统一计算，避免出现两处默认值逻辑不一致。
 	root.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0,
-		i18n.T("Concurrency (defaults to the concurrency config value; when unset uses the CPUHalf semantic value, i.e. half of the CPU cores; CPUFull/CPUQuarter or an explicit number are also accepted)", nil))
+		l10n.T("Concurrency (defaults to the concurrency config value; when unset uses the CPUHalf semantic value, i.e. half of the CPU cores; CPUFull/CPUQuarter or an explicit number are also accepted)", nil))
 	// --debug 持久化 flag：所有子命令均可使用，输出各阶段耗时用于性能诊断。
 	root.PersistentFlags().BoolVar(&debug, "debug", false,
-		i18n.T("Print debug timing information (duration of each phase)", nil))
+		l10n.T("Print debug timing information (duration of each phase)", nil))
 	// --lang 持久化 flag：声明它的唯一目的是让 cobra 认可这个参数，否则命令行里
 	// 出现 --lang 会被判为 unknown flag。真正生效的取值由 resolveLanguage 预扫描
 	// os.Args 得到（语言必须早于 cobra 解析才能确定），所以这里刻意不绑定变量，
 	// 避免出现两个互相矛盾的取值来源。
-	root.PersistentFlags().StringP("lang", "l", "", i18n.T("Output language (e.g. en, zh-CN); defaults to the language config value", nil))
+	root.PersistentFlags().StringP("lang", "l", "", l10n.T("Output language (e.g. en, zh-CN); defaults to the language config value", nil))
 
 	return root
 }
@@ -91,9 +92,9 @@ func Execute() {
 		pterm.DisableColor()
 	}
 
-	if err := i18n.Init(resolveLanguage()); err != nil {
-		// 语言文件是 //go:embed 进来的，加载失败属于构建期错误，必须显式暴露。
-		// 静默降级只会表现为"中文界面变成了英文"，没有任何报错，极难排查
+	// 语言文件是 //go:embed 进 locales 包的，加载失败属于构建期错误，必须显式暴露。
+	// 静默降级只会表现为"界面语言不对"，没有任何报错，极难排查
+	if err := l10n.Init(chooseLanguage(), locales.Options()); err != nil {
 		ErrorMsg(err.Error())
 		os.Exit(1)
 	}
@@ -110,20 +111,20 @@ func Execute() {
 		// errSilent 表示命令自己已经把错误打印过了（如 config show 在报错后还给了修复提示），
 		// 再包一层 "Execution failed:" 只会重复
 		if !errors.Is(err, errSilent) {
-			ErrorMsg(i18n.T("Execution failed: {{.Err}}", map[string]any{"Err": err}))
+			ErrorMsg(l10n.T("Execution failed: {{.Err}}", map[string]any{"Err": err}))
 		}
 		os.Exit(1)
 	}
 }
 
-// 关于文案：本包不提供 T 的薄封装，各命令一律直接调用 i18n.T("英文原文", data)。
+// 关于文案：本包不提供 T 的薄封装，各命令一律直接调用 l10n.T("英文原文", data)。
 //
-// 这不是风格偏好，而是提取工具的硬性要求：tools/l10n 规定"消息调用的首个参数必须是
+// 这不是风格偏好，而是提取工具的硬性要求：pkg/l10n/scan 规定"消息调用的首个参数必须是
 // 字符串字面量才能确定消息 id"。任何一层透传封装都必然以变量为参转发
-// （func T(msg string, ...) { return i18n.T(msg, ...) }），会被提取器判为违规。
+// （func T(msg string, ...) { return l10n.T(msg, ...) }），会被提取器判为违规。
 // 去掉封装后规则全仓一致、无需任何例外，代价只是调用点多写一个包名前缀。
 //
-// 另注意 i18n.T 的返回值是已渲染好的纯文本，**不要**再当作 printf 的格式串传给
+// 另注意 l10n.T 的返回值是已渲染好的纯文本，**不要**再当作 printf 的格式串传给
 // Infof/WarnS 等，否则译文里出现的字面 %（如"完成度 100%"）会被 fmt 解析成 %!?(MISSING)。
 // 需要输出时请使用 Msg 系列（InfoMsg 等）或 Str 系列（InfoStr 等）。
 

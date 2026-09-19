@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"ggt/internal/git"
-	"ggt/internal/i18n"
 	"ggt/internal/worker"
+	"ggt/pkg/l10n"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -31,8 +31,8 @@ var remoteAll bool
 func newRemoteCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "remote",
-		Short: i18n.T("Switch the remote protocol (HTTPS ↔ SSH)", nil),
-		Long: i18n.T(`Switch a git repository's remote origin between HTTPS and SSH.
+		Short: l10n.T("Switch the remote protocol (HTTPS ↔ SSH)", nil),
+		Long: l10n.T(`Switch a git repository's remote origin between HTTPS and SSH.
 
 By default this operates on the git repository in the current directory;
 pass --all to switch every configured repository.
@@ -44,14 +44,14 @@ Examples:
 	}
 	c.AddCommand(newRemoteHttpsCmd(), newRemoteSshCmd(), newRemoteToggleCmd())
 	c.PersistentFlags().BoolVarP(&remoteAll, "all", "a", false,
-		i18n.T("Switch the remote protocol of all configured repositories", nil))
+		l10n.T("Switch the remote protocol of all configured repositories", nil))
 	return c
 }
 
 func newRemoteHttpsCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "https",
-		Short: i18n.T("Switch the remote origin to HTTPS", nil),
+		Short: l10n.T("Switch the remote origin to HTTPS", nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			if remoteAll {
 				switchAllRepos("https")
@@ -66,7 +66,7 @@ func newRemoteHttpsCmd() *cobra.Command {
 func newRemoteSshCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "ssh",
-		Short: i18n.T("Switch the remote origin to SSH", nil),
+		Short: l10n.T("Switch the remote origin to SSH", nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			if remoteAll {
 				switchAllRepos("ssh")
@@ -83,8 +83,8 @@ func newRemoteSshCmd() *cobra.Command {
 func newRemoteToggleCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "toggle",
-		Short: i18n.T("Toggle between HTTPS and SSH in the current repository", nil),
-		Long: i18n.T(`Toggle the current repository's remote protocol between HTTPS and SSH.
+		Short: l10n.T("Toggle between HTTPS and SSH in the current repository", nil),
+		Long: l10n.T(`Toggle the current repository's remote protocol between HTTPS and SSH.
 
 Unlike the https/ssh subcommands, no target protocol is needed: it switches to
 whichever protocol the origin is not currently using.
@@ -126,7 +126,7 @@ type remoteInfo struct {
 func parseRemoteURL(raw string) (*remoteInfo, error) {
 	matches := remoteURLRegex.FindStringSubmatch(strings.TrimSpace(raw))
 	if len(matches) < remoteURLIdxCount {
-		return nil, errors.New(i18n.T("Cannot parse the URL; only major hosting platforms (GitHub/GitLab/Gitee, etc.) are supported", nil))
+		return nil, errors.New(l10n.T("Cannot parse the URL; only major hosting platforms (GitHub/GitLab/Gitee, etc.) are supported", nil))
 	}
 	return &remoteInfo{host: matches[remoteURLIdxHost], path: matches[remoteURLIdxPath]}, nil
 }
@@ -158,12 +158,12 @@ func detectProtocol(raw string) string {
 func switchCurrentRepo(target string) {
 	wd, err := os.Getwd()
 	if err != nil {
-		ErrorMsg(i18n.T("Failed to get the current directory: {{.Err}}", map[string]any{"Err": err}))
+		ErrorMsg(l10n.T("Failed to get the current directory: {{.Err}}", map[string]any{"Err": err}))
 		return
 	}
 
 	if !git.IsRepo(wd) {
-		ErrorMsg(i18n.T("The current directory is not a git repository: {{.Path}}", map[string]any{"Path": wd}))
+		ErrorMsg(l10n.T("The current directory is not a git repository: {{.Path}}", map[string]any{"Path": wd}))
 		return
 	}
 
@@ -176,18 +176,18 @@ func switchCurrentRepo(target string) {
 func toggleCurrentRepo() {
 	wd, err := os.Getwd()
 	if err != nil {
-		ErrorMsg(i18n.T("Failed to get the current directory: {{.Err}}", map[string]any{"Err": err}))
+		ErrorMsg(l10n.T("Failed to get the current directory: {{.Err}}", map[string]any{"Err": err}))
 		return
 	}
 
 	if !git.IsRepo(wd) {
-		ErrorMsg(i18n.T("The current directory is not a git repository: {{.Path}}", map[string]any{"Path": wd}))
+		ErrorMsg(l10n.T("The current directory is not a git repository: {{.Path}}", map[string]any{"Path": wd}))
 		return
 	}
 
 	raw, err := git.RunContext(context.Background(), wd, "remote", "get-url", remoteOrigin)
 	if err != nil {
-		ErrorMsg(i18n.T("Failed to get the remote URL: {{.Err}}", map[string]any{"Err": err}))
+		ErrorMsg(l10n.T("Failed to get the remote URL: {{.Err}}", map[string]any{"Err": err}))
 		return
 	}
 
@@ -206,7 +206,7 @@ func toggleCurrentRepo() {
 // 使用 worker.Map 并发收集结果后顺序打印统计信息。
 func switchAllRepos(target string) {
 	entries := AllRepos(context.Background())
-	InfoLn(i18n.T("Repositories: {{.Count}} — switching protocol to {{.Proto}}...",
+	InfoLn(l10n.T("Repositories: {{.Count}} — switching protocol to {{.Proto}}...",
 		map[string]any{"Count": len(entries), "Proto": pterm.Cyan(strings.ToUpper(target))}))
 	processSwitchResults(entries, target)
 }
@@ -221,7 +221,7 @@ func processSwitchResults(entries []RepoEntry, target string) {
 		res         switchRemoteResult
 	}
 
-	t := NewDebugTimer(i18n.T("Protocol switch (repositories: {{.Count}})", map[string]any{"Count": len(entries)}))
+	t := NewDebugTimer(l10n.T("Protocol switch (repositories: {{.Count}})", map[string]any{"Count": len(entries)}))
 	results := worker.Map(context.Background(), entries, Concurrency(), func(ctx context.Context, e RepoEntry) switchOutcome {
 		r := doSwitchRemote(ctx, e.Path, target)
 		r.name = e.Name
@@ -238,17 +238,17 @@ func processSwitchResults(entries []RepoEntry, target string) {
 			PrintProtocolSwitch(r.name, r.isSubmodule, detectProtocol(r.res.oldURL), targetProto)
 			success++
 		case "same":
-			InfoMsg(i18n.T("{{.Label}} is already using {{.Proto}}, nothing to do",
+			InfoMsg(l10n.T("{{.Label}} is already using {{.Proto}}, nothing to do",
 				map[string]any{"Label": label, "Proto": detectProtocol(r.res.oldURL)}))
 			skipped++
 		case "error":
-			ErrorMsg(i18n.T("{{.Label}} {{.Err}}", map[string]any{"Label": label, "Err": r.res.err}))
+			ErrorMsg(l10n.T("{{.Label}} {{.Err}}", map[string]any{"Label": label, "Err": r.res.err}))
 			failed++
 		}
 	}
 
 	pterm.Println()
-	InfoMsg(i18n.T("Finished: {{.Success}} switched, {{.Skipped}} skipped, {{.Failed}} failed",
+	InfoMsg(l10n.T("Finished: {{.Success}} switched, {{.Skipped}} skipped, {{.Failed}} failed",
 		map[string]any{"Success": success, "Skipped": skipped, "Failed": failed}))
 }
 
@@ -270,7 +270,7 @@ type switchRemoteResult struct {
 func doSwitchRemote(ctx context.Context, repoPath string, target string) switchRemoteResult {
 	raw, err := git.RunContext(ctx, repoPath, "remote", "get-url", remoteOrigin)
 	if err != nil {
-		return switchRemoteResult{status: "error", err: i18n.T("Failed to get the remote URL: {{.Err}}", map[string]any{"Err": err})}
+		return switchRemoteResult{status: "error", err: l10n.T("Failed to get the remote URL: {{.Err}}", map[string]any{"Err": err})}
 	}
 
 	oldURL := strings.TrimSpace(raw)
@@ -295,7 +295,7 @@ func doSwitchRemote(ctx context.Context, repoPath string, target string) switchR
 
 	_, err = git.RunContext(ctx, repoPath, "remote", "set-url", remoteOrigin, newURL)
 	if err != nil {
-		return switchRemoteResult{status: "error", err: i18n.T("Switch failed: {{.Err}}", map[string]any{"Err": err})}
+		return switchRemoteResult{status: "error", err: l10n.T("Switch failed: {{.Err}}", map[string]any{"Err": err})}
 	}
 
 	return switchRemoteResult{status: "switched", oldURL: oldURL, newURL: newURL}

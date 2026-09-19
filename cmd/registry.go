@@ -10,7 +10,7 @@
 // 改为"延迟构造"后，T() 在构造期就是一次真调用，全仓语义一致：
 //   - 各命令文件只提供构造函数 newXxxCmd()，并在自己的 init() 里用 register
 //     登记"把该命令挂到根命令上"的动作
-//   - Execute 先 i18n.Init 加载语言，再 buildRoot() 触发全部构造函数
+//   - Execute 先 l10n.Init 加载语言，再 buildRoot() 触发全部构造函数
 //   - flag 的取地址绑定发生在构造函数内部，仍早于 cobra 解析参数，不会失效
 package cmd
 
@@ -28,7 +28,7 @@ func register(add func(root *cobra.Command)) {
 }
 
 // buildRoot 构造完整的命令树。
-// 必须在 i18n.Init 之后调用：各构造函数会调用 T() 取当前语言的文案。
+// 必须在 l10n.Init 之后调用：各构造函数会调用 T() 取当前语言的文案。
 func buildRoot() *cobra.Command {
 	root := newRootCmd()
 	for _, add := range constructors {

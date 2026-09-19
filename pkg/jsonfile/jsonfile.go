@@ -1,6 +1,6 @@
 // jsonfile 提供项目统一的 JSON 文件序列化形态。
 //
-// ggt 会写两类 JSON 文件：用户配置（internal/config）与语言文件（tools/l10n）。
+// ggt 会写两类 JSON 文件：用户配置（internal/config）与语言文件（pkg/l10n/cmd/l10n）。
 // 两者都要求"人可读、diff 可评审"，格式要求完全一致，所以把这条策略收口在这里，
 // 而不是在每个写入点各配一遍 encoder。
 package jsonfile

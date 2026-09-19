@@ -14,7 +14,7 @@ import (
 	"os"
 
 	"ggt/internal/config"
-	"ggt/internal/i18n"
+	"ggt/pkg/l10n"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -24,8 +24,8 @@ import (
 func newConfigCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "config",
-		Short: i18n.T("Show and edit the configuration", nil),
-		Long: i18n.T(`Show and edit ggt's configuration.
+		Short: l10n.T("Show and edit the configuration", nil),
+		Long: l10n.T(`Show and edit ggt's configuration.
 
 Examples:
   ggt config                     Show the current configuration
@@ -71,20 +71,20 @@ func showConfig(cmd *cobra.Command, args []string) error {
 	// 语义与 get 保持一致：只看配置文件 + 补默认值
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		ErrorMsg(i18n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": err}))
-		InfoMsg(i18n.T("Run \"ggt config validate\" to see what is wrong", nil))
+		ErrorMsg(l10n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": err}))
+		InfoMsg(l10n.T("Run \"ggt config validate\" to see what is wrong", nil))
 		return errSilent
 	}
 
 	jsonBytes, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return errors.New(i18n.T("Failed to serialize the configuration: {{.Err}}", map[string]any{"Err": err}))
+		return errors.New(l10n.T("Failed to serialize the configuration: {{.Err}}", map[string]any{"Err": err}))
 	}
 
-	Header(i18n.T("Current configuration", nil))
+	Header(l10n.T("Current configuration", nil))
 	PrintRaw(string(jsonBytes))
 	pterm.Println()
-	InfoMsg(i18n.T("Config file: {{.Path}}", map[string]any{"Path": config.GetDefaultConfigPath()}))
+	InfoMsg(l10n.T("Config file: {{.Path}}", map[string]any{"Path": config.GetDefaultConfigPath()}))
 	return nil
 }
 
@@ -92,7 +92,7 @@ func showConfig(cmd *cobra.Command, args []string) error {
 func newConfigShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
-		Short: i18n.T("Show the current configuration", nil),
+		Short: l10n.T("Show the current configuration", nil),
 		Args:  cobra.NoArgs,
 		RunE:  showConfig,
 	}
@@ -102,7 +102,7 @@ func newConfigShowCmd() *cobra.Command {
 func newConfigPathCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "path",
-		Short: i18n.T("Show the path to the config file", nil),
+		Short: l10n.T("Show the path to the config file", nil),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// 走裸 fmt 而非 pterm：路径经常被脚本直接取用
@@ -116,8 +116,8 @@ func newConfigPathCmd() *cobra.Command {
 func newConfigGetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <key>",
-		Short: i18n.T("Print the effective value of one setting", nil),
-		Long: i18n.T(`Print the value of one setting as it takes effect at runtime.
+		Short: l10n.T("Print the effective value of one setting", nil),
+		Long: l10n.T(`Print the value of one setting as it takes effect at runtime.
 
 The value comes from the config file with defaults filled in. Command-line
 overrides such as -c are NOT taken into account, since they only apply to the
@@ -148,8 +148,8 @@ Examples:
 func newConfigSetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <key> <value>",
-		Short: i18n.T("Set a configuration value", nil),
-		Long: i18n.T(`Validate and write one setting into the config file.
+		Short: l10n.T("Set a configuration value", nil),
+		Long: l10n.T(`Validate and write one setting into the config file.
 
 Other keys in the file are left untouched, including keys ggt does not know about.
 
@@ -166,7 +166,7 @@ Examples:
 				return errUnknownKey(key)
 			}
 			if s.ManagedBy != "" {
-				return errors.New(i18n.T("{{.Key}} is managed by \"{{.Command}}\" and cannot be set here",
+				return errors.New(l10n.T("{{.Key}} is managed by \"{{.Command}}\" and cannot be set here",
 					map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
 			}
 
@@ -178,11 +178,11 @@ Examples:
 				return err
 			}
 
-			SuccessMsg(i18n.T("{{.Key}} = {{.Value}}", map[string]any{"Key": s.Key, "Value": config.ValueText(parsed)}))
+			SuccessMsg(l10n.T("{{.Key}} = {{.Value}}", map[string]any{"Key": s.Key, "Value": config.ValueText(parsed)}))
 			if s.Key == "language" {
-				// 语言在进程启动时就由 i18n.Init 定下了，改配置不会影响当前这次输出。
+				// 语言在进程启动时就由 l10n.Init 定下了，改配置不会影响当前这次输出。
 				// 刻意不在这里重新 Init：那会违反 i18n 包"Init 之后状态只读"的契约
-				InfoMsg(i18n.T("The new language takes effect on the next run", nil))
+				InfoMsg(l10n.T("The new language takes effect on the next run", nil))
 			}
 			return nil
 		},
@@ -199,8 +199,8 @@ func newConfigResetCmd() *cobra.Command {
 
 	c := &cobra.Command{
 		Use:   "reset [key]",
-		Short: i18n.T("Reset one setting, or the whole configuration", nil),
-		Long: i18n.T(`Reset configuration.
+		Short: l10n.T("Reset one setting, or the whole configuration", nil),
+		Long: l10n.T(`Reset configuration.
 
 By default the value is REMOVED from the file, so the setting falls back to its
 built-in default. With --defaults the default value is written explicitly instead.
@@ -221,7 +221,7 @@ Examples:
 			// key 与 --all 必须恰有其一。两者都给或都不给都属语义不明，直接拒绝，
 			// 避免"我明明指定了 key，怎么把整个配置删了"这类误解
 			if all == (len(args) == 1) {
-				return errors.New(i18n.T("Specify either a key or --all, but not both", nil))
+				return errors.New(l10n.T("Specify either a key or --all, but not both", nil))
 			}
 			if all {
 				return resetAllConfig(defaults, yes)
@@ -231,11 +231,11 @@ Examples:
 	}
 
 	c.Flags().BoolVar(&all, "all", false,
-		i18n.T("Reset the whole configuration instead of a single key", nil))
+		l10n.T("Reset the whole configuration instead of a single key", nil))
 	c.Flags().BoolVar(&defaults, "defaults", false,
-		i18n.T("Write the default value instead of removing the setting", nil))
+		l10n.T("Write the default value instead of removing the setting", nil))
 	c.Flags().BoolVar(&yes, "yes", false,
-		i18n.T("Skip the confirmation prompt (only used with --all)", nil))
+		l10n.T("Skip the confirmation prompt (only used with --all)", nil))
 	return c
 }
 
@@ -246,7 +246,7 @@ func resetOneKey(key string, writeDefault bool) error {
 		return errUnknownKey(key)
 	}
 	if s.ManagedBy != "" {
-		return errors.New(i18n.T("{{.Key}} is managed by \"{{.Command}}\"; use that command to change it",
+		return errors.New(l10n.T("{{.Key}} is managed by \"{{.Command}}\"; use that command to change it",
 			map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
 	}
 
@@ -255,7 +255,7 @@ func resetOneKey(key string, writeDefault bool) error {
 		if err := config.SetKey(s.Key, s.Default); err != nil {
 			return err
 		}
-		SuccessMsg(i18n.T("{{.Key}} was reset to its default ({{.Value}})",
+		SuccessMsg(l10n.T("{{.Key}} was reset to its default ({{.Value}})",
 			map[string]any{"Key": s.Key, "Value": defaultText}))
 		return nil
 	}
@@ -263,7 +263,7 @@ func resetOneKey(key string, writeDefault bool) error {
 	if err := config.UnsetKey(s.Key); err != nil {
 		return err
 	}
-	SuccessMsg(i18n.T("{{.Key}} was removed from the config file; the default ({{.Value}}) now applies",
+	SuccessMsg(l10n.T("{{.Key}} was removed from the config file; the default ({{.Value}}) now applies",
 		map[string]any{"Key": s.Key, "Value": defaultText}))
 	return nil
 }
@@ -276,23 +276,23 @@ func resetAllConfig(writeDefaults, yes bool) error {
 	// 写默认值这条路径是安全操作（结果与"从未配置过"等价），不需要确认
 	if !writeDefaults {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			InfoMsg(i18n.T("There is no config file to delete: {{.Path}}", map[string]any{"Path": path}))
+			InfoMsg(l10n.T("There is no config file to delete: {{.Path}}", map[string]any{"Path": path}))
 			return nil
 		}
 		if !yes {
 			// 非交互环境下 pterm 的确认会读到 EOF 或直接挂住，明确报错让用户加 --yes
 			if !stdinIsTerminal() {
-				return errors.New(i18n.T("Refusing to delete {{.Path}} without confirmation; re-run with --yes",
+				return errors.New(l10n.T("Refusing to delete {{.Path}} without confirmation; re-run with --yes",
 					map[string]any{"Path": path}))
 			}
-			WarnMsg(i18n.T("This will delete {{.Path}} and forget every registered repository ({{.Count}} entries)",
+			WarnMsg(l10n.T("This will delete {{.Path}} and forget every registered repository ({{.Count}} entries)",
 				map[string]any{"Path": path, "Count": registeredEntryCount(path)}))
 			confirmed, err := pterm.DefaultInteractiveConfirm.WithDefaultValue(false).Show()
 			if err != nil {
 				return err
 			}
 			if !confirmed {
-				InfoMsg(i18n.T("Aborted; nothing was changed", nil))
+				InfoMsg(l10n.T("Aborted; nothing was changed", nil))
 				return nil
 			}
 		}
@@ -303,11 +303,11 @@ func resetAllConfig(writeDefaults, yes bool) error {
 	}
 
 	if writeDefaults {
-		SuccessMsg(i18n.T("Wrote a defaults-only config file: {{.Path}}", map[string]any{"Path": path}))
-		InfoMsg(i18n.T("Registered repositories were cleared; add them again with \"ggt repo add\"", nil))
+		SuccessMsg(l10n.T("Wrote a defaults-only config file: {{.Path}}", map[string]any{"Path": path}))
+		InfoMsg(l10n.T("Registered repositories were cleared; add them again with \"ggt repo add\"", nil))
 		return nil
 	}
-	SuccessMsg(i18n.T("Deleted the config file: {{.Path}}", map[string]any{"Path": path}))
+	SuccessMsg(l10n.T("Deleted the config file: {{.Path}}", map[string]any{"Path": path}))
 	return nil
 }
 
@@ -315,8 +315,8 @@ func resetAllConfig(writeDefaults, yes bool) error {
 func newConfigValidateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate",
-		Short: i18n.T("Check the config file for problems", nil),
-		Long: i18n.T(`Check the config file and report anything that would be silently ignored,
+		Short: l10n.T("Check the config file for problems", nil),
+		Long: l10n.T(`Check the config file and report anything that would be silently ignored,
 silently replaced by a default, or that makes the file unreadable.
 
 Output has no colors so it can be consumed by scripts. The exit code is 1 when at
@@ -330,7 +330,7 @@ Examples:
 
 			// 文件不存在不是问题：默认配置本来就允许不存在
 			if _, err := os.Stat(path); os.IsNotExist(err) {
-				fmt.Println(i18n.T("No config file at {{.Path}}; ggt is running on built-in defaults",
+				fmt.Println(l10n.T("No config file at {{.Path}}; ggt is running on built-in defaults",
 					map[string]any{"Path": path}))
 				return nil
 			}
@@ -340,7 +340,7 @@ Examples:
 				return err
 			}
 			if len(issues) == 0 {
-				fmt.Println(i18n.T("No problems found in {{.Path}}", map[string]any{"Path": path}))
+				fmt.Println(l10n.T("No problems found in {{.Path}}", map[string]any{"Path": path}))
 				return nil
 			}
 
@@ -352,7 +352,7 @@ Examples:
 				fmt.Printf("%s %s\n", levelTag(issue.Level), issue.Message)
 			}
 			fmt.Println()
-			fmt.Println(i18n.T("{{.Errors}} error(s), {{.Warnings}} warning(s)",
+			fmt.Println(l10n.T("{{.Errors}} error(s), {{.Warnings}} warning(s)",
 				map[string]any{"Errors": errorCount, "Warnings": len(issues) - errorCount}))
 
 			if errorCount > 0 {
@@ -371,7 +371,7 @@ var errSilent = errors.New("error already reported")
 
 // errUnknownKey 生成"未知键"的统一提示，顺带告诉用户怎么列出全部键。
 func errUnknownKey(key string) error {
-	return errors.New(i18n.T("Unknown config key: {{.Key}} (run \"ggt config --help\" to see the available keys)",
+	return errors.New(l10n.T("Unknown config key: {{.Key}} (run \"ggt config --help\" to see the available keys)",
 		map[string]any{"Key": key}))
 }
 
@@ -379,7 +379,7 @@ func errUnknownKey(key string) error {
 // 所有键的值错误都收敛到这一条模板，中英双语各只需一条文案，
 // 否则文案数量会随校验规则数线性增长。
 func errInvalidValue(key, value, expected string) error {
-	return errors.New(i18n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
+	return errors.New(l10n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
 		map[string]any{"Key": key, "Value": value, "Expected": expected}))
 }
 
