@@ -34,7 +34,7 @@ func TestBuildRootRegistersAllCommands(t *testing.T) {
 	subCommands := map[string][]string{
 		"repo":   {"add", "add-parent", "list", "remove"},
 		"remote": {"https", "ssh", "toggle"},
-		"config": {"path", "show"},
+		"config": {"get", "path", "reset", "set", "show", "validate"},
 	}
 	for parent, children := range subCommands {
 		pc, _, err := root.Find([]string{parent})

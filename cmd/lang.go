@@ -25,11 +25,11 @@ import (
 // 尤其是配置文件损坏时也必须能正常输出帮助——这是 --help 路径会走到这里的前提。
 func resolveLanguage() string {
 	if lang := scanLangFlag(os.Args[1:]); lang != "" {
-		return normalizeLanguage(lang)
+		return i18n.Normalize(lang)
 	}
 	// LoadLanguage 只做裸 JSON 读取，不会像 LoadConfig 那样在主目录不可用时退出进程
 	if lang, err := config.LoadLanguage(); err == nil && lang != "" {
-		return normalizeLanguage(lang)
+		return i18n.Normalize(lang)
 	}
 	return i18n.DefaultLanguage
 }
@@ -60,45 +60,6 @@ func scanLangFlag(args []string) string {
 	return strings.TrimSpace(lang)
 }
 
-// normalizeLanguage 把外部传入的语言串收敛到受支持的语言标签，无法识别时回退默认语言。
-//
-// 白名单校验是必要的：预扫描理论上可能把别的参数误当成语言（例如某个未知 flag 后紧跟
-// 的取值恰好形如 -l），把垃圾标签交给 go-i18n 会得到难以预期的匹配结果。
-//
-// 匹配分两轮，均为大小写不敏感：
-//  1. 完全相等，如 "zh-CN" 命中 "zh-CN"
-//  2. 主语言子标签相等，使 "zh"、"zh-Hans"、"zh-TW" 都落到 "zh-CN"，
-//     "en-US" 落到 "en" —— 当前只发布 en 与 zh-CN 两种，同语种内的地区差异
-//     一律收敛到已发布的那一个
-//
-// 未命中任何一轮时返回默认语言。
-func normalizeLanguage(lang string) string {
-	raw := strings.ToLower(strings.TrimSpace(lang))
-	if raw == "" {
-		return i18n.DefaultLanguage
-	}
-
-	supported := i18n.Supported()
-	for _, s := range supported {
-		if strings.EqualFold(s, raw) {
-			return s
-		}
-	}
-
-	primary := primarySubtag(raw)
-	for _, s := range supported {
-		if primarySubtag(strings.ToLower(s)) == primary {
-			return s
-		}
-	}
-
-	return i18n.DefaultLanguage
-}
-
-// primarySubtag 返回语言标签的主语言子标签，如 "zh-CN" -> "zh"、"en" -> "en"。
-func primarySubtag(tag string) string {
-	if i := strings.IndexByte(tag, '-'); i > 0 {
-		return tag[:i]
-	}
-	return tag
-}
+// 语言串的归一化与白名单校验统一在 i18n 包（i18n.Normalize / i18n.IsSupported）。
+// 放在那里是因为 config 包也要用（config set language 需要严格校验），而 config
+// 不能反向依赖 cmd。

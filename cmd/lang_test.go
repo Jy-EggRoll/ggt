@@ -2,38 +2,8 @@ package cmd
 
 import "testing"
 
-// TestNormalizeLanguage 验证语言串归一化。
-// 关注点是"受支持的语言必须能被宽松写法命中，其余一律回退默认语言"——
-// 回退而非报错是刻意的：语言只影响展示，传错不该让命令失败。
-func TestNormalizeLanguage(t *testing.T) {
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{"", "en"},
-		{"en", "en"},
-		{"EN", "en"},
-		{"en-US", "en"},
-		{"  en  ", "en"},
-		{"zh-CN", "zh-CN"},
-		{"zh-cn", "zh-CN"},
-		{"ZH-CN", "zh-CN"},
-		// 同语种的地区/字形变体一律收敛到已发布的那一个
-		{"zh", "zh-CN"},
-		{"zh-Hans", "zh-CN"},
-		{"zh-TW", "zh-CN"},
-		// 未发布的语言、以及被误抓成语言的数值，都回退默认语言
-		{"fr", "en"},
-		{"200", "en"},
-		{"-l", "en"},
-	}
-
-	for _, c := range cases {
-		if got := normalizeLanguage(c.in); got != c.want {
-			t.Errorf("normalizeLanguage(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
+// 语言串的归一化与严格校验由 internal/i18n 负责，用例在 i18n 包内
+// （TestNormalize / TestIsSupported）。本文件只覆盖 cmd 侧的预扫描。
 
 // TestScanLangFlag 验证命令行语言参数的预扫描。
 // 预扫描必须支持 pflag 的全部等价写法，并正确处理"未知 flag 的取值"与"-- 终止符"

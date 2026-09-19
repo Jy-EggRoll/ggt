@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"ggt/internal/config"
+	"ggt/internal/git"
 	"ggt/internal/i18n"
 	"github.com/spf13/cobra"
 )
@@ -63,7 +64,7 @@ func newRepoAddCmd() *cobra.Command {
 				return
 			}
 
-			if !isGitRepo(absPath) {
+			if !git.IsRepo(absPath) {
 				ErrorMsg(i18n.T("Not a git repository: {{.Path}}", map[string]any{"Path": absPath}))
 				return
 			}

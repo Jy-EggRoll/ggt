@@ -122,6 +122,56 @@ func TestValidateMessageIDRejectsReservedWords(t *testing.T) {
 	}
 }
 
+// TestNormalize 验证语言串的宽松归一化。
+// 关注点是"受支持的语言必须能被宽松写法命中，其余一律回退默认语言"——
+// 回退而非报错是刻意的：语言只影响展示，传错不该让命令失败。
+func TestNormalize(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", "en"},
+		{"  en  ", "en"},
+		{"EN", "en"},
+		{"en-US", "en"},
+		{"zh-CN", "zh-CN"},
+		{"zh-cn", "zh-CN"},
+		{"ZH-CN", "zh-CN"},
+		// 同语种的地区/字形变体一律收敛到已发布的那一个
+		{"zh", "zh-CN"},
+		{"zh-Hans", "zh-CN"},
+		{"zh-TW", "zh-CN"},
+		// 未发布的语言、以及被误抓成语言的数值，都回退默认语言
+		{"fr", "en"},
+		{"200", "en"},
+		{"-l", "en"},
+	}
+	for _, c := range cases {
+		if got := Normalize(c.in); got != c.want {
+			t.Errorf("Normalize(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestIsSupported 验证严格校验与宽松归一化的分工。
+//
+// 两者的差别是本包对外契约的一部分：Normalize 把"不认识"当成"回退默认语言"，
+// 而 config set language 必须能拒绝 fr 而不是把它静默改写成 en。
+func TestIsSupported(t *testing.T) {
+	yes := []string{"en", "EN", "en-US", "zh-CN", "zh-cn", "zh", "zh-Hans", "zh-TW"}
+	for _, s := range yes {
+		if !IsSupported(s) {
+			t.Errorf("IsSupported(%q) 应为 true", s)
+		}
+	}
+	no := []string{"", "  ", "fr", "de", "200", "-l", "english"}
+	for _, s := range no {
+		if IsSupported(s) {
+			t.Errorf("IsSupported(%q) 应为 false", s)
+		}
+	}
+}
+
 // TestSupportedReturnsCopy 断言 Supported 返回副本，调用方改动不会污染包内状态。
 func TestSupportedReturnsCopy(t *testing.T) {
 	got := Supported()

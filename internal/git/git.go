@@ -6,8 +6,24 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 )
+
+// IsRepo 判断指定路径是否是一个有效的 git 仓库（存在 .git 目录）。
+//
+// 判定要求 .git 是**目录**。子模块的 .git 往往是指向父仓库 .git/modules/xxx 的
+// gitdir 文件，那种情况由子模块发现逻辑单独处理（见 cmd/repos.go）。
+//
+// 本函数被运行期的仓库发现与 ggt config validate 的体检共用。两处若各写一套口径，
+// 就会出现"validate 说不是仓库、ggt 却能跑"这类自相矛盾的提示。
+func IsRepo(path string) bool {
+	info, err := os.Stat(filepath.Join(path, ".git"))
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
+}
 
 // 默认超时时间：120 秒。网络操作（fetch/push）需要较长等待，
 // 本地操作（status/rev-parse）也能在超时前完成。

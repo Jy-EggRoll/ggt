@@ -205,3 +205,69 @@ func Supported() []string {
 	copy(out, supported)
 	return out
 }
+
+// Normalize 把外部传入的语言串收敛到受支持的语言标签，无法识别时回退默认语言。
+//
+// 这是**宽松**匹配，专为 --lang 这类"用户随手输入、不该因此失败"的入口而设计：
+// 给什么都返回一个可用标签，最差落到默认语言。
+//
+// 需要严格校验的场合（如 ggt config set language）**不要**用它：Normalize("fr")
+// 返回 "en"，照搬会把用户输入的 fr 静默改写成 en。那种场合应先用 Strict 判断，
+// 或直接比对 Supported()。
+//
+// 匹配分两轮，均为大小写不敏感：
+//  1. 完全相等，如 "zh-CN" 命中 "zh-CN"
+//  2. 主语言子标签相等，使 "zh"、"zh-Hans"、"zh-TW" 都落到 "zh-CN"，
+//     "en-US" 落到 "en" —— 当前只发布 en 与 zh-CN 两种，同语种内的地区差异
+//     一律收敛到已发布的那一个
+func Normalize(lang string) string {
+	raw := strings.ToLower(strings.TrimSpace(lang))
+	if raw == "" {
+		return DefaultLanguage
+	}
+
+	supported := Supported()
+	for _, s := range supported {
+		if strings.EqualFold(s, raw) {
+			return s
+		}
+	}
+
+	primary := primarySubtag(raw)
+	for _, s := range supported {
+		if primarySubtag(strings.ToLower(s)) == primary {
+			return s
+		}
+	}
+
+	return DefaultLanguage
+}
+
+// IsSupported 严格判断 lang 是否对应一个受支持的语言。
+//
+// 与 Normalize 的区别在于对"无法识别"的态度：Normalize 回退默认语言（宽松，为 --lang
+// 而生），本函数如实返回 false。config set language 必须用它——否则用户输入 fr 会被
+// 静默改写成 en，而输入 fr 与输入 en 的意图显然不同。
+//
+// 同语种的地区/字形变体视为受支持，如 zh-Hans、en-US。
+func IsSupported(lang string) bool {
+	raw := strings.ToLower(strings.TrimSpace(lang))
+	if raw == "" {
+		return false
+	}
+	primary := primarySubtag(raw)
+	for _, s := range Supported() {
+		if primarySubtag(strings.ToLower(s)) == primary {
+			return true
+		}
+	}
+	return false
+}
+
+// primarySubtag 返回语言标签的主语言子标签，如 "zh-CN" -> "zh"、"en" -> "en"。
+func primarySubtag(tag string) string {
+	if i := strings.IndexByte(tag, '-'); i > 0 {
+		return tag[:i]
+	}
+	return tag
+}

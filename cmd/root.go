@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"ggt/internal/config"
+	"ggt/internal/git"
 	"ggt/internal/i18n"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -85,6 +87,13 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 //  2. 再构造命令树。各命令的构造函数会调用 T()，此时语言已就绪
 //  3. 最后才交给 cobra 解析参数并执行
 func Execute() {
+	// NO_COLOR 是跨工具约定（https://no-color.org）：该环境变量存在即关闭着色。
+	// pterm 自己不检测 TTY，不处理的话管道里会混进 ANSI 转义，
+	// 让 `ggt config show | jq` 这类用法直接失败
+	if _, ok := os.LookupEnv("NO_COLOR"); ok {
+		pterm.DisableColor()
+	}
+
 	if err := i18n.Init(resolveLanguage()); err != nil {
 		// 语言文件是 //go:embed 进来的，加载失败属于构建期错误，必须显式暴露。
 		// 静默降级只会表现为"中文界面变成了英文"，没有任何报错，极难排查
@@ -92,8 +101,20 @@ func Execute() {
 		os.Exit(1)
 	}
 
-	if err := buildRoot().Execute(); err != nil {
-		ErrorMsg(i18n.T("Execution failed: {{.Err}}", map[string]any{"Err": err}))
+	root := buildRoot()
+	// 错误一律走 stderr：脚本靠 stdout 取数据、靠退出码判断成败，把错误混进 stdout
+	// 会污染管道（pterm 默认写 stdout，这里显式改掉）
+	pterm.Error.Writer = os.Stderr
+	// 关掉 cobra 自己的错误输出。否则同一条错误会被 cobra（"Error: ..." 到 stderr）
+	// 和下面的分支（"ERROR 执行失败: ..."）各打印一次
+	root.SilenceErrors = true
+
+	if err := root.Execute(); err != nil {
+		// errSilent 表示命令自己已经把错误打印过了（如 config show 在报错后还给了修复提示），
+		// 再包一层 "Execution failed:" 只会重复
+		if !errors.Is(err, errSilent) {
+			ErrorMsg(i18n.T("Execution failed: {{.Err}}", map[string]any{"Err": err}))
+		}
 		os.Exit(1)
 	}
 }
@@ -144,6 +165,10 @@ func (t *DebugTimer) Done() {
 // 这样做的好处：未来若要统一换主题色、换输出库、或接入日志系统，
 // 只需修改本文件这一处，而不必改动各业务命令。
 // 命名约定：Msg 系列接收纯字符串；f 系列接收 format + 参数（对应 pterm 的 Printf/Printfln）。
+//
+// 唯一例外是**面向脚本消费**的输出（ggt config get / validate / path）：pterm 不检测
+// TTY，会把 ANSI 转义写进管道，让 `ggt config show | jq` 这类用法失败。那些命令
+// 直接走 fmt 的裸输出，且不受本区块的样式调整影响。
 
 // Header 打印带样式的标题（使用 Section 风格，比 DefaultHeader 方块更简洁）。
 func Header(title string) {
@@ -325,23 +350,13 @@ func GetRepoList() []string {
 				continue
 			}
 			repoPath := parentPath + string(os.PathSeparator) + entry.Name()
-			if isGitRepo(repoPath) {
+			if git.IsRepo(repoPath) {
 				repos = append(repos, repoPath)
 			}
 		}
 	}
 
 	return repos
-}
-
-// isGitRepo 检查指定路径是否是一个有效的 git 仓库（存在 .git 目录）。
-func isGitRepo(path string) bool {
-	gitPath := path + string(os.PathSeparator) + ".git"
-	info, err := os.Stat(gitPath)
-	if err != nil {
-		return false
-	}
-	return info.IsDir()
 }
 
 // MustGetRepoList 获取仓库列表，如果为空则打印提示并以退出码 0 结束进程。

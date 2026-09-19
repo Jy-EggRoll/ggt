@@ -162,7 +162,7 @@ func switchCurrentRepo(target string) {
 		return
 	}
 
-	if !isGitRepo(wd) {
+	if !git.IsRepo(wd) {
 		ErrorMsg(i18n.T("The current directory is not a git repository: {{.Path}}", map[string]any{"Path": wd}))
 		return
 	}
@@ -180,7 +180,7 @@ func toggleCurrentRepo() {
 		return
 	}
 
-	if !isGitRepo(wd) {
+	if !git.IsRepo(wd) {
 		ErrorMsg(i18n.T("The current directory is not a git repository: {{.Path}}", map[string]any{"Path": wd}))
 		return
 	}

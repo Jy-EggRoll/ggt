@@ -64,12 +64,30 @@ ggt size
 
 ## 配置
 
-配置文件位于 `~/.config/go-git-ggt/ggt-config.json`，首次运行任意命令时若不存在会自动生成默认值。也可用以下命令查看：
+配置文件位于 `~/.config/go-git-ggt/ggt-config.json`。**文件不存在时 ggt 不会自动创建它**，而是在内存里补上默认值；只有 `ggt repo add` 这类写入命令才会落盘。
 
 ```bash
-ggt config show     # 打印当前生效配置
-ggt config path     # 打印配置文件绝对路径
+ggt config                     # 打印当前生效配置
+ggt config show                # 同上
+ggt config path                # 打印配置文件绝对路径（面向脚本，无色输出）
+
+ggt config get <key>           # 打印某项的生效值
+ggt config set <key> <value>   # 校验后写入单项
+ggt config reset <key>         # 删除该项，使其回落到默认值
+ggt config reset <key> --defaults   # 改为显式写入默认值
+ggt config reset --all         # 删除整个配置文件（需确认）
+ggt config reset --all --defaults   # 写入一份只含默认值的配置文件
+
+ggt config validate            # 体检配置文件
 ```
+
+`get` / `validate` / `path` 的输出不带颜色，便于管道消费（`ggt config show | jq` 也可用；非终端环境下可另设 `NO_COLOR=1` 全局关闭着色）。
+
+`reset` 有两种模式：默认**删除**该值（键从文件里消失），加 `--defaults` 则**写入默认值**。`--all` 同理——默认删掉整个配置文件，加 `--defaults` 则写一份只含默认值的文件。两条路径都会清空已登记的仓库，删除前会要求确认（`--yes` 可跳过，非交互环境下必须加）。
+
+`validate` 会报出那些**运行期会被静默忽略或替换**的问题，逐条标明级别：未知键、非法取值、大小写重复键、UTF-8 BOM 属 error；阈值倒置、路径不存在、相对路径、重复条目属 warning。存在 error 时退出码为 1。
+
+`repo_paths` 与 `parent_paths` 不能用 `config set` 修改——增删请走 `ggt repo add` / `remove` / `add-parent`，那里有去重、git 仓库校验与路径规范化。
 
 支持的配置项：
 
@@ -209,7 +227,7 @@ ggt size --low 200 --high 600 --unit binary
 ### version / config
 
 - `ggt version`：打印版本信息
-- `ggt config show` / `ggt config path`：查看配置内容与配置文件路径
+- `ggt config`：查看与编辑配置，详见上文「配置」一节
 
 ## 子模块处理
 

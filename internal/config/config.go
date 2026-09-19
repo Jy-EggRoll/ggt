@@ -159,27 +159,48 @@ func applyConfigDefaults(cfg *Config) {
 	}
 }
 
-// SaveConfig 将配置写入默认路径的 JSON 文件。
-// 自动创建父目录。
+// SaveConfig 将整份配置写入默认路径的 JSON 文件。
+//
+// 走的是 store.go 的原始 map 写入路径而不是 viper.WriteConfig：后者依赖 viper.Set
+// 往包级全局单例里写永不失效的 override（详见 LoadLanguage 的注释）。两者都保留文件
+// 中已有的未知键，这点行为不变。
 func SaveConfig(cfg *Config) error {
-	configPath := GetDefaultConfigPath()
-	dir := filepath.Dir(configPath)
+	return SaveConfigAt(GetDefaultConfigPath(), cfg)
+}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+// SaveConfigAt 是 SaveConfig 的显式路径版本，供测试使用（测试不该碰真实用户目录）。
+func SaveConfigAt(path string, cfg *Config) error {
+	raw, err := ReadRawAt(path)
+	if err != nil {
 		return err
 	}
+	// 只覆盖已知的 8 个键，文件里不认识的键原样保留
+	for k, v := range cfg.toRaw() {
+		raw[k] = v
+	}
+	return WriteRawAt(path, raw)
+}
 
-	viper.SetConfigFile(configPath)
-	viper.Set("parent_paths", cfg.ParentPaths)
-	viper.Set("repo_paths", cfg.RepoPaths)
-	viper.Set("concurrency", cfg.Concurrency)
-	viper.Set("ignore_submodules", cfg.IgnoreSubmodules)
-	viper.Set("size_bucket_low_mb", cfg.SizeBucketLowMB)
-	viper.Set("size_bucket_high_mb", cfg.SizeBucketHighMB)
-	viper.Set("size_unit", cfg.SizeUnit)
-	viper.Set("language", cfg.Language)
+// toRaw 把配置转成文件里的键值形态。
+// 切片显式转成空切片，避免写出 "repo_paths": null（nil 切片的默认序列化结果）。
+func (c *Config) toRaw() map[string]any {
+	return map[string]any{
+		"parent_paths":        nonNilPaths(c.ParentPaths),
+		"repo_paths":          nonNilPaths(c.RepoPaths),
+		"concurrency":         c.Concurrency,
+		"ignore_submodules":   c.IgnoreSubmodules,
+		"size_bucket_low_mb":  c.SizeBucketLowMB,
+		"size_bucket_high_mb": c.SizeBucketHighMB,
+		"size_unit":           c.SizeUnit,
+		"language":            c.Language,
+	}
+}
 
-	return viper.WriteConfig()
+func nonNilPaths(p []string) []string {
+	if p == nil {
+		return []string{}
+	}
+	return p
 }
 
 // resolveConcurrency 把配置里读到的并发语义串解析为可直接用于 worker 的实际并发数。
