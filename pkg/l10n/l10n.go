@@ -5,7 +5,7 @@
 // 符号 key，因此也不必维护"key 与文案的对应关系"，代价是改文案即改 id。
 //
 // 三者的分工：
-//   - <Dir>/<Options.Default>.json 是**生成物**，由配套的 cmd/l10n 工具扫描源码覆盖
+//   - <Dir>/<Options.Default>.json 是**生成物**，由配套的 pkg/l10n/cmd/l10n 工具扫描源码覆盖
 //     写入，内容是 { 源串: 源串 } 的自映射，不要手工编辑
 //   - <Dir>/<其它语言>.json 是**手工维护**的译文，形如 { 英文源串: 译文 }
 //   - 两者都经 Options.FS 交给 Init，通常由调用方 //go:embed 提供

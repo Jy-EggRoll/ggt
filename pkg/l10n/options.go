@@ -9,7 +9,7 @@ import (
 // 全部缺失会让 Init 直接报错——静默用一个空配置跑起来只会让问题推迟到运行期。
 type Options struct {
 	// Default 是默认语言标签，同时也是缺失译文的最终回退层。
-	// 语言文件 <Default>.json 是生成物（由 cmd/l10n export 写入的自映射）。
+	// 语言文件 <Default>.json 是生成物（由 pkg/l10n/cmd/l10n export 写入的自映射）。
 	Default string
 
 	// Supported 是随二进制发布的语言列表。

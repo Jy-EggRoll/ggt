@@ -77,7 +77,7 @@ func WriteRawAt(path string, raw map[string]any) error {
 		return err
 	}
 
-	// 统一的规范形态（字典序、2 空格缩进、不转义 HTML）由 internal/jsonfile 提供，
+	// 统一的规范形态（字典序、2 空格缩进、不转义 HTML）由 pkg/jsonfile 提供，
 	// 与语言文件写入共用同一份策略
 	buf, err := jsonfile.Marshal(normalized)
 	if err != nil {
