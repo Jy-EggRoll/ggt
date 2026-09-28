@@ -7,7 +7,7 @@
 //   - XxxMsg    打印纯字符串
 //   - XxxLn     打印纯字符串，并在其后留一个空行
 //   - XxxStr    返回着色后的字符串，供先缓存再统一打印的场合
-//   - XxxStrLn  返回着色字符串，并在其后留一个空行
+//   - XxxStrLn  返回着色字符串，并在其后补一个换行（得不到空行，原因见下方 StrLn 系列的说明）
 //
 // 唯一例外是**面向脚本消费**的输出（ggt config get / validate / path）：pterm 不检测
 // TTY，会把 ANSI 转义写进管道，让 `ggt config show | jq` 这类用法失败。那些命令
@@ -23,14 +23,9 @@ import (
 )
 
 // ——— 统一的 pterm 输出辅助函数 ———
-// 所有命令都应通过这些函数输出，不要直接在命令里调用 pterm.*。
-// 这样做的好处：未来若要统一换主题色、换输出库、或接入日志系统，
-// 只需修改本文件这一处，而不必改动各业务命令。
-// 命名约定：Msg 系列接收纯字符串；f 系列接收 format + 参数（对应 pterm 的 Printf/Printfln）。
-//
-// 唯一例外是**面向脚本消费**的输出（ggt config get / validate / path）：pterm 不检测
-// TTY，会把 ANSI 转义写进管道，让 `ggt config show | jq` 这类用法失败。那些命令
-// 直接走 fmt 的裸输出，且不受本区块的样式调整影响。
+// 形态与命名约定见文件头，此处不再重复。唯一需要额外记住的是：全仓**没有** f 系列
+// （format + 参数）封装，确实需要格式串时直接调用 pterm 的 Printf/Printfln，
+// 但**不能把译文当格式串**送进去（译文里的字面 % 会被 fmt 吃掉，原因见 root.go）。
 
 // Header 打印带样式的标题（使用 Section 风格，比 DefaultHeader 方块更简洁）。
 func Header(title string) {
@@ -156,8 +151,13 @@ func InfoStr(s string) string    { return pterm.Info.Sprint(s) }
 func ErrorStr(s string) string   { return pterm.Error.Sprint(s) }
 func SuccessStr(s string) string { return pterm.Success.Sprint(s) }
 
-// StrLn 系列是 Str 系列的换行变体：返回值结尾多一个空行。
-// 供"先并发收集、再顺序统一打印"的场合（如 sync 的逐仓库结果）拼接多行时使用，
+// StrLn 系列是 Str 系列的换行变体：返回值结尾多一个换行——注意是换行，**不是空行**。
+//
+// 依据 pterm 的实现（PrefixPrinter.Sprint）：入参以 \n 结尾时，它会先 TrimRight 掉所有
+// 结尾换行、再补回一个，所以多传几个 \n 也只会折叠成一个换行。想要空行只能用 Ln 系列
+// （它们经 Printfln 在结果之后再追加一个换行，凑成两个）。
+//
+// 用途是"先并发收集、再顺序统一打印"的场合（如 sync 的逐仓库结果）拼接多行，
 // 免得每个调用点都自己写 + "\n"。
 func WarnStrLn(s string) string    { return pterm.Warning.Sprint(s + "\n") }
 func InfoStrLn(s string) string    { return pterm.Info.Sprint(s + "\n") }

@@ -62,9 +62,8 @@ Examples:
   ggt size --low 200 --high 600 --unit binary  Custom thresholds and unit`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			repos := AllRepos(context.Background())
-			// 这里刻意保留常量格式串 "%s\n" 而不是改用 InfoMsg：pterm 的 Sprintfln 会在
-			// 渲染结果之后再加一个换行，而 InfoMsg 走的 Println 会把结尾换行折叠掉，
-			// 两者视觉上相差一个空行。用常量格式串可与改造前的输出保持完全一致
+			// 用 InfoLn 而非 InfoMsg：Ln 系列会在结尾多留一个空行，与后续明细隔开；
+			// "%s\n" 的格式串细节已收口在 output.go，调用点不再自带格式串
 			InfoLn(l10n.T("Repositories: {{.Count}} — gathering sizes...", map[string]any{"Count": len(repos)}))
 
 			width := pterm.GetTerminalWidth()
@@ -102,7 +101,7 @@ Examples:
 				unit = sizeUnit
 			}
 			if unit != "decimal" && unit != "binary" {
-				// 走 Msg 系列而非 Warnf：译文已由 T 渲染完毕，套 "%s" 只是多余的间接层。
+				// 走 Msg 系列而非格式串通道：译文已由 T 渲染完毕，套 "%s" 只是多余的间接层
 				// 译文里的 "decimal" 是配置枚举值，刻意保留原文，便于用户对照配置文件里的 size_unit
 				WarnMsg(l10n.T(`Invalid size_unit value ("{{.Unit}}"), falling back to "decimal"`, map[string]any{"Unit": unit}))
 				unit = "decimal"
@@ -121,7 +120,7 @@ Examples:
 			// 单位说明与标题合成单一完整模板，让译者能调整括号形态
 			Header(l10n.T("Size buckets ({{.Unit}})", map[string]any{"Unit": unitLabel}))
 			// 不同分桶使用不同视觉级别：小仓库信息展示，中等仓库黄色警告，大仓库红色警告
-			// 标题先经 T 渲染，故这里传 Msg 系列（纯文本通道）而非 f 系列
+			// 标题先经 T 渲染，故这里传 Msg 系列（纯文本通道）而非格式串通道
 			printSizeBucket(l10n.T("<{{.Low}}MB", map[string]any{"Low": low}), small, InfoMsg)
 			printSizeBucket(l10n.T("{{.Low}}~{{.High}}MB", map[string]any{"Low": low, "High": high}), mid, WarnMsg)
 			printSizeBucket(l10n.T(">{{.High}}MB", map[string]any{"High": high}), large, ErrorMsg)
@@ -247,7 +246,7 @@ func classifyBySize(results []repoSizeResult, lowMB, highMB int, unit string) (s
 //
 // printer 决定标题的视觉级别：InfoMsg 浅蓝信息、WarnMsg 黄色警告、ErrorMsg 红色错误，
 // 由调用方根据分桶的严重程度传入，保持列表项样式统一。
-// 这里传 Msg 系列而非 f 系列：标题已由 go-i18n 渲染完毕，若再走 Sprintf 通道，
+// 这里传 Msg 系列而非格式串通道：标题已由 go-i18n 渲染完毕，若再走 Sprintf 通道，
 // 译文里出现的字面 % 会被 fmt 当成格式动词解析成 %!?(MISSING)。
 func printSizeBucket(title string, names []string, printer func(string)) {
 	printer(l10n.T("{{.Title}}: {{.Count}}", map[string]any{"Title": title, "Count": len(names)}))
@@ -324,7 +323,7 @@ func parseSizeValue(s string) int64 {
 }
 
 // formatSize 将字节数转为人类可读的大小字符串（如 985.7 MB）。
-// 仅做数值格式化，不含颜色；颜色由调用处的 Infof 统一处理，
+// 仅做数值格式化，不含颜色；颜色由调用处的 InfoMsg 统一处理，
 // 便于对纯文本结果做单元测试，也符合"格式化与展示分离"的原则。
 func formatSize(size int64) string {
 	const unit = int64(1024)

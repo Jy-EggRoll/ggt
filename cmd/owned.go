@@ -24,7 +24,7 @@ type takeownResult struct {
 // ownedCmd 实现 "ggt owned"。
 // 调用 Windows takeown 命令获取仓库文件所有权。
 // 严格遵循原有的 pwsh 脚本逻辑，处理主仓库目录、.git 目录。
-// 子模块在 ggt 中被视为一等仓库，由统一的仓库发现（MustGetAllRepos）展开后
+// 子模块在 ggt 中被视为一等仓库，由统一的仓库发现（AllRepos）展开后
 // 逐个作为独立条目交给 takeownRepo 处理，无需在此命令内编写子模块专属循环。
 //
 // 注意：此命令仅适用于 Windows 系统（入口处 runtime.GOOS 检测提前返回）。
@@ -46,7 +46,7 @@ Examples:
 				return
 			}
 			repos := AllRepos(context.Background())
-			// 保留常量格式串 "%s\n" 以维持改造前的尾部空行
+			// 用 InfoLn 而非 InfoMsg：Ln 系列结尾会多留一个空行（"%s\n" 的细节收口在 output.go）
 			InfoLn(l10n.T("Repositories: {{.Count}} — taking ownership...", map[string]any{"Count": len(repos)}))
 
 			// 并发执行 takeown（worker.Map 保证输出顺序），子模块作为独立条目参与
@@ -79,7 +79,8 @@ Examples:
 // takeownRepo 获取一个仓库（或子模块）目录及其 .git 的所有权。
 // 子模块的 .git 可能是 gitdir 文件，这里统一对 .git 路径本身执行 takeown，
 // 覆盖大多数权限场景；子模块在 ggt 中作为独立仓库由外层统一展开，无需在此递归处理。
-// 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
+// ctx 仅为匹配 worker.Map 的回调签名而入参：本函数不调用 git，也没有把它传给 takeown，
+// 因此任务被整体取消时不会中断已经启动的 takeown 进程
 func takeownRepo(ctx context.Context, repoPath string) error {
 	// 获取仓库目录本身的所有权
 	if err := runTakeown(repoPath); err != nil {

@@ -124,8 +124,9 @@ func Execute() {
 // （func T(msg string, ...) { return l10n.T(msg, ...) }），会被提取器判为违规。
 // 去掉封装后规则全仓一致、无需任何例外，代价只是调用点多写一个包名前缀。
 //
-// 另注意 l10n.T 的返回值是已渲染好的纯文本，**不要**再当作 printf 的格式串传给
-// Infof/WarnS 等，否则译文里出现的字面 %（如"完成度 100%"）会被 fmt 解析成 %!?(MISSING)。
+// 另注意 l10n.T 的返回值是已渲染好的纯文本，**不要**再当作 printf 的格式串送进
+// Sprintf 通道（pterm 的 Printf/Printfln，或 fmt.Sprintf），否则译文里出现的
+// 字面 %（如"完成度 100%"）会被 fmt 解析成 %!?(MISSING)。
 // 需要输出时请使用 Msg 系列（InfoMsg 等）或 Str 系列（InfoStr 等）。
 
 // GetConfig 返回全局配置实例。

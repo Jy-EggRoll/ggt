@@ -35,7 +35,8 @@ Examples:
   ggt sum              Short form`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			// 统一 ctx：第一阶段并发检查与第二阶段交互式操作（diff/count-objects/add/commit/push）
-			// 都复用同一 ctx，确保这些耗时 git 调用也受全局超时与取消约束，不再用无 ctx 的 git.Run。
+			// 都复用同一 ctx，一旦它被取消，worker.Map 与正在执行的 git 调用会一起中断；
+			// 这些调用一律走 git.RunContext / RunCombinedContext，未设截止时间时由 git 包叠加默认超时兜底
 			ctx := context.Background()
 			repos := AllRepos(ctx)
 			InfoLn(l10n.T("Repositories: {{.Count}} — checking for changes...", map[string]any{"Count": len(repos)}))
