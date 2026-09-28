@@ -150,10 +150,13 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 	}
 	base = strings.TrimSpace(base)
 
-	// 第四步：比较决策
-	if local == remote {
+	// 第四步：比较三方 commit 关系并执行对应动作。
+	// 判定逻辑单独抽成 decideSyncAction——它是本命令唯一的纯决策部分，
+	// 抽出来才能在不建真实仓库的前提下用表驱动测试覆盖全部分支
+	switch decideSyncAction(local, remote, base) {
+	case syncUpToDate:
 		return info(InfoStrLn(l10n.T("{{.Label}}: already up to date with the remote", map[string]any{"Label": label})))
-	} else if local == base {
+	case syncFastForward:
 		// 本地落后于远程，且历史线性 → 可以用 fast-forward
 		output := WarnStrLn(l10n.T("{{.Label}}: fast-forward available, pulling...", map[string]any{"Label": label}))
 		_, err := git.RunContext(ctx, e.Path, "pull", "--ff-only")
@@ -162,12 +165,48 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 				map[string]any{"Label": label, "Err": err})), l10n.T("Run git pull manually", nil))
 		}
 		return info(output + SuccessStrLn(l10n.T("{{.Label}}: pulled successfully", map[string]any{"Label": label})))
-	} else if remote == base {
+	case syncAhead:
 		return warn(WarnStrLn(l10n.T("{{.Label}}: local branch is ahead of the remote, push manually",
 			map[string]any{"Label": label})), l10n.T("Run git push manually", nil))
-	} else {
+	default:
 		return warn(ErrorStrLn(l10n.T("{{.Label}}: divergent history, manual handling required",
 			map[string]any{"Label": label})), l10n.T("Merge or rebase manually", nil))
+	}
+}
+
+// syncAction 是"三方 commit 关系分析"得出结论后应当采取的动作。
+type syncAction int
+
+const (
+	// syncUpToDate：本地与远程指向同一个 commit，无需任何操作
+	syncUpToDate syncAction = iota
+	// syncFastForward：本地落后且历史线性，可以 git pull --ff-only
+	syncFastForward
+	// syncAhead：本地领先远程，快进没有意义，只能由用户手动推送
+	syncAhead
+	// syncDiverged：两边各有对方没有的提交，必须人工合并或变基
+	syncDiverged
+)
+
+// decideSyncAction 依据本地 HEAD、远程 upstream、共同祖先三个 commit hash 决定动作。
+//
+// 判定顺序即优先级，不能调换：
+//   - 本地 == 远程：完全一致（现实中三者通常也相等，先判它可省去两次比较）
+//   - 本地 == 共同祖先：远程在本地之前且没有分叉 → 线性落后，可安全快进
+//   - 远程 == 共同祖先：本地在远程之前，快进没有意义 → 只能手动推送
+//   - 三者互不相等：历史分叉，任何自动操作都可能丢改动，必须人工处理
+//
+// 纯函数：不接触 git、不产生输出，因此可以脱离真实仓库用表驱动测试覆盖全部分支
+func decideSyncAction(local, remote, base string) syncAction {
+	switch {
+	case local == remote:
+		return syncUpToDate
+	case local == base:
+		return syncFastForward
+	case remote == base:
+		return syncAhead
+	default:
+		return syncDiverged
 	}
 }
 
