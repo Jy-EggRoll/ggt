@@ -1,11 +1,12 @@
-// store.go 负责配置文件的原始读写。
+// store.go 负责配置文件的原始读写，本包对配置文件的 I/O 都收口在这里。
 //
 // 为什么写不用 viper：viper 的 WriteConfig 走 AllSettings()，把内存里的全部键一次性
 // 落盘，**无法表达"把某个键删掉"**——而 reset 的默认模式正是删键。另外 viper.Set 会
-// 往包级全局单例里写入永不失效的 override（详见 LoadLanguage 的注释）。
+// 往包级全局单例里写入永不失效的 override，污染后续调用。
 //
-// 读仍由 viper 承担（LoadConfig 需要它的大小写不敏感与弱类型容错），
-// 写与体检则走这里的原始 map 路径。
+// 读同样不走 viper（详见 LoadConfigAt）：弱类型容错实际来自 mapstructure 的
+// WeaklyTypedInput，大小写归一与重复键拒绝由本文件的 parseRaw / normalizeKeys 负责，
+// 读、写、体检因而共用同一套解析规则，不会分叉成"能跑但体检说不行"。
 package config
 
 import (
@@ -127,9 +128,11 @@ func ResetAllAt(path string, writeDefaults bool) error {
 	return WriteRawAt(path, DefaultRaw())
 }
 
-// DefaultRaw 返回一份全默认值的配置（键值形态）。
-// 切片显式初始化成空切片：`defaultConfig()` 的切片是 nil，直接序列化会写出
-// `"repo_paths": null`，而"一份默认配置"应当是 `[]`。
+// DefaultRaw 返回一份全默认值的配置（键值形态），默认值取自 settings 注册表，
+// 因此与结构体形态的 defaultConfig() 必然同源。
+// 切片是空切片而非 nil，序列化结果是 "repo_paths": [] 而不是 null；结构体形态也在
+// applyConfigDefaults 里保证切片非 nil——两种形态对"空列表"的呈现必须一致，
+// 否则 config show 与 reset --defaults 写出来的文件会长得不一样。
 func DefaultRaw() map[string]any {
 	raw := make(map[string]any, len(settings))
 	for _, s := range settings {
@@ -140,9 +143,10 @@ func DefaultRaw() map[string]any {
 
 // normalizeKeys 把 map 的键统一小写，并拒绝大小写变体冲突。
 //
-// 小写是必需的：viper 读文件时会把键**就地小写**（insensitiviseMap），而本文件的
-// 写路径不会。两边不一致的话，文件里已有的 {"Language": ...} 会在一次写入后变成
-// Language + language 两份，viper 用随机迭代序合并 → 每次运行选到的语言都可能不同。
+// 小写是必需的：配置键按约定一律 snake_case 小写。若不归一，文件里已有的
+// {"Language": ...} 会在写入后变成 Language + language 两份，而"哪一份胜出"取决于
+// map 的随机迭代顺序 → 每次运行读到的语言都可能不同。
+// 因此发现仅大小写不同的重复键时直接报错，而不是任选一个。
 func normalizeKeys(raw map[string]any) (map[string]any, error) {
 	out := make(map[string]any, len(raw))
 	for k, v := range raw {

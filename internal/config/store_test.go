@@ -101,7 +101,7 @@ func TestReadRawAtPreservesLargeNumbers(t *testing.T) {
 }
 
 // TestReadRawAtRejectsCaseVariantKeys 断言仅大小写不同的重复键被拒绝而不是静默合并。
-// 放着不管的话，viper 读时会用随机迭代序挑选，导致每次运行结果不同。
+// 放着不管的话，哪一份值胜出取决于 map 的随机迭代顺序，每次运行结果可能不同。
 func TestReadRawAtRejectsCaseVariantKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
 	writeFile(t, path, `{"Language": "en", "language": "zh-CN"}`)
@@ -250,31 +250,27 @@ func TestResetAllAtWritesEmptyArrays(t *testing.T) {
 	}
 }
 
-// TestSaveConfigKeepsUnknownKeysAndWritesKnownOnes 断言整份保存既覆盖已知键、又保留未知键。
-func TestSaveConfigKeepsUnknownKeysAndWritesKnownOnes(t *testing.T) {
+// TestSetKeyWritesEmptySliceAsArray 断言把路径列表清空后写回，落盘的是 [] 而不是 null。
+// 覆盖 ggt repo remove 掉最后一个仓库后的形态：文件里必须是空数组，否则下次读回来是
+// nil，"已配置 0 个仓库"和"这个字段从未设置过"在文件层面就分不清了。
+// （写入保留未知键的行为由 TestWriteRawAtPreservesUnknownKeys 覆盖，此处不重复。）
+func TestSetKeyWritesEmptySliceAsArray(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
-	writeFile(t, path, `{"my_custom_key": "keep me"}`)
+	writeFile(t, path, `{"repo_paths": ["/tmp/x"]}`)
 
-	cfg := defaultConfig()
-	cfg.Concurrency = "CPUFull"
-	cfg.RepoPaths = []string{"/tmp/x"}
-	if err := SaveConfigAt(path, cfg); err != nil {
-		t.Fatalf("保存失败: %v", err)
+	if err := SetKeyAt(path, "repo_paths", []string{}); err != nil {
+		t.Fatalf("写入失败: %v", err)
 	}
 
-	raw, err := ReadRawAt(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("读取失败: %v", err)
+		t.Fatal(err)
 	}
-	if raw["my_custom_key"] != "keep me" {
-		t.Errorf("未知键被丢掉了: %v", raw)
+	if strings.Contains(string(data), "null") {
+		t.Errorf("空列表不应写成 null:\n%s", data)
 	}
-	if raw["concurrency"] != "CPUFull" {
-		t.Errorf("concurrency = %v", raw["concurrency"])
-	}
-	// nil 切片必须写成 []，否则 386 等平台读回来是空切片、语义上等价但文件不好看
-	if _, ok := raw["parent_paths"].([]any); !ok {
-		t.Errorf("parent_paths 应为数组，实得 %T", raw["parent_paths"])
+	if !strings.Contains(string(data), `"repo_paths": []`) {
+		t.Errorf("repo_paths 应为 []:\n%s", data)
 	}
 }
 

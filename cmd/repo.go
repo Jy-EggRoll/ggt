@@ -1,3 +1,11 @@
+// repo.go 实现 "ggt repo" 及其子命令，管理"仓库路径"相关的两个配置项
+// （repo_paths 与 parent_paths）。
+//
+// 落盘一律走 config.SetKey，只写命令真正改动的那一个键，而不是"把整份 Config 写回
+// 文件"：后者需要一份 Config→键值的转换器，等于把键名清单在 tag、settings 之外再抄
+// 一遍，加了字段却漏改转换器时该字段会永远写不进文件且无人报错。
+// 代价是 ggt repo add 之后配置文件里只会出现 repo_paths / parent_paths 两个键——
+// 这正是期望的形态：默认值不该落盘，配置文件只记录用户真正设置过的东西。
 package cmd
 
 import (
@@ -78,7 +86,7 @@ func newRepoAddCmd() *cobra.Command {
 			}
 
 			cfg.RepoPaths = append(cfg.RepoPaths, absPath)
-			if err := config.SaveConfig(cfg); err != nil {
+			if err := config.SetKey("repo_paths", cfg.RepoPaths); err != nil {
 				ErrorMsg(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
@@ -120,7 +128,7 @@ func newRepoRemoveCmd() *cobra.Command {
 			}
 
 			cfg.RepoPaths = newPaths
-			if err := config.SaveConfig(cfg); err != nil {
+			if err := config.SetKey("repo_paths", cfg.RepoPaths); err != nil {
 				ErrorMsg(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}
@@ -160,7 +168,7 @@ func newRepoAddParentCmd() *cobra.Command {
 			}
 
 			cfg.ParentPaths = append(cfg.ParentPaths, absPath)
-			if err := config.SaveConfig(cfg); err != nil {
+			if err := config.SetKey("parent_paths", cfg.ParentPaths); err != nil {
 				ErrorMsg(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 				return
 			}

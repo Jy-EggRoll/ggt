@@ -25,7 +25,6 @@ import (
 	"ggt/pkg/l10n"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/pterm/pterm"
-	"github.com/spf13/viper"
 )
 
 // DefaultConcurrency 是并发数的默认语义值：取 CPU 逻辑核数的一半。
@@ -77,8 +76,9 @@ func GetDefaultConfigPath() string {
 //     而 LoadConfig 依赖的 GetDefaultConfigPath 在主目录不可用时会直接退出进程
 //   - 只取一个字段，避免为纯展示路径做一次全量解码与默认值补全
 //
-// 这里刻意只做裸 JSON 解析而不走 viper：viper 是包级全局单例，用它会往全局状态里
-// 写入本条配置，且 viper.Set 产生的 override 不会在下次 ReadInConfig 时清除。
+// 这里刻意只做裸 JSON 解析，不引入 viper 这类包级全局单例：语言必须能在 --help
+// 路径上被读取，任何全局状态污染都会让"本次运行读到哪个语言"变得不可预测
+// （本包已整体不使用 viper，原因详见 LoadConfigAt 的注释）。
 //
 // 配置文件不存在、不可读或格式非法时一律返回 error，由调用方回退到默认语言。
 func LoadLanguage() (string, error) {
@@ -99,109 +99,123 @@ func LoadLanguage() (string, error) {
 	return strings.TrimSpace(probe.Language), nil
 }
 
-// LoadConfig 从默认路径加载配置。
-// 如果配置文件不存在，返回含默认并发数的空配置（不报错）。
+// LoadConfig 从默认路径加载配置，是 LoadConfigAt 的便捷封装。
 func LoadConfig() (*Config, error) {
-	viper.SetConfigType("json")
-	viper.SetConfigFile(GetDefaultConfigPath())
+	return LoadConfigAt(GetDefaultConfigPath())
+}
 
-	if err := viper.ReadInConfig(); err != nil {
-		if os.IsNotExist(err) {
-			return defaultConfig(), nil
-		}
+// LoadConfigAt 从指定路径加载配置。核心逻辑一律接受显式路径，测试才能用临时目录
+// 而不碰真实 HOME（与 store.go 的 At 系列保持同一约定）。
+//
+// 实现刻意不走 viper，原因有三：
+//   - viper 是包级全局单例，SetConfigFile/Unmarshal 会在多次调用之间互相污染，
+//     且无法指向临时路径，导致这条最常用的读路径根本没法测
+//   - 它带进来的那套默认值（viper.SetDefault）会成为 settings 之外的第二份真相
+//   - 容错能力实际来自 mapstructure 的 WeaklyTypedInput，直接用 mapstructure 即可，
+//     不必为此引入一整层配置框架
+//
+// 取值规则是"以 settings 登记的默认值打底，再用文件里的键覆盖"，于是默认值只有
+// settings 一处真相，与 config show / config get 的取值完全同源。
+//
+// 配置文件不存在时返回全默认配置（不报错，首次运行属正常状态）；
+// 存在但 JSON 语法非法时返回 error，由调用方决定如何呈现。
+func LoadConfigAt(path string) (*Config, error) {
+	raw, err := ReadRawAt(path)
+	if err != nil {
 		return nil, err
 	}
 
-	var config Config
+	// 默认值打底：文件里缺哪个键，哪个键就保持 settings 里的默认值
+	merged := DefaultRaw()
+	for k, v := range raw {
+		merged[k] = v
+	}
+
+	var cfg Config
 	// WeaklyTypedInput 允许已有的数字型 concurrency 配置在反序列化为 string 字段时
-	// 自动转为字符串，避免历史配置文件（旧版存 int）读取报错。
-	// 官方信源：https://github.com/spf13/viper 与 https://github.com/go-viper/mapstructure/v2
-	if err := viper.Unmarshal(&config, func(dc *mapstructure.DecoderConfig) {
-		dc.WeaklyTypedInput = true
-	}); err != nil {
+	// 自动转为字符串，也容忍 "true" 这类字符串形态的布尔值，
+	// 避免历史配置文件（旧版把并发数存成 int）读取报错。
+	// 官方信源：https://github.com/go-viper/mapstructure/v2
+	dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		Result:           &cfg,
+		WeaklyTypedInput: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := dec.Decode(merged); err != nil {
 		return nil, err
 	}
 
-	applyConfigDefaults(&config)
+	// 文件里写了非法值（如 size_bucket_low_mb: 0、空串的语言）时的兜底。
+	// 这些值由 ggt config validate 作为问题报出，本函数只保证"报出之前程序仍然可用"
+	applyConfigDefaults(&cfg)
 
-	return &config, nil
+	return &cfg, nil
 }
 
 // defaultConfig 返回所有字段填好默认值的配置。
-// 配置文件不存在时直接返回此结构，避免与 applyConfigDefaults 出现两处默认值逻辑。
+// 与 LoadConfigAt 共用 applyConfigDefaults，默认值同源，不存在第二份默认值逻辑。
 func defaultConfig() *Config {
 	cfg := &Config{}
 	applyConfigDefaults(cfg)
 	return cfg
 }
 
-// applyConfigDefaults 对未显式设置的字段补默认值：
-//   - concurrency 为空时取 DefaultConcurrency（"CPUHalf"，而非具体数字）
-//   - size_bucket_low_mb / size_bucket_high_mb <= 0 时取 500 / 800
-//   - size_unit 为空时取 "decimal"
-//   - language 为空时取 "en"（英文是默认语言，中文为兼容层）
-//   - ignore_submodules 为 bool，零值 false 即"默认包含子模块"，无需补默认值
+// applyConfigDefaults 对"未设置或非法"的字段补上 settings 里登记的默认值：
+//   - concurrency 为空 → "CPUHalf"（语义串，而非具体数字）
+//   - size_bucket_low_mb / size_bucket_high_mb <= 0 → 500 / 800
+//   - size_unit 为空 → "decimal"
+//   - language 为空 → locales.Default（"en"）
+//   - repo_paths / parent_paths 为 nil → 空切片，使序列化结果是 [] 而不是 null
+//   - ignore_submodules 是 bool，零值 false 即"默认包含子模块"，无需补值
+//
+// 取值一律向 settings 注册表要，本函数不再出现任何默认值字面量：原先这里把
+// 500/800/"decimal"/"en" 又抄了一遍，与 settings[].Default 分叉时没有任何测试能拦住。
+// 新增配置项时在 settings 里加一条，这里按需补上对应分支即可。
 func applyConfigDefaults(cfg *Config) {
 	if strings.TrimSpace(cfg.Concurrency) == "" {
-		cfg.Concurrency = DefaultConcurrency
+		cfg.Concurrency = defaultStringOf("concurrency")
 	}
 	if cfg.SizeBucketLowMB <= 0 {
-		cfg.SizeBucketLowMB = 500
+		cfg.SizeBucketLowMB = defaultIntOf("size_bucket_low_mb")
 	}
 	if cfg.SizeBucketHighMB <= 0 {
-		cfg.SizeBucketHighMB = 800
+		cfg.SizeBucketHighMB = defaultIntOf("size_bucket_high_mb")
 	}
 	if cfg.SizeUnit == "" {
-		cfg.SizeUnit = "decimal"
+		cfg.SizeUnit = defaultStringOf("size_unit")
 	}
 	if strings.TrimSpace(cfg.Language) == "" {
-		cfg.Language = "en"
+		cfg.Language = defaultStringOf("language")
+	}
+	if cfg.RepoPaths == nil {
+		cfg.RepoPaths = []string{}
+	}
+	if cfg.ParentPaths == nil {
+		cfg.ParentPaths = []string{}
 	}
 }
 
-// SaveConfig 将整份配置写入默认路径的 JSON 文件。
-//
-// 走的是 store.go 的原始 map 写入路径而不是 viper.WriteConfig：后者依赖 viper.Set
-// 往包级全局单例里写永不失效的 override（详见 LoadLanguage 的注释）。两者都保留文件
-// 中已有的未知键，这点行为不变。
-func SaveConfig(cfg *Config) error {
-	return SaveConfigAt(GetDefaultConfigPath(), cfg)
+// defaultStringOf 返回 settings 里登记的字符串型默认值，
+// 键不存在或类型不符时返回零值——settings 与 Config 字段的对齐由
+// TestSettingsMatchConfigFields 守住，这里不重复校验。
+func defaultStringOf(key string) string {
+	v, _ := DefaultRaw()[key].(string)
+	return v
 }
 
-// SaveConfigAt 是 SaveConfig 的显式路径版本，供测试使用（测试不该碰真实用户目录）。
-func SaveConfigAt(path string, cfg *Config) error {
-	raw, err := ReadRawAt(path)
-	if err != nil {
-		return err
-	}
-	// 只覆盖已知的 8 个键，文件里不认识的键原样保留
-	for k, v := range cfg.toRaw() {
-		raw[k] = v
-	}
-	return WriteRawAt(path, raw)
+// defaultIntOf 返回 settings 里登记的整数型默认值，语义同 defaultStringOf。
+func defaultIntOf(key string) int {
+	v, _ := DefaultRaw()[key].(int)
+	return v
 }
 
-// toRaw 把配置转成文件里的键值形态。
-// 切片显式转成空切片，避免写出 "repo_paths": null（nil 切片的默认序列化结果）。
-func (c *Config) toRaw() map[string]any {
-	return map[string]any{
-		"parent_paths":        nonNilPaths(c.ParentPaths),
-		"repo_paths":          nonNilPaths(c.RepoPaths),
-		"concurrency":         c.Concurrency,
-		"ignore_submodules":   c.IgnoreSubmodules,
-		"size_bucket_low_mb":  c.SizeBucketLowMB,
-		"size_bucket_high_mb": c.SizeBucketHighMB,
-		"size_unit":           c.SizeUnit,
-		"language":            c.Language,
-	}
-}
-
-func nonNilPaths(p []string) []string {
-	if p == nil {
-		return []string{}
-	}
-	return p
-}
+// 关于"把整份 Config 写回文件"的能力：本项目刻意不提供。
+// 键名清单在 json/mapstructure tag、settings[].Key 之外本就已经足够多，再让一个
+// Config→raw 的转换器抄一遍键名，就会出现"加了字段却永远写不进文件"且无人报错的死角。
+// 需要落盘时一律走 store.go 的单键写入（SetKeyAt / UnsetKeyAt），只动调用方真正
+// 关心的那个键，文件里其他内容（含用户手写的未知键）原样保留。
 
 // resolveConcurrency 把配置里读到的并发语义串解析为可直接用于 worker 的实际并发数。
 // 支持三种 CPU 相对语义（官方信源：https://pkg.go.dev/runtime#NumCPU）：
