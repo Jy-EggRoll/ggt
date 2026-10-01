@@ -1,6 +1,6 @@
 # ggt
 
-ggt（Git 仓库管理工具）是一个用于集中管理多个 Git 仓库的命令行工具。它基于 [Cobra](https://github.com/spf13/cobra) + [Viper](https://github.com/spf13/viper) + [pterm](https://github.com/pterm/pterm) 构建，支持对一批仓库并发执行状态检查、大小统计、同步、批量提交与远程协议切换。
+ggt（Git 仓库管理工具）是一个用于集中管理多个 Git 仓库的命令行工具。它基于 [Cobra](https://github.com/spf13/cobra) + [pterm](https://github.com/pterm/pterm) 构建（配置解码用 [mapstructure](https://github.com/go-viper/mapstructure)，不引入 Viper 的包级全局状态），支持对一批仓库并发执行状态检查、大小统计、同步、批量提交与远程协议切换。
 
 ## 特性
 
@@ -10,15 +10,19 @@ ggt（Git 仓库管理工具）是一个用于集中管理多个 Git 仓库的�
 - 远程协议（HTTPS / SSH）一键切换，支持 `--all` 批量模式与 `toggle` 取反
 - 统一的彩色输出样式，信息层次清晰
 - 内置中英双语，默认英文，可通过 `--lang` 或配置项 `language` 切换
+- 内置自升级（`ggt upgrade`）：升级前校验发布产物的 SHA-256 摘要，并在下一次运行时自动清理替换残留
+- 诊断日志分级：`-v` 输出 info（含各阶段耗时）、`-vv` 及以上输出 debug，也可用配置项 `log_level` 设定默认级别
 
 ## 安装
 
 ### 从源码构建
 
-需要本地已安装 Go 1.21 及以上版本：
+需要本地已安装 Go 1.26 或更高版本（与 `go.mod` 中的要求一致）。
+
+> **注意**：下述 `go install` 依赖已发布 tag 的版本，而 ggt 目前尚未发布任何版本，因此暂时只能走源码构建。
 
 ```bash
-go install github.com/Jy-EggRoll/ggt@latest
+go install github.com/jy-eggroll/ggt@latest
 ```
 
 或克隆仓库后本地构建：
@@ -35,7 +39,7 @@ go build -o ggt .
 task build-all
 ```
 
-产物位于 `dist/` 下按平台命名的目录中。
+产物位于 `build/` 下，按 `ggt-<系统>-<架构>[.exe]` 命名。
 
 ### 验证安装
 
@@ -101,6 +105,7 @@ ggt config validate            # 体检配置文件
 | `size_bucket_high_mb` | int | `800` | `size` 命令分桶的上界阈值（MB） |
 | `size_unit` | string | `decimal` | `size` 命令的 MB 换算口径：`decimal`（1 MB = 1,000,000 字节）或 `binary`（1 MB = 1024×1024 字节，即 MiB） |
 | `language` | string | `en` | 输出语言，可选 `en` 或 `zh-CN`。命令行 `--lang` / `-l` 优先于此项 |
+| `log_level` | string | `warn` | 诊断日志级别，可选 `debug`/`info`/`warn`/`error`。命令行 `-v`/`-vv` 优先于此项；取值非法时不中止命令，改为回退默认级别并提示 |
 
 示例配置：
 
@@ -113,7 +118,8 @@ ggt config validate            # 体检配置文件
   "size_bucket_low_mb": 500,
   "size_bucket_high_mb": 800,
   "size_unit": "decimal",
-  "language": "en"
+  "language": "en",
+  "log_level": "warn"
 }
 ```
 
@@ -230,6 +236,22 @@ ggt size --low 200 --high 600 --unit binary
 
 `ggt owned` 调用 Windows `takeown` 命令批量获取所有仓库目录及其 `.git` 目录的所有权。非 Windows 系统会直接提示并跳过。
 
+### upgrade —— 自升级
+
+`ggt upgrade`（别名 `update`、`up`）从 GitHub Release 检查并升级到最新版本。
+
+| 命令 | 说明 |
+| --- | --- |
+| `ggt upgrade` | 检查并升级到正式版通道的最新版本 |
+| `ggt upgrade --check` | 只检查版本，不下载也不替换 |
+| `ggt upgrade --dev` | 改走开发版通道（`x.y.z.dev.n`） |
+| `ggt upgrade --force` | 即使版本相同也重新安装 |
+| `ggt upgrade --yes` | 跳过确认，非交互环境（CI、管道）下必须加 |
+
+升级会先校验发布产物的 SHA-256 摘要，内容与 Release 记录不符时拒绝安装。替换完成后需重启 ggt 才会切换到新版本。
+
+匿名访问 GitHub API 有较低的速率限制；设置环境变量 `GITHUB_TOKEN` 可提高配额（未设置时升级命令会提示一次）。
+
 ### version / config
 
 - `ggt version`：打印版本信息
@@ -246,6 +268,6 @@ ggt 将子模块统一抽象为与普通仓库平级的条目，任何功能都�
 ## 参考信源
 
 - [Cobra](https://github.com/spf13/cobra)
-- [Viper](https://github.com/spf13/viper)
+- [mapstructure](https://github.com/go-viper/mapstructure)
 - [pterm](https://github.com/pterm/pterm)
 - [Git submodule 文档](https://git-scm.com/docs/git-submodule)
