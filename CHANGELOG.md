@@ -19,3 +19,4 @@
 
 - ✨ 模块路径由 `ggt` 改为 `github.com/jy-eggroll/ggt`：此前 README 里的 `go install github.com/Jy-EggRoll/ggt@latest` 与 go.mod 的模块名对不上，实际装不上，现已真正可用
 - 抽公共代码到共享库，与 flk 共用同一份实现：国际化（`l10n`）与 JSON 序列化（`jsonfile`）改由 `github.com/jy-eggroll/eggokit` 提供。ggt 自己的文案仍按原来的方式维护，库自带的文案（升级、日志）在运行期自动叠加，无需抄进本项目
+- 🐛 修掉发布构建丢弃标签版本号的问题：构建脚本里用 `date` 定义的 `VERSION` 会盖住同名环境变量，CI 传进来的标签版本因此被无声丢弃，发布出去的二进制一律自报一个时间戳版本。`ggt upgrade` 靠版本号与上游 Release 比较大小，时间戳无法参与比较，自升级会因此失效——现在 `VERSION` 改为「先取环境变量、取不到才回退时间戳」，CI 传什么版本，二进制就报什么版本
