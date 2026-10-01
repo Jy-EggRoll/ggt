@@ -25,7 +25,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"ggt/internal/config"
+	"github.com/jy-eggroll/ggt/internal/config"
 )
 
 // withConfig 在本用例期间把包级全局 cfg 换成指定配置，用例结束时还原原值

@@ -18,9 +18,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"ggt/internal/locales"
-	"ggt/pkg/jsonfile"
-	"ggt/pkg/l10n"
+	"github.com/jy-eggroll/eggokit/jsonfile"
+	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/ggt/internal/locales"
 )
 
 // ReadRawAt 读取配置文件的原始键值。
@@ -78,7 +78,7 @@ func WriteRawAt(path string, raw map[string]any) error {
 		return err
 	}
 
-	// 统一的规范形态（字典序、2 空格缩进、不转义 HTML）由 pkg/jsonfile 提供，
+	// 统一的规范形态（字典序、2 空格缩进、不转义 HTML）由 github.com/jy-eggroll/eggokit/jsonfile 提供，
 	// 与语言文件写入共用同一份策略
 	buf, err := jsonfile.Marshal(normalized)
 	if err != nil {

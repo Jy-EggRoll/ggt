@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ggt/cmd"
+	"github.com/jy-eggroll/ggt/cmd"
 )
 
 func main() {

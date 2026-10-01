@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	"ggt/pkg/l10n"
+	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/pterm/pterm"
 )
 
@@ -138,6 +138,26 @@ func RepoLine(name, note string, isSubmodule bool) {
 // 调用处可明确这是"透传"而非本工具自身样式，避免与统一封装混淆。
 func PrintRaw(s string) {
 	fmt.Print(s)
+}
+
+// ProgressLine 以「回车 + 清到行尾」就地重绘一行进度文本，供下载等长任务持续展示进度使用。
+//
+// 收口在本文件而不是调用点：就地重绘依赖 ANSI 控制序列，属于输出层的渲染细节，
+// 与其它用户可见输出同源，调用点只负责决定这一帧显示什么内容。
+//
+// 为什么必须带清行序列 \x1b[K：进度帧的长度会随百分比、速率、剩余时间的字符数变化，
+// 只回车覆盖会把上一帧多出来的尾巴留在行尾，显示成两帧叠加的伪内容（例如"剩余 3s2s"）。
+//
+// 潜在影响点：不支持 ANSI 的终端会把 \x1b[K 当普通字符显示。项目已依赖 pterm，
+// 它本身就在使用 ANSI 序列，因此这里不额外做终端能力探测
+func ProgressLine(line string) {
+	fmt.Print("\r\x1b[K" + line)
+}
+
+// ProgressLineEnd 结束一次就地重绘：输出一个换行，使后续输出从新行开始。
+// 与 ProgressLine 配套使用，只在确实绘制过进度时才需要调用
+func ProgressLineEnd() {
+	fmt.Println()
 }
 
 // WarnStr/InfoStr/ErrorStr/SuccessStr 返回对应语义的着色字符串，

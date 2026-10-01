@@ -12,9 +12,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"ggt/internal/config"
-	"ggt/internal/git"
-	"ggt/pkg/l10n"
+	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/ggt/internal/config"
+	"github.com/jy-eggroll/ggt/internal/git"
 	"github.com/spf13/cobra"
 )
 

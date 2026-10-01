@@ -4,8 +4,8 @@ import (
 	"testing"
 	"unicode"
 
-	"ggt/internal/locales"
-	"ggt/pkg/l10n"
+	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/ggt/internal/locales"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )

@@ -12,7 +12,7 @@ import (
 	"os"
 	"strings"
 
-	"ggt/internal/config"
+	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/spf13/pflag"
 )
 

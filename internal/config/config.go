@@ -12,6 +12,8 @@
 //   - size_unit: size 命令分桶时 MB 的换算口径，"decimal"(1 MB = 1,000,000 字节)
 //     或 "binary"(1 MB = 1024*1024 字节，即 MiB)，默认 "decimal"
 //   - language: 输出语言（如 "en"、"zh-CN"），默认 "en"；命令行 --lang 优先级更高
+//   - log_level: 诊断日志级别（debug/info/warn/error），默认 "warn"；
+//     命令行 -v/-vv 优先级更高。它只影响诊断日志，不影响面向用户的正常输出
 package config
 
 import (
@@ -22,8 +24,8 @@ import (
 	"strconv"
 	"strings"
 
-	"ggt/pkg/l10n"
 	"github.com/go-viper/mapstructure/v2"
+	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/pterm/pterm"
 )
 
@@ -42,6 +44,7 @@ type Config struct {
 	SizeBucketHighMB int      `mapstructure:"size_bucket_high_mb" json:"size_bucket_high_mb"`
 	SizeUnit         string   `mapstructure:"size_unit" json:"size_unit"`
 	Language         string   `mapstructure:"language" json:"language"`
+	LogLevel         string   `mapstructure:"log_level" json:"log_level"`
 }
 
 // getConfigPath 计算配置文件的默认路径，失败时返回 error 而不终止进程。
@@ -167,6 +170,8 @@ func defaultConfig() *Config {
 //   - size_bucket_low_mb / size_bucket_high_mb <= 0 → 500 / 800
 //   - size_unit 为空 → "decimal"
 //   - language 为空 → locales.Default（"en"）
+//   - log_level 为空 → "warn"（注意**非法取值刻意不在这里改写**：它要留给命令层去告警，
+//     在这里静默替换掉，用户就再也看不到"你写的级别我没认"这条提示了）
 //   - repo_paths / parent_paths 为 nil → 空切片，使序列化结果是 [] 而不是 null
 //   - ignore_submodules 是 bool，零值 false 即"默认包含子模块"，无需补值
 //
@@ -188,6 +193,9 @@ func applyConfigDefaults(cfg *Config) {
 	}
 	if strings.TrimSpace(cfg.Language) == "" {
 		cfg.Language = defaultStringOf("language")
+	}
+	if strings.TrimSpace(cfg.LogLevel) == "" {
+		cfg.LogLevel = defaultStringOf("log_level")
 	}
 	if cfg.RepoPaths == nil {
 		cfg.RepoPaths = []string{}

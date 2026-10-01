@@ -13,8 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	"ggt/internal/locales"
-	"ggt/pkg/l10n"
+	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/eggokit/logger"
+	"github.com/jy-eggroll/ggt/internal/locales"
 )
 
 // ErrInvalidValue 表示用户输入的值不合法。
@@ -105,6 +106,13 @@ var settings = []Setting{
 		Default:  locales.Default,
 		Expected: "a supported language tag (see ggt --help for the current list)",
 		Parse:    parseLanguage,
+	},
+	{
+		Key:      "log_level",
+		Kind:     KindString,
+		Default:  logger.DefaultLevelText(),
+		Expected: "debug, info, warn, or error",
+		Parse:    parseLogLevel,
 	},
 	{
 		Key:       "repo_paths",
@@ -202,4 +210,20 @@ func parseLanguage(s string) (any, error) {
 		return nil, ErrInvalidValue
 	}
 	return l10n.Normalize(v, locales.Supported(), locales.Default), nil
+}
+
+// parseLogLevel 解析诊断日志级别。
+//
+// 合法取值的唯一真相刻意放在 eggokit/logger：这里复用它同时供"校验"与"运行期解析"用。
+// 若在注册表里另立一套判定，两处迟早漂移成「set 说能写进去、运行期却回退默认级别」，
+// 而那种矛盾没有任何测试能提前拦住。
+//
+// 写入时归一化为小写规范形态：logger 的解析大小写不敏感，允许用户写 WARN，
+// 但文件里只该出现一种形态，否则同义异形会在 diff 里来回跳
+func parseLogLevel(s string) (any, error) {
+	level, err := logger.LogLevelFromString(s)
+	if err != nil {
+		return nil, ErrInvalidValue
+	}
+	return strings.ToLower(level.String()), nil
 }

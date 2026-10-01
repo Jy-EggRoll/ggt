@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"os"
 
-	"ggt/internal/config"
-	"ggt/pkg/l10n"
+	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"

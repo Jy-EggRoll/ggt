@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"ggt/internal/git"
-	"ggt/internal/worker"
-	"ggt/pkg/l10n"
+	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/ggt/internal/git"
+	"github.com/jy-eggroll/ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

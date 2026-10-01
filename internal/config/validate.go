@@ -14,8 +14,8 @@ import (
 	"sort"
 	"strconv"
 
-	"ggt/internal/git"
-	"ggt/pkg/l10n"
+	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/ggt/internal/git"
 )
 
 // Level 是体检问题的严重级别。
