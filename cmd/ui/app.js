@@ -78,6 +78,18 @@ const POLL_MS = 5000;
 // 卡片之间的纵向间距。与 CSS 无关：行的位置完全由本文件计算
 const GAP = 16;
 
+// 滚轮平滑的参数。本轮动画的固定时长与曲线照抄宿主已有的
+// AvaloniaDesktopKit/Behaviors/SmoothWheelScroll.cs（它又刻意与 Slint 1.18 对齐），
+// 详细理由见下方 smoothScrollBy 处注释
+const WHEEL_MS = 180;
+const NOMINAL_FRAME_MS = 1000 / 60;
+// DOM_DELTA_LINE 时一行折算的像素。与 Slint 的 line→60 逻辑像素对齐
+// （i-slint-backend-winit 的 LineDelta(lx, ly) => (lx * 60., ly * 60.)）
+const LINE_PX = 60;
+// 判定「位置被别人改了」的像素阈值：拖滚动条、按方向键、触控板横扫都会改它，
+// 阈值用来吸收浏览器取整的误差
+const EXTERNAL_SCROLL_TOLERANCE = 3;
+
 const board = document.getElementById('board');
 const emptyEl = document.getElementById('empty');
 const statusEl = document.getElementById('status');
@@ -414,8 +426,16 @@ function layout(els, specs) {
   const rowH = cssVar('--row-h', 22);
   const contH = cssVar('--cont-h', 22);
   const colH = window.innerHeight - 32; // 32 = 页面上下各 16px 内边距
-  // 标题 + 三行内容：低于这个高度就不开始一张新卡片
-  const minHeadRoom = headH + rowH * 3;
+
+  // tailRows[i] 是第 i 条标题行之后、属于同一张卡片的内容行数，用来判断
+  // 「列尾还值不值得起一张新卡片」。
+  // 原实现对所有卡片一律要求「标题 + 三行内容」（88px），于是「干净仓库」这种本来
+  // 只有一行标题的卡片也被要求 88px：列尾明明还放得下它（实测 92px），却提前换列，
+  // 左列因此只填到 956/1048px。按卡片自己的行数算之后，没有内容行的卡片只需一行的高度
+  const tailRows = new Array(specs.length).fill(0);
+  for (let i = specs.length - 1, n = 0; i >= 0; i--) {
+    if (specs[i].kind === 'head') { tailRows[i] = n; n = 0; } else n++;
+  }
 
   // 续段标识每次布局重建。它们的数量等于「被截断的卡片数」，通常个位数，
   // 重建比维护增删更不容易出错
@@ -434,7 +454,9 @@ function layout(els, specs) {
     if (s.repo.path !== prevRepo && used > 0) used += GAP;
     prevRepo = s.repo.path;
 
-    if (s.kind === 'head' && used > 0 && colH - used < minHeadRoom) {
+    // 列尾放不下「标题 + 这张卡片最多三行内容」就整卡顺延。上限取三行是为了避免
+    // 标题孤零零留在列尾，但下限必须按卡片自己的行数来，否则单行卡片会被白白推走
+    if (s.kind === 'head' && used > 0 && colH - used < headH + Math.min(tailRows[i], 3) * rowH) {
       col++;
       used = 0;
     }
@@ -529,19 +551,81 @@ prefersLight.addEventListener('change', () => {
   if (lastRepos.length > 0) render(lastRepos);
 });
 
-// 纵向滚轮转横向滚动。
-// 这是「禁用纵向滚动」的必要配套：普通鼠标滚轮只产生 deltaY，而页面只能横向滚动，
-// 不做转换的话滚轮会完全没有反应，用户会以为页面卡死。触控板的横向手势本就带 deltaX，直接放行
+// ——— 滚轮转横向滚动 ———
+
+// 为什么必须自己把 deltaY 接到 scrollLeft 上：普通鼠标滚轮只产生 deltaY，横向容器不会
+// 因此滚动（浏览器只在触控板横扫 / Shift+滚轮 时给出 deltaX），而纵向滚动已被禁用，
+// 不做转换的话滚轮会毫无反应，用户会以为页面卡死。
 //
-// 不去声明 behavior: 'smooth'，而是让它用 CSS 上声明的值（scroll-behavior: smooth），
-// 这样缓动只有一处定义，也自然被「减少动态效果」的媒体查询覆盖
+// 为什么不用 CSS 的 scroll-behavior: smooth：它由 UA 按滚动距离决定时长（明显长于 180ms），
+// 而每拨一格都会重新发起一次滚动，连续拨动时表现为「上一段动画没走完就被生硬截断」。
+//
+// 曲线照抄宿主自己的 AvaloniaDesktopKit/Behaviors/SmoothWheelScroll.cs，它又刻意与
+// Slint 1.18 的 Flickable 对齐：固定 180ms 等减速——以恒定减速度走完全程、终点速度恰好
+// 降到 0，归一化位置 p(u) = 2u - u²（u 为已过时长占比），起手最快、结尾干脆停住。
+// 每个滚轮事件都从「当前位置」重起一段曲线（Slint 本身就是这个行为，不是缺陷），
+// 并先按一个标称帧推进一次，保证即使下一帧还没到，拨动当帧也立刻有反馈
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let scrollAnim = null;
+let scrollRaf = 0;
+
+function smoothScrollBy(px) {
+  const max = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+  // 目标基于「当前位置」累加：连续拨动因此不会丢失位移，也不会跳回去
+  const target = Math.min(max, Math.max(0, window.scrollX + px));
+  if (reduceMotion.matches) {
+    scrollAnim = null;
+    window.scrollTo(target, 0);
+    return;
+  }
+  scrollAnim = {
+    start: window.scrollX,
+    target,
+    elapsed: NOMINAL_FRAME_MS,
+    last: performance.now(),
+    // 记录我们刚写进去的位置，用来分辨下一帧读到的位置是不是自己造成的
+    written: Math.round(window.scrollX),
+  };
+  // 已经有一帧在排队就不重复排队：它会在下一帧读到刚换成的新目标
+  if (!scrollRaf) scrollRaf = requestAnimationFrame(stepScroll);
+}
+
+// 轨迹只由「已过时长」决定，因此与帧率无关：掉帧只会让采样变粗，不会改变曲线形状
+function stepScroll(now) {
+  scrollRaf = 0;
+  const a = scrollAnim;
+  if (!a) return;
+  // 位置被别人改了（拖滚动条、方向键、触控板横扫）就放弃本轮动画、改为跟随真实位置，
+  // 免得两边互相打架。事件可能是异步送达的，所以只能按位置差判断来源、不能用标志位
+  // ——参照实现踩过这个坑：标志位会把自己的每帧写入当成外部滚动，动画第一帧就被掐断
+  if (Math.abs(window.scrollX - a.written) > EXTERNAL_SCROLL_TOLERANCE) {
+    scrollAnim = null;
+    return;
+  }
+  a.elapsed += now - a.last;
+  a.last = now;
+  const u = Math.min(1, a.elapsed / WHEEL_MS);
+  const p = 2 * u - u * u;
+  const x = a.start + (a.target - a.start) * p;
+  a.written = Math.round(x);
+  window.scrollTo(x, 0);
+  if (u < 1) scrollRaf = requestAnimationFrame(stepScroll);
+  else scrollAnim = null;
+}
+
 window.addEventListener(
   'wheel',
   (e) => {
-    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-      window.scrollBy({ left: e.deltaY, behavior: 'auto' });
-      e.preventDefault();
-    }
+    // 横向手势（触控板横扫、Shift+滚轮）交给浏览器原生处理：那条路自带缓动，手感最好
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.deltaY === 0) return;
+    e.preventDefault();
+    // 距离直接用事件给的增量，不强行折算成「一格 60px」：浏览器给的是像素增量
+    // （鼠标一格约 100px，触控板是细粒度像素），照搬 60px 会把触控板的手感拉坏。
+    // 只有行/页两种模式需要折算，行模式按 Slint 的 line→60px 对齐
+    const px = e.deltaMode === 1 ? e.deltaY * LINE_PX
+      : e.deltaMode === 2 ? e.deltaY * window.innerHeight
+        : e.deltaY;
+    smoothScrollBy(px);
   },
   { passive: false },
 );

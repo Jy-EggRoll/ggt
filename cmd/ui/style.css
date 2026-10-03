@@ -97,14 +97,16 @@ html {
   overflow-x: auto;
   overflow-y: hidden;
   /*
-   * 平滑滚动放在 CSS 而不是 JS 里：scrollBy({behavior:'auto'}) 按规范就是「采用元素的计算值」，
-   * 因此这里声明一次即可让所有脚本滚动获得缓动，不必在滚轮回调里自己写缓动函数
-   * （自写缓动还要处理连续滚轮事件的目标重定向，复杂且更容易抖动）
+   * 这里刻意不声明 scroll-behavior: smooth，平滑改由 app.js 统一负责。
+   * 原因是实测出来的：CSS 的 smooth 由 UA 按滚动距离决定时长（明显长于 180ms），
+   * 而滚轮每拨一格都会重新发起一次 scrollBy，于是连续拨动时表现为
+   * 「上一段动画没走完就被新的一段生硬截断」——正是用户明确不接受的那种手感。
+   * app.js 用固定 180ms 的等减速曲线接管后，缓动只有一处定义，也不会与 CSS 叠加。
    *
-   * 这一项没有 VSCode 侧的依据：VSCode 的工作台列表是纵向滚动、没有等价行为，
-   * 是用户明确要求的观感改进
+   * 触控板横扫与 Shift+滚轮产生的 deltaX 不走那条路径，仍交给浏览器原生处理
+   * （原生那条路径自带缓动，手感最好）
    */
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 
 body {
@@ -168,7 +170,13 @@ body {
   height: var(--head-h);
   line-height: var(--head-h);
   border-top: 1px solid var(--card-border);
-  border-radius: 7px 7px 0 0;
+  /* 圆角写成四个角的逻辑属性，而不是 border-radius 简写。
+     原因：一张卡片的上圆角来自 .head、下圆角来自 .foot，两者优先级相同；
+     用简写时后写的规则会整条覆盖前者，于是「只有一行」的干净仓库卡片
+     （同一行同时是 head 与 foot）就会变成上面方、下面圆。
+     逻辑属性各管各的角，天然叠加，不再互相覆盖 */
+  border-start-start-radius: 7px;
+  border-start-end-radius: 7px;
   /* 仓库名在 VSCode 里是加粗的默认前景色（scm.css 的 .monaco-highlighted-label），
      这里不额外配色：颜色全部让给变更状态，仓库层级的区分交给字重 */
   font-weight: 700;
@@ -180,10 +188,12 @@ body {
 }
 
 /* 卡片的最后一行收口：圆角与下边框。跨列被切断的卡片，其上一段的末行没有这个类，
-   视觉上就自然表现为「还没结束，下接另一列」 */
+   视觉上就自然表现为「还没结束，下接另一列」。
+   圆角同样用逻辑属性写：只有一行时本行也是 .head，两组圆角必须能叠加（见 .row.head 处注释） */
 .row.foot {
   border-bottom: 1px solid var(--card-border);
-  border-radius: 0 0 7px 7px;
+  border-end-start-radius: 7px;
+  border-end-end-radius: 7px;
 }
 
 /* 仓库名与分支名都要能被截断：仓库名过长时不能把计数徽标挤出行外 */
@@ -357,8 +367,9 @@ body {
 }
 #status.error { color: var(--git-conflicting); }
 
-/* 尊重「减少动态效果」的系统设置：这类用户对位移动画敏感，动画会让界面难以使用 */
+/* 尊重「减少动态效果」的系统设置：这类用户对位移动画敏感，动画会让界面难以使用。
+   滚轮那条平滑在这里管不到（它已改由 app.js 驱动），app.js 会用同一个媒体查询
+   把动画时长降为 0，两处必须保持一致 */
 @media (prefers-reduced-motion: reduce) {
   .row, .cont { transition: none; }
-  html { scroll-behavior: auto; }
 }
