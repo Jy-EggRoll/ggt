@@ -45,6 +45,9 @@ type Config struct {
 	SizeUnit         string   `mapstructure:"size_unit" json:"size_unit"`
 	Language         string   `mapstructure:"language" json:"language"`
 	LogLevel         string   `mapstructure:"log_level" json:"log_level"`
+	// Theme 是网页看板选中的主题。空串表示跟随系统深浅（那是本节唯一的"有意义的零值"，
+	// 因此 applyConfigDefaults 不需要为它补默认值——补了也是空串）
+	Theme string `mapstructure:"theme" json:"theme"`
 }
 
 // getConfigPath 计算配置文件的默认路径，失败时返回 error 而不终止进程。

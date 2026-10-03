@@ -1,0 +1,42 @@
+{
+  "dark": {
+    "editor.background": "#1e1e1e",
+    "sideBar.background": "#252526",
+    "foreground": "#cccccc",
+    "descriptionForeground": "#ccccccb3",
+    "list.hoverBackground": "#2a2d2e",
+    "badge.background": "#4d4d4d",
+    "badge.foreground": "#ffffff",
+    "gitDecoration.addedResourceForeground": "#81b88b",
+    "gitDecoration.modifiedResourceForeground": "#e2c08d",
+    "gitDecoration.deletedResourceForeground": "#c74e39",
+    "gitDecoration.renamedResourceForeground": "#73c991",
+    "gitDecoration.untrackedResourceForeground": "#73c991",
+    "gitDecoration.ignoredResourceForeground": "#8c8c8c",
+    "gitDecoration.stageModifiedResourceForeground": "#e2c08d",
+    "gitDecoration.stageDeletedResourceForeground": "#c74e39",
+    "gitDecoration.conflictingResourceForeground": "#e4676b",
+    "diffEditor.insertedLineBackground": "#9bb95533",
+    "diffEditor.removedLineBackground": "#ff000033"
+  },
+  "light": {
+    "editor.background": "#ffffff",
+    "sideBar.background": "#f3f3f3",
+    "foreground": "#616161",
+    "descriptionForeground": "#717171",
+    "list.hoverBackground": "#f0f0f0",
+    "badge.background": "#c4c4c4",
+    "badge.foreground": "#333333",
+    "gitDecoration.addedResourceForeground": "#587c0c",
+    "gitDecoration.modifiedResourceForeground": "#895503",
+    "gitDecoration.deletedResourceForeground": "#ad0707",
+    "gitDecoration.renamedResourceForeground": "#007100",
+    "gitDecoration.untrackedResourceForeground": "#007100",
+    "gitDecoration.ignoredResourceForeground": "#8e8e90",
+    "gitDecoration.stageModifiedResourceForeground": "#895503",
+    "gitDecoration.stageDeletedResourceForeground": "#ad0707",
+    "gitDecoration.conflictingResourceForeground": "#ad0707",
+    "diffEditor.insertedLineBackground": "#9bb95533",
+    "diffEditor.removedLineBackground": "#ff000033"
+  }
+}

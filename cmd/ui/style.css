@@ -31,6 +31,18 @@
  * 因此这几项保留原设计，不强行对齐
  */
 
+/*
+ * 这里只留"与配色无关"的布局变量。所有颜色变量都由服务端在渲染页面时注入
+ * （见 cmd/ui_theme.go：解析选中的 VSCode 主题，拼成一条 :root 规则塞进 index.html 的
+ * <style id="theme">）——因此本文件里不该再出现任何颜色字面量，否则主题就名存实亡。
+ *
+ * 颜色变量在页面上的集合（名字由 cssVarNames 与 themeOwnVars 定义）：
+ *   --bg --card-bg --card-border --text --text-dim --hover-bg
+ *   --badge-bg --badge-fg --cont-bg --cont-fg
+ *   --git-modified --git-stage-modified --git-added --git-untracked --git-renamed
+ *   --git-deleted --git-stage-deleted --git-ignored --git-conflicting
+ *   --diff-add-bg --diff-del-bg
+ */
 :root {
   /* --col-w 是列宽的唯一定义处：app.js 从计算样式里读它来算横向坐标，
      两边各写一份数字迟早会漂移（改了 CSS 忘了改 JS，表现为卡片与列错位） */
@@ -39,68 +51,6 @@
   --row-h: 22px;
   --head-h: 22px;
   --cont-h: 22px;
-
-  /* 表面。深色下 #1e1e1e / #252526 对应 VSCode 的 editor.background 与 sideBar.background，
-     卡片落在页面底色上，正好复现侧栏浮在编辑器之上的层次关系 */
-  --bg: #1e1e1e;
-  --card-bg: #252526;
-  --card-border: #34343a;
-
-  --text: #cccccc;                       /* foreground */
-  --text-dim: rgba(204, 204, 204, 0.7);  /* descriptionForeground = foreground 70% */
-  --hover-bg: #2a2d2e;                   /* list.hoverBackground */
-
-  /* 变更状态色：与 VSCode 的 gitDecoration.* 令牌一一对应。
-     有两条令牌在 VSCode 的默认值里本就相同，这里用 var() 引用而不是重写一遍字面量，
-     哪天上游把两者分化开，只需要改被引用的那一条 */
-  --git-modified: #e2c08d;
-  --git-stage-modified: var(--git-modified);
-  --git-added: #81b88b;
-  --git-untracked: #73c991;
-  --git-renamed: var(--git-untracked);
-  --git-deleted: #c74e39;
-  --git-stage-deleted: var(--git-deleted);
-  --git-ignored: #8c8c8c;
-  --git-conflicting: #e4676b;
-
-  --badge-bg: #3a3d41;
-  --cont-bg: #2d2d30;
-  --cont-fg: #d7ba7d;
-
-  /* diff 的增删底色：照抄 VSCode 的 diffEditor.insertedLineBackground / removedLineBackground。
-     为什么取 *LineBackground 而不是 insertedTextBackground/removedTextBackground：本视图按"整行"
-     着色（行首 +/- 已经标出增删，整行底色更利于扫读），与 VSCode 的整行背景是同一语义；
-     而 TextBackground 那一对只覆盖变更的字符段，用在这里会变成"底色只铺一半"。
-     取值出处 src/vs/platform/theme/common/colors/editorColors.ts：
-       insertedLineBackground -> defaultInsertColor = new Color(new RGBA(155, 185, 85, .2)) = #9bb95533
-       removedLineBackground  -> defaultRemoveColor  = new Color(new RGBA(255, 0, 0, .2))   = #ff000033
-     这两个取值在深色与浅色主题下是同一个，因此这里不按主题分叉 */
-  --diff-add-bg: #9bb95533;
-  --diff-del-bg: #ff000033;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #ffffff;
-    --card-bg: #f6f6f6;
-    --card-border: #dcdcdc;
-
-    --text: #616161;
-    --text-dim: #717171;
-    --hover-bg: #f0f0f0;
-
-    /* 浅色主题下 gitDecoration.* 的默认值同样成对相同，引用关系保持一致 */
-    --git-modified: #895503;
-    --git-added: #587c0c;
-    --git-untracked: #007100;
-    --git-deleted: #ad0707;
-    --git-ignored: #8e8e90;
-    --git-conflicting: #ad0707;
-
-    --badge-bg: #e4e4e4;
-    --cont-bg: #efefef;
-    --cont-fg: #8a6d1f;
-  }
 }
 
 * { box-sizing: border-box; }
@@ -416,6 +366,21 @@ body {
 #fetch-btn:hover { background: var(--hover-bg); }
 /* 拉取进行中置灰：一次只允许一个写操作在飞 */
 #fetch-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* 主题选择器：与旁边的按钮同一套外观。初始 disabled，由 app.js 填完选项后解开——
+   这样在清单注入失败时它是一个灰色不可点的控件，而不是一个空下拉框 */
+#theme-select {
+  flex: none;
+  max-width: 12em;
+  font: inherit;
+  color: var(--text);
+  background: var(--badge-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+#theme-select:disabled { opacity: 0.5; cursor: default; }
 
 /* 最近一次看板层面操作的结果。可能含 git 的多行原话，因此允许折行并限宽限高——
    限宽免得它把按钮挤出屏幕，限高免得一段长报错把整块看板盖住（超出部分可滚动查看） */

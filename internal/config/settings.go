@@ -115,6 +115,14 @@ var settings = []Setting{
 		Parse:    parseLogLevel,
 	},
 	{
+		Key:  "theme",
+		Kind: KindString,
+		// 默认值是空串 = 跟随系统深浅
+		Default:  "",
+		Expected: "a theme id (see the board's theme picker), or empty to follow the system",
+		Parse:    parseTheme,
+	},
+	{
 		Key:       "repo_paths",
 		Kind:      KindPaths,
 		Default:   []string{},
@@ -210,6 +218,17 @@ func parseLanguage(s string) (any, error) {
 		return nil, ErrInvalidValue
 	}
 	return l10n.Normalize(v, locales.Supported(), locales.Default), nil
+}
+
+// parseTheme 解析网页看板选中的主题。
+//
+// 刻意不在这里校验主题是否存在：主题文件是用户随手粘贴、随时增删的，写进配置的值日后
+// 可能指向一个已被删掉的文件；那种情况该在渲染页面时回退到跟随系统并告警（与 language
+// 的未知取值一样），而不是让 ggt config set 当场拒绝——否则"先删旧主题、再设新主题"
+// 这个再正常不过的顺序就做不成了。值可以是内置主题的 id（builtin: 前缀），
+// 也可以是外部主题文件的绝对路径
+func parseTheme(s string) (any, error) {
+	return strings.TrimSpace(s), nil
 }
 
 // parseLogLevel 解析诊断日志级别。

@@ -837,6 +837,8 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	mux.HandleFunc("/api/push", cache.handlePush)
 	// 拉取是"对全部仓库"的一次行动，因此单独一个端点，不挂在某个仓库上
 	mux.HandleFunc("/api/fetch", cache.handleFetch)
+	// 换主题是把选择写进配置文件，同样只在 POST 上
+	mux.HandleFunc("/api/theme", cache.handleTheme)
 
 	// 页面自己不会说"当前语言是哪个"，由 Go 端把语言写进两个占位符：
 	//   - __GGT_LANG_VALUE__ 供页面内翻译表选语言
@@ -848,10 +850,15 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	// 用 ReplaceAll 而不是 Replace(…, 1)：后者只替换第一处，一旦页面注释里出现占位符字面量，
 	// 被替换的就是注释、真正的使用处原样留下，语言会静默停在默认值上——实际踩过一次，
 	// 表现为界面文案全是英文而所有数据正常，很难联想到是注释把占位符"吃掉"了
+	// 主题与语言一样每次请求现算：两者都能在运行期改（语言改配置、主题在页面上选），
+	// 烧死在启动时就会表现为"改了不生效"
 	renderIndex := func() []byte {
 		lang := l10n.Current()
+		css, themeData := resolveTheme()
 		out := bytes.ReplaceAll(indexHTML, []byte("__GGT_HTML_LANG__"), []byte(lang))
-		return bytes.ReplaceAll(out, []byte("__GGT_LANG_VALUE__"), []byte(lang))
+		out = bytes.ReplaceAll(out, []byte("__GGT_LANG_VALUE__"), []byte(lang))
+		out = bytes.ReplaceAll(out, []byte("__GGT_THEME_CSS__"), []byte(css))
+		return bytes.ReplaceAll(out, []byte("__GGT_THEME_DATA__"), []byte(themeDataJSON(themeData)))
 	}
 
 	srv, err := webui.New(webui.Config{

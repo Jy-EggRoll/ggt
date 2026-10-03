@@ -18,6 +18,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ggt</title>
 <link rel="stylesheet" href="style.css">
+<!--
+  主题注入点：服务端把解析好的颜色变量拼成一条 :root 规则塞进这里（见 cmd/ui_theme.go）。
+  它必须排在样式表之后——样式表里只用变量、不再声明任何颜色值，这里的变量就是唯一来源。
+  同一条规则在这里是唯一的注入点，页面上不再有第二处引用它（早期版本把占位符同时写在注释里，
+  遇上"只替换第一处"的语义时，先被替换的是注释，真正的注入点反而原样留了下来）
+-->
+<style id="theme">__GGT_THEME_CSS__</style>
+<!-- 主题清单与当前选择：由服务端注入，页面据此搭出主题选择器 -->
+<script>window.__GGT_THEME__ = __GGT_THEME_DATA__;</script>
 <!-- 显式声明一个空图标：不写这一行，浏览器会自动请求 /favicon.ico，而资产里没有这个文件，
      控制台就会留下一条 404。它不影响功能，但会掩盖真正的报错，也让"控制台无报错"这条
      验收断言失去意义 -->
@@ -42,6 +51,8 @@
 -->
 <div id="tools">
   <button id="fetch-btn" type="button"></button>
+  <!-- 主题选择器：选项由 app.js 按服务端注入的那份清单搭出来（含"跟随系统"与各来源分组） -->
+  <select id="theme-select" disabled></select>
   <span id="op" role="status" aria-live="polite"></span>
 </div>
 <!--

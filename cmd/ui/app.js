@@ -58,6 +58,9 @@ const MSG = {
     commitMsg: 'Commit message',
     fetch: 'Fetch all',
     fetching: 'Fetching…',
+    theme: 'Theme',
+    themeFollow: 'Follow the system',
+    themeMine: 'My themes',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -86,6 +89,9 @@ const MSG = {
     commitMsg: '提交信息',
     fetch: '拉取全部',
     fetching: '正在拉取…',
+    theme: '主题',
+    themeFollow: '跟随系统',
+    themeMine: '我放进去的主题',
   },
 };
 
@@ -137,6 +143,7 @@ const commitMsgEl = document.getElementById('commit-msg');
 const commitBtnEl = document.getElementById('commit-btn');
 const pushBtnEl = document.getElementById('push-btn');
 const fetchBtnEl = document.getElementById('fetch-btn');
+const themeSelectEl = document.getElementById('theme-select');
 const boardOpEl = document.getElementById('op');
 
 // 返回按钮的文字在 JS 里填：它要跟随语言，而 index.html 是静态骨架、不参与翻译
@@ -848,6 +855,50 @@ function fetchAll() {
   return runWrite('/api/fetch', {}, setBoardOp);
 }
 
+// buildThemeSelect 按服务端注入的清单搭出主题选择器：第一项是"跟随系统"，其后按来源分组。
+//
+// 分组标题与"跟随系统"都是页面文案，因此在这里按当前语言给——服务端那份清单里，
+// 用户自己那组的标题刻意留空，就是交给这里填（页面文案不走 Go 的 l10n 管线）
+function buildThemeSelect() {
+  const data = window.__GGT_THEME__ && typeof window.__GGT_THEME__ === 'object' ? window.__GGT_THEME__ : {};
+  themeSelectEl.textContent = '';
+
+  const follow = document.createElement('option');
+  follow.value = '';
+  follow.textContent = t('themeFollow');
+  themeSelectEl.appendChild(follow);
+
+  for (const group of data.groups || []) {
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = group.label || t('themeMine');
+    for (const item of group.themes || []) {
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = item.name;
+      optgroup.appendChild(option);
+    }
+    themeSelectEl.appendChild(optgroup);
+  }
+
+  themeSelectEl.value = data.current || '';
+  themeSelectEl.setAttribute('aria-label', t('theme'));
+  themeSelectEl.disabled = false;
+}
+
+// 换主题：把选择写进配置文件，然后整页重载。
+//
+// 为什么重载而不是就地改 CSS 变量：配色是服务端渲染 index.html 时注入的，就地改就等于让
+// 客户端再实现一遍主题解析（重新取颜色、自己拼变量），同一件事两处实现迟早漂移。
+// 重载的代价只是一次本地请求，而换主题本来就是低频动作
+themeSelectEl.addEventListener('change', async () => {
+  const out = await runWrite('/api/theme', { id: themeSelectEl.value }, setBoardOp);
+  if (!out || out.error) {
+    buildThemeSelect(); // 没写成就把选择器拨回当前生效的那套，别让它显示一个没生效的值
+    return;
+  }
+  location.reload();
+});
+
 // commitFromUI 用输入框里的信息提交。成功才清空输入框：失败时保留原文，
 // 便于用户改一处再试，而不是从头再敲一遍
 async function commitFromUI() {
@@ -1069,6 +1120,7 @@ document.title = 'ggt';
 
 // 图标主题与首次取数并行：数据先到就先画（没有类型图标），图标到位后再用同一份数据重画一次。
 // 串行等待会让首屏白屏时间平白多出一次本地 fetch
+buildThemeSelect();
 loadIconTheme().then(() => {
   if (lastRepos.length > 0) render(lastRepos);
 });
