@@ -86,6 +86,21 @@
   <p id="diff-op"></p>
   <div id="diff-body"></div>
 </div>
+<!--
+  仓库面板：点看板上的仓库标题行进入。整仓 diff 从这里进去，（后面要做的）分支图也会是
+  这里的一个入口——它是"某个仓库的主页面"。
+
+  它与 diff 覆盖层是两层独立的东西：面板在下、diff 浮在其上，关掉 diff 回到面板，
+  面板本身不关。层级因此必须是 面板 < diff（见 style.css 的 z-index）
+-->
+<div id="repo" aria-hidden="true">
+  <header>
+    <button id="repo-back" type="button"></button>
+    <span id="repo-title"></span>
+    <span id="repo-state"></span>
+  </header>
+  <div id="repo-body"></div>
+</div>
 <script src="app.js"></script>
 </body>
 </html>

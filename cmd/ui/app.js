@@ -51,6 +51,7 @@ const MSG = {
     diffUnmerged: 'Unmerged — conflict markers shown below',
     diffTruncated: 'Output truncated — the change is too large to show in full',
     groupUnmerged: 'Unmerged Changes',
+    changes: 'Changes',
     back: 'Back',
     stage: 'Stage this file',
     unstage: 'Unstage this file',
@@ -83,6 +84,7 @@ const MSG = {
     diffUnmerged: '未合并 —— 下面显示冲突标记',
     diffTruncated: '输出过大，已截断，仅显示前面一部分',
     groupUnmerged: '未合并的改动',
+    changes: '改动',
     back: '返回',
     stage: '暂存这个文件',
     unstage: '取消暂存这个文件',
@@ -147,9 +149,15 @@ const pushBtnEl = document.getElementById('push-btn');
 const fetchBtnEl = document.getElementById('fetch-btn');
 const themeSelectEl = document.getElementById('theme-select');
 const boardOpEl = document.getElementById('op');
+const repoEl = document.getElementById('repo');
+const repoBackEl = document.getElementById('repo-back');
+const repoTitleEl = document.getElementById('repo-title');
+const repoStateEl = document.getElementById('repo-state');
+const repoBodyEl = document.getElementById('repo-body');
 
 // 返回按钮的文字在 JS 里填：它要跟随语言，而 index.html 是静态骨架、不参与翻译
 diffBackEl.textContent = '← ' + t('back');
+repoBackEl.textContent = '← ' + t('back');
 commitBtnEl.textContent = t('commit');
 pushBtnEl.textContent = t('push');
 commitMsgEl.placeholder = t('commitMsg');
@@ -644,6 +652,25 @@ let diffScrollX = 0;
 // 每次打开的序号：响应回来时用它丢弃"用户已经关掉或换了目标"的那次结果
 let diffSeq = 0;
 
+// panelOpen / panelSpec 是仓库面板的开合与它展示的那个仓库。
+// 面板与 diff 是两层独立的东西：面板在下、diff 浮在其上，关掉 diff 回到面板
+let panelOpen = false;
+let panelSpec = null;
+
+// syncScrollLock 统一决定要不要锁住页面滚动。
+// 两个覆盖层各自开合，若各写各的，关掉上层时会把下层还需要的那把锁一起解开——
+// 于是面板还开着、页面却能滚动
+function syncScrollLock() {
+  document.documentElement.style.overflow = diffOpen || panelOpen ? 'hidden' : '';
+}
+
+// resume 在两个覆盖层都关掉之后恢复看板：补一次取数（期间工作区可能已经变了）并恢复轮询
+function resume() {
+  if (diffOpen || panelOpen) return;
+  refresh();
+  startPolling();
+}
+
 // diffLineClass 按行首字符判定这一行属于哪一类。
 // 必须先判元信息再判 +/-：diff --git、index、---、+++ 全都以 - 或 + 开头，
 // 顺序写反会把它们染成增删色，页面看起来像多改了几行
@@ -785,7 +812,7 @@ async function openDiff(spec) {
   diffEl.classList.add('open');
   diffEl.setAttribute('aria-hidden', 'false');
   // 看板仍是布局中的元素，只是被盖住；不锁住 html 的话滚轮与方向键还能滚它
-  document.documentElement.style.overflow = 'hidden';
+  syncScrollLock();
   stopPolling();
   diffBackEl.focus();
 
@@ -800,13 +827,75 @@ function closeDiff() {
   if (diffSpec) draftMsg.set(diffSpec.repo.path, commitMsgEl.value);
   diffEl.classList.remove('open');
   diffEl.setAttribute('aria-hidden', 'true');
-  document.documentElement.style.overflow = '';
+  syncScrollLock();
   diffBodyEl.textContent = ''; // 释放大 diff 占用的 DOM
   window.scrollTo(diffScrollX, 0);
   // 覆盖层期间没有刷新过看板，关闭时补一次再恢复轮询（期间工作区可能已经变了）
-  refresh();
-  startPolling();
+  resume();
 }
+
+// ——— 仓库面板 ———
+//
+// 点仓库标题行进入，它是这个仓库的主页面：整仓 diff 从这里进去，（后面要做的）分支图也会
+// 是这里的一个入口。面板与 diff 叠着用，diff 关掉之后回到面板
+
+// openRepoPanel 打开某个仓库的面板。
+// 头部状态只用快照里已有的信息，不额外打接口——面板打开时这份数据本来就是刚取的
+function openRepoPanel(spec) {
+  panelSpec = spec;
+  const r = spec.repo;
+
+  repoTitleEl.innerHTML = '<span>' + esc(r.name) + '</span>' +
+    (r.branch && !r.noCommits ? '<span class="dir"> ' + esc(r.branch) + '</span>' : '');
+  const state = [];
+  if (r.noCommits) state.push(t('noCommits'));
+  else if (r.detached) state.push(t('detached'));
+  if (r.upstream && !r.noCommits) {
+    if (r.ahead > 0) state.push(t('ahead', { n: r.ahead }));
+    if (r.behind > 0) state.push(t('behind', { n: r.behind }));
+  }
+  repoStateEl.textContent = state.join(' · ');
+  renderRepoEntries();
+
+  panelOpen = true;
+  repoEl.classList.add('open');
+  repoEl.setAttribute('aria-hidden', 'false');
+  syncScrollLock();
+  stopPolling();
+  repoBackEl.focus();
+}
+
+// renderRepoEntries 画出面板里的入口行。目前只有「改动」一项，分支图之后加在这里
+function renderRepoEntries() {
+  const r = panelSpec.repo;
+  repoBodyEl.innerHTML =
+    '<div class="entry" data-entry="changes">' +
+    '<span class="entry-name">' + esc(t('changes')) + '</span>' +
+    '<span class="badge">' + r.files.length + '</span>' +
+    '</div>';
+}
+
+// closeRepoPanel 关闭面板。若 diff 还开着（用户从面板里进去了），一并关掉——
+// 返回键的语义是"回到上一层"，不是"只关掉最上面那层"
+function closeRepoPanel() {
+  if (!panelOpen) return;
+  if (diffOpen) closeDiff();
+  panelOpen = false;
+  panelSpec = null;
+  repoEl.classList.remove('open');
+  repoEl.setAttribute('aria-hidden', 'true');
+  repoBodyEl.textContent = '';
+  syncScrollLock();
+  resume();
+}
+
+repoBackEl.addEventListener('click', closeRepoPanel);
+
+repoBodyEl.addEventListener('click', (e) => {
+  const entry = e.target.closest('.entry');
+  if (!entry) return;
+  if (entry.dataset.entry === 'changes') openDiff(panelSpec);
+});
 
 // ——— 写操作：暂存 / 取消暂存 / 提交 / 推送 ———
 
@@ -958,13 +1047,15 @@ board.addEventListener('click', (e) => {
   if (!row || !row.__spec) return;
   const s = row.__spec;
   if (s.kind !== 'head' && s.kind !== 'file') return;
-  // 行尾的动作按钮优先于"打开 diff"：它是行内动作，不该顺带把整页 diff 打开
+  // 行尾的动作按钮优先于"打开"：它是行内动作，不该顺带把整页打开
   const act = e.target.closest('.act');
   if (act) {
     applyFileAction(s, act.dataset.act);
     return;
   }
-  openDiff(s);
+  // 仓库标题行进的是仓库面板（整仓 diff 从面板里进），文件行直接进 diff
+  if (s.kind === 'head') openRepoPanel(s);
+  else openDiff(s);
 });
 
 diffBackEl.addEventListener('click', closeDiff);
@@ -978,14 +1069,19 @@ commitMsgEl.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || !diffOpen) return;
-  // 焦点在提交输入框里时，Esc 先退出输入而不是关掉整页——否则"想退出输入框"这个动作
-  // 会把刚写好的提交信息一起丢掉（它会留在草稿里，但用户并不知道）。再按一次才关
-  if (document.activeElement === commitMsgEl) {
-    commitMsgEl.blur();
+  if (e.key !== 'Escape') return;
+  if (diffOpen) {
+    // 焦点在提交输入框里时，Esc 先退出输入而不是关掉整页——否则"想退出输入框"这个动作
+    // 会把刚写好的提交信息一起丢掉（它会留在草稿里，但用户并不知道）。再按一次才关
+    if (document.activeElement === commitMsgEl) {
+      commitMsgEl.blur();
+      return;
+    }
+    closeDiff();
     return;
   }
-  closeDiff();
+  // diff 没开时 Esc 关面板：两层各自响应自己那一层，先上后下
+  if (panelOpen) closeRepoPanel();
 });
 
 // ——— 主循环 ———
@@ -1042,7 +1138,7 @@ function stopPolling() {
 // 窗口尺寸变化会改变列高，必须重新布局（不重新取数）。
 // 覆盖层打开期间不重排：看板尺寸没变，重排要量行高、纯属白花，且此刻没人看得到结果
 window.addEventListener('resize', () => {
-  if (!diffOpen && lastSpecs.length > 0) layout(lastEls, lastSpecs);
+  if (!diffOpen && !panelOpen && lastSpecs.length > 0) layout(lastEls, lastSpecs);
 });
 
 // 系统明暗主题切换时图标表要换一套（Seti 的浅色段是另一份平行表），因此重画一次；
@@ -1117,9 +1213,9 @@ function stepScroll(now) {
 window.addEventListener(
   'wheel',
   (e) => {
-    // diff 覆盖层打开时把手势让回浏览器：那边要滚的是 diff 正文（纵向），
+    // diff 覆盖层或仓库面板打开时把手势让回浏览器：那边要滚的是正文（纵向），
     // 被本处理器抢去转横向会让正文完全滚不动
-    if (diffOpen) return;
+    if (diffOpen || panelOpen) return;
     // 横向手势（触控板横扫、Shift+滚轮）交给浏览器原生处理：那条路自带缓动，手感最好
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.deltaY === 0) return;
     e.preventDefault();
@@ -1140,9 +1236,9 @@ document.addEventListener('visibilitychange', () => {
     stopPolling();
     return;
   }
-  // 覆盖层打开期间由 closeDiff 统一恢复（它会先 refresh 再 startPolling），
-  // 这里不能抢先启动，否则看板会在 diff 后面偷偷刷新
-  if (diffOpen) return;
+  // 覆盖层打开期间由 closeDiff / closeRepoPanel 统一恢复（它们会先 refresh 再 startPolling），
+  // 这里不能抢先启动，否则看板会在覆盖层后面偷偷刷新
+  if (diffOpen || panelOpen) return;
   refresh();
   startPolling();
 });

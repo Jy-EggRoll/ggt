@@ -453,8 +453,10 @@ body {
   border-bottom: 1px solid var(--card-border);
 }
 
-/* 返回按钮复用徽标的中性配色，避免为它单独引入一组色值 */
-#diff-back {
+/* 返回按钮复用徽标的中性配色，避免为它单独引入一组色值。
+   面板与 diff 两层各有一个返回键，外观共用同一套规则 */
+#diff-back,
+#repo-back {
   flex: none;
   font: inherit;
   color: var(--text);
@@ -464,16 +466,19 @@ body {
   padding: 3px 8px;
   cursor: pointer;
 }
-#diff-back:hover { background: var(--hover-bg); }
+#diff-back:hover,
+#repo-back:hover { background: var(--hover-bg); }
 
-#diff-title {
+#diff-title,
+#repo-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 700;
 }
-/* 标题里的文件路径比仓库名淡一档，与文件行里"目录淡化"的处理一致 */
-#diff-title .dir {
+/* 标题里的分支名（面板用）与文件路径（diff 用）比主体淡一档，与文件行里"目录淡化"一致 */
+#diff-title .dir,
+#repo-title .dir {
   font-weight: 400;
   color: var(--text-dim);
 }
@@ -564,6 +569,61 @@ pre.diff .meta { color: var(--text-dim); }
 /* 可点开的行给出手型光标：看板的仓库标题行与文件行都能点开 diff */
 .row.head,
 .row.file { cursor: pointer; }
+
+/*
+ * ——— 仓库面板 ———
+ *
+ * 点仓库标题行进入，是这个仓库的主页面：整仓 diff 从这里进去，（后面要做的）分支图也是
+ * 这里的一个入口。骨架与 diff 覆盖层相同，但层级更低——diff 从面板里打开，浮在它上面
+ */
+#repo {
+  position: fixed;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  background: var(--bg);
+  /* 低于 diff 覆盖层（10）：从面板里打开整仓 diff 时，diff 浮在面板之上 */
+  z-index: 8;
+}
+#repo.open { display: flex; }
+
+#repo header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--card-border);
+}
+
+/* 分支与领先/落后的汇总，靠右；与看板标题行上的那串元信息同一套语义 */
+#repo-state {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+#repo-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+}
+
+/* 面板里的入口行：看板行同一套观感（22px 高、hover 高亮、行尾计数徽标） */
+.entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--row-h);
+  padding: 0 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.entry:hover { background: var(--hover-bg); }
+.entry .badge { margin-left: auto; }
 
 /*
  * ——— 行内动作：暂存 / 取消暂存 ———
