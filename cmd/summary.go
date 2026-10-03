@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/jy-eggroll/eggokit/l10n"
@@ -44,31 +43,28 @@ Examples:
 			// 第一阶段：并发检查所有仓库（含子模块）的 git 状态
 			t := NewDebugTimer(l10n.T("Status check (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
 			results := worker.Map(ctx, repos, Concurrency(), func(ctx context.Context, e RepoEntry) *dirtyRepo {
-				statusOutput, err := git.RunContext(ctx, e.Path, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
+				// 是否值得处理，一律由机器可读的 porcelain v2 状态判定。
+				// 原实现是从给人看的 --short 文本里反推：统计非空行数判断"有没有文件变更"、
+				// 用 strings.Contains(output, "[ahead") 判断"有没有待推送提交"。两处都依赖
+				// git 的展示措辞与格式，一旦 git 改版、或用户配了 status.relativePaths /
+				// color.status，判断就会静默失效——不报错，只是所有仓库的结论一起变成错的
+				st, err := git.RunStatus(ctx, e.Path)
 				if err != nil {
 					return nil
 				}
-
-				lines := strings.Split(strings.TrimRight(statusOutput, "\n"), "\n")
-				nonEmptyCount := 0
-				for _, line := range lines {
-					if strings.TrimSpace(line) != "" {
-						nonEmptyCount++
-					}
+				// 既无未提交变更、也无待推送提交，无需人工介入
+				if len(st.Files) == 0 && st.Ahead == 0 {
+					return nil
 				}
-				// 只有分支行说明没有文件变更，但需检查是否为 ahead（已 commit 未 push）
-				if nonEmptyCount <= 1 {
-					if !strings.Contains(statusOutput, "[ahead") {
-						return nil
-					}
-					// 仅有 ahead，无未提交的文件变更
-					return &dirtyRepo{
-						path:           e.Path,
-						name:           e.Name,
-						isSubmodule:    e.IsSubmodule,
-						statusOutput:   statusOutput,
-						hasUncommitted: false,
-					}
+
+				// 展示仍然用 git 自己的彩色 --short 输出：它是给人看的格式，逐文件列出
+				// XY 与路径，且着色由 git 决定，与本命令改造前、以及用户在其他场合见到的
+				// status 完全一致。代价是"确实有变更"的仓库要多跑一次 git，而干净仓库已在
+				// 上一行返回，因此这份开销只落在真正要处理的少数仓库上
+				statusOutput, err := git.RunContext(ctx, e.Path, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
+				if err != nil {
+					// 判断已经成立，展示文本取不到时留空即可，不因此放弃这个仓库
+					statusOutput = ""
 				}
 
 				return &dirtyRepo{
@@ -76,7 +72,7 @@ Examples:
 					name:           e.Name,
 					isSubmodule:    e.IsSubmodule,
 					statusOutput:   statusOutput,
-					hasUncommitted: true,
+					hasUncommitted: len(st.Files) > 0,
 				}
 			})
 			t.Done()

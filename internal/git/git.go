@@ -1,5 +1,6 @@
 // git 包提供统一的 git 命令执行封装，确保所有 git 调用
-// 拥有一致的超时控制、环境变量和错误处理。
+// 拥有一致的超时控制、环境变量和错误处理；
+// status.go 在此之上提供工作区状态的机器可读采集与解析（终端与 WebUI 共用同一份）。
 package git
 
 import (
@@ -74,11 +75,21 @@ func RunCombinedContext(ctx context.Context, repoPath string, args ...string) (s
 
 // runWithOutput 执行 git 命令并捕获 stdout。
 func runWithOutput(ctx context.Context, repoPath string, args ...string) (string, error) {
+	return runWithOutputEnv(ctx, repoPath, nil, args...)
+}
+
+// runWithOutputEnv 与 runWithOutput 相同，但可追加额外环境变量（形如 "KEY=VALUE"）。
+//
+// 存在的意义是让特定调用在通用环境之外再收紧行为，典型是 RunStatus 需要
+// GIT_OPTIONAL_LOCKS=0 来禁止 git status 写 index。把追加项做成参数、而不是让各调用点
+// 自行拼 cmd.Env，是为了保住"所有 git 调用共享同一套基础环境"这条前提——
+// 一旦有人绕过本函数，GIT_TERMINAL_PROMPT=0 这类防止卡死的设置就会漏掉。
+func runWithOutputEnv(ctx context.Context, repoPath string, extraEnv []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
 	// GIT_TERMINAL_PROMPT=0 禁止 git 弹出交互式凭据提示，
 	// 避免在脚本/批量操作中卡住等待用户输入。
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), extraEnv...)
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
