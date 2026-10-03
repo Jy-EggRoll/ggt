@@ -1,0 +1,364 @@
+/*
+ * 样式表：行级流式横向布局的视觉部分。
+ *
+ * 核心约束来自用户诉求——只横向滚动、不纵向滚动，且一屏内看到尽可能多的仓库与变更明细。
+ * 因此：列高恒等于视口高（由 app.js 计算），列向右无限延伸，页面禁止纵向滚动。
+ *
+ * 视觉参数凡 VSCode 有明确定义的，一律取自其源码，不自拟数值。逐项出处：
+ *   行高与图标标签高度 22px   src/vs/workbench/contrib/scm/browser/media/scm.css
+ *                             （.scm-view .monaco-list-row { line-height: 22px }，
+ *                               .monaco-icon-label-container { height: 22px }）
+ *   仓库名加粗                scm.css（.scm-provider .monaco-highlighted-label { font-weight: bold }）
+ *                             注意：仓库名用默认前景色，VSCode 并未给它单独配色
+ *   行尾状态徽标排版          src/vs/base/browser/ui/iconLabel/iconlabel.css
+ *                             （.monaco-icon-label::after { opacity: .75; font-size: 90%;
+ *                               font-weight: 600; margin: auto 16px 0 5px }）
+ *   计数徽标几何              src/vs/base/browser/ui/countBadge/countBadge.css
+ *                             （.monaco-count-badge { padding: 3px 5px; border-radius: 11px;
+ *                               font-size: 11px; min-width: 18px; min-height: 18px }）
+ *   前景与次要前景            src/vs/platform/theme/common/colors/baseColors.ts
+ *                             （foreground 深 #CCCCCC / 浅 #616161；
+ *                               descriptionForeground = foreground 的 70% 透明度）
+ *   hover 背景                src/vs/platform/theme/common/colors/listColors.ts
+ *                             （list.hoverBackground 深 #2A2D2E / 浅 #F0F0F0）
+ *   变更状态色                extensions/git/package.json 的 contributes.colors defaults
+ *                             （gitDecoration.* 九个令牌，见下方变量）
+ *   文件类型图标              VSCode 默认图标主题 Seti，字形与映射见 seti-icon-theme.json
+ *
+ * 卡片背景、边框、圆角、列间距是 ggt 自有的「卡片」概念，VSCode 侧栏里没有等价物（它只有列表行），
+ * 因此这几项保留原设计，不强行对齐
+ */
+
+:root {
+  /* --col-w 是列宽的唯一定义处：app.js 从计算样式里读它来算横向坐标，
+     两边各写一份数字迟早会漂移（改了 CSS 忘了改 JS，表现为卡片与列错位） */
+  --col-w: 320px;
+  /* 三种行高都取 VSCode 的 22px。续段标识是 ggt 自己的概念，取同高使列内节奏一致 */
+  --row-h: 22px;
+  --head-h: 22px;
+  --cont-h: 22px;
+
+  /* 表面。深色下 #1e1e1e / #252526 对应 VSCode 的 editor.background 与 sideBar.background，
+     卡片落在页面底色上，正好复现侧栏浮在编辑器之上的层次关系 */
+  --bg: #1e1e1e;
+  --card-bg: #252526;
+  --card-border: #34343a;
+
+  --text: #cccccc;                       /* foreground */
+  --text-dim: rgba(204, 204, 204, 0.7);  /* descriptionForeground = foreground 70% */
+  --hover-bg: #2a2d2e;                   /* list.hoverBackground */
+
+  /* 变更状态色：与 VSCode 的 gitDecoration.* 令牌一一对应。
+     有两条令牌在 VSCode 的默认值里本就相同，这里用 var() 引用而不是重写一遍字面量，
+     哪天上游把两者分化开，只需要改被引用的那一条 */
+  --git-modified: #e2c08d;
+  --git-stage-modified: var(--git-modified);
+  --git-added: #81b88b;
+  --git-untracked: #73c991;
+  --git-renamed: var(--git-untracked);
+  --git-deleted: #c74e39;
+  --git-stage-deleted: var(--git-deleted);
+  --git-ignored: #8c8c8c;
+  --git-conflicting: #e4676b;
+
+  --badge-bg: #3a3d41;
+  --cont-bg: #2d2d30;
+  --cont-fg: #d7ba7d;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --card-bg: #f6f6f6;
+    --card-border: #dcdcdc;
+
+    --text: #616161;
+    --text-dim: #717171;
+    --hover-bg: #f0f0f0;
+
+    /* 浅色主题下 gitDecoration.* 的默认值同样成对相同，引用关系保持一致 */
+    --git-modified: #895503;
+    --git-added: #587c0c;
+    --git-untracked: #007100;
+    --git-deleted: #ad0707;
+    --git-ignored: #8e8e90;
+    --git-conflicting: #ad0707;
+
+    --badge-bg: #e4e4e4;
+    --cont-bg: #efefef;
+    --cont-fg: #8a6d1f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html {
+  /* 只允许横向滚动：用户要求彻底弃用纵向滚动，让所有内容在同一屏高度内横向铺开 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  /*
+   * 平滑滚动放在 CSS 而不是 JS 里：scrollBy({behavior:'auto'}) 按规范就是「采用元素的计算值」，
+   * 因此这里声明一次即可让所有脚本滚动获得缓动，不必在滚轮回调里自己写缓动函数
+   * （自写缓动还要处理连续滚轮事件的目标重定向，复杂且更容易抖动）
+   *
+   * 这一项没有 VSCode 侧的依据：VSCode 的工作台列表是纵向滚动、没有等价行为，
+   * 是用户明确要求的观感改进
+   */
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  /* 13px 是 VSCode 工作台的默认界面字号；字体族按 Linux 上 VSCode 的实际取值排布 */
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif;
+}
+
+/*
+ * Seti 图标字体：@font-face 的名字与 seti-icon-theme.json 里 fonts[].id 一致，
+ * 字形通过 font-character 私有区码位引用，见 app.js 的 iconGlyph
+ *
+ * font-display: block 而不是 swap：类型图标在第一次绘制时缺席会表现为文件名短暂左移，
+ * 而图标字体是本地资源、拿到的代价极低，闪一下比位移更好
+ */
+@font-face {
+  font-family: "seti";
+  src: url("seti.woff") format("woff");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+/* board 是绝对定位行的坐标原点；它的宽高由 app.js 按列数算出 */
+#board {
+  position: relative;
+  min-height: 1px;
+}
+
+/*
+ * 每一行都是绝对定位的独立单元，这正是「行级流式」的关键：
+ * 绝对定位的元素不参与 CSS 分片（multicol 里那种卡片被浏览器拦腰截断、
+ * 续段丢失标题的问题因此不会出现），且 getBoundingClientRect 返回的坐标是准确的
+ *
+ * transition 让位置变化可动画：轮询刷新后卡片是「滑」到新位置，而不是整页重建闪烁
+ *
+ * 行高取 VSCode 的 22px，三种行共用同一个高度，列内节奏与 VSCode 列表一致
+ */
+.row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--col-w);
+  padding: 0 10px;
+  background: var(--card-bg);
+  border-left: 1px solid var(--card-border);
+  border-right: 1px solid var(--card-border);
+  transition: transform 0.3s ease;
+  will-change: transform;
+}
+
+/* hover 高亮：色值来自 list.hoverBackground，与 VSCode 列表行的鼠标反馈一致 */
+.row:hover {
+  background: var(--hover-bg);
+}
+
+.row.head {
+  height: var(--head-h);
+  line-height: var(--head-h);
+  border-top: 1px solid var(--card-border);
+  border-radius: 7px 7px 0 0;
+  /* 仓库名在 VSCode 里是加粗的默认前景色（scm.css 的 .monaco-highlighted-label），
+     这里不额外配色：颜色全部让给变更状态，仓库层级的区分交给字重 */
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 卡片的最后一行收口：圆角与下边框。跨列被切断的卡片，其上一段的末行没有这个类，
+   视觉上就自然表现为「还没结束，下接另一列」 */
+.row.foot {
+  border-bottom: 1px solid var(--card-border);
+  border-radius: 0 0 7px 7px;
+}
+
+/* 仓库名与分支名都要能被截断：仓库名过长时不能把计数徽标挤出行外 */
+.row .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row.head .branch {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * 计数徽标：几何取自 VSCode 的 countBadge.css（3px 5px 内边距、11px 圆角、最小 18x18）。
+ * 默认背景与前景这一对色值本轮没有在上游源码里定位到，因此沿用本项目原有的中性色，
+ * 属于尚未对齐的一项，改动前请先查证 badge.background / badge.foreground 的默认值
+ */
+.badge {
+  flex: none;
+  background: var(--badge-bg);
+  border-radius: 11px;
+  padding: 3px 5px;
+  font-size: 11px;
+  min-width: 18px;
+  min-height: 18px;
+  line-height: 11px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text-dim);
+}
+.badge.err { color: var(--git-conflicting); }
+
+/*
+ * 变更文件行。结构：[类型图标] [路径] …… [行尾状态字母]
+ *
+ * 之所以用真实元素而不是 VSCode 的 ::after 承载状态字母：::after 的内容既不能被选中，
+ * 也不会出现在 textContent / innerText 里，验收脚本与无障碍工具都读不到。
+ * 排版数值仍照抄 iconlabel.css 的 ::after（75% 不透明度、90% 字号、600 字重、左边距自动）
+ */
+.row.file,
+.row.note {
+  height: var(--row-h);
+  line-height: var(--row-h);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 图标与路径合计占满一行，状态字母靠 margin-left:auto 顶到行尾 */
+.row.file {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.row.note {
+  display: flex;
+  align-items: center;
+  color: var(--text-dim);
+}
+
+/* 路径容器要能收缩才能出省略号：min-width:0 是必需的，flex 项默认 min-width:auto，
+   不给它的话长路径会把行尾的状态字母顶出行外 */
+.row .path {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 目录名：比文件名更淡。VSCode 在列表模式下把路径作为 description 淡化显示，取值同 descriptionForeground */
+.row .dir {
+  color: var(--text-dim);
+}
+
+/*
+ * 行尾状态字母。排版照抄 iconlabel.css 的 .monaco-icon-label::after：
+ * opacity .75、font-size 90%（12px 的 90% ≈ 10.8px）、font-weight 600、居中
+ * 颜色由行的状态类给定（与文件名同色），因此不需要单独声明颜色
+ */
+.row.file .letter {
+  margin-left: auto;
+  padding-left: 8px;
+  flex: none;
+  opacity: 0.75;
+  font-size: 90%;
+  font-weight: 600;
+  text-align: center;
+}
+
+/*
+ * 文件类型图标：Seti 字体里的私有区字形。尺寸略大于文字（VSCode 图标主题的
+ * fonts[].size 为 150%），并关闭字体回退，避免缺字形时显示成方框
+ */
+.seti {
+  flex: none;
+  font-family: "seti", monospace;
+  font-size: 150%;
+  line-height: 1;
+  font-style: normal;
+  width: 16px;
+  text-align: center;
+}
+
+/*
+ * 变更状态色。类名与 VSCode 的 Status 取值对应，色值全部来自 gitDecoration.* 令牌。
+ * 同时作用于文件名与行尾字母——这是本项目有意保留的差异：VSCode 的源码管理视图
+ * 只给字母徽标上色（fileDecorations.colors 恒为 false），而这块看板以文件清单为主体，
+ * 文件名上色更利于横向扫读，用户已确认保留
+ */
+.row.file.st-modified,
+.row.file.st-stage-modified { color: var(--git-modified); }
+.row.file.st-added { color: var(--git-added); }
+.row.file.st-untracked { color: var(--git-untracked); }
+.row.file.st-renamed { color: var(--git-renamed); }
+.row.file.st-deleted,
+.row.file.st-stage-deleted { color: var(--git-deleted); }
+.row.file.st-ignored { color: var(--git-ignored); font-style: italic; }
+.row.file.st-conflicting { color: var(--git-conflicting); }
+.row.file.st-type-changed { color: var(--git-modified); }
+
+/* 续段标识：卡片被列边界切开后，下一列顶部用它说明「这是谁的后续」。
+   不画左右实线边框而用虚线，是为了在视觉上与卡片主体区分开 */
+.cont {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--col-w);
+  height: var(--cont-h);
+  line-height: var(--cont-h);
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--cont-fg);
+  background: var(--cont-bg);
+  border-left: 1px dashed var(--card-border);
+  border-right: 1px dashed var(--card-border);
+  border-radius: 7px 7px 0 0;
+  transition: transform 0.3s ease;
+  will-change: transform;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#empty {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+/* 右下角的一行元信息：数据多旧、这次采集花了多久、以及出错原因。
+   刻意做得极轻，不占用仓库卡片的展示空间 */
+#status {
+  position: fixed;
+  right: 12px;
+  bottom: 8px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  pointer-events: none;
+  transition: color 0.2s ease;
+}
+#status.error { color: var(--git-conflicting); }
+
+/* 尊重「减少动态效果」的系统设置：这类用户对位移动画敏感，动画会让界面难以使用 */
+@media (prefers-reduced-motion: reduce) {
+  .row, .cont { transition: none; }
+  html { scroll-behavior: auto; }
+}

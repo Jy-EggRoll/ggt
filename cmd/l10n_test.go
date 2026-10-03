@@ -20,7 +20,7 @@ func TestBuildRootRegistersAllCommands(t *testing.T) {
 	}
 	root := buildRoot()
 
-	wantTop := []string{"config", "files", "owned", "remote", "repo", "size", "status", "summary", "sync", "version"}
+	wantTop := []string{"config", "files", "owned", "remote", "repo", "size", "status", "summary", "sync", "ui", "version"}
 	got := map[string]bool{}
 	for _, c := range root.Commands() {
 		got[c.Name()] = true
