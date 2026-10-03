@@ -494,7 +494,7 @@ body {
 
 /*
  * diff 正文。padding 只给纵向：横向留白交给 .dl 自己，否则整行底色会在行首行尾
- * 留下一截没有底色的空隙（.dl 的 min-width:100% 是相对 pre 的 content box 算的）
+ * 留下一截没有底色的空隙
  */
 pre.diff {
   margin: 0;
@@ -502,24 +502,26 @@ pre.diff {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre;
-  overflow-x: auto;
+  /* 长行折行显示，不做横向滚动（早先是 white-space: pre + overflow-x: auto，已改）：
+     这一层本身就叠在一个横向滚动的看板之上，这里再套一个横向滚动条，会让"这一行到底
+     有多长"完全看不出来，读一行的动作变成先横向拖再纵向读。
+     折行之后整行底色天然铺满，.dl 也就不再需要 width: max-content 去撑宽度 */
+  white-space: pre-wrap;
+  /* 没有空格的超长行（打包产物、base64、单行 JSON）必须能强制断开，否则会顶破容器 */
+  overflow-wrap: anywhere;
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 4px;
 }
 
 /*
- * 一行或一串同类行。width:max-content 配合 min-width:100% 让底色铺满整行：
- * 单给 min-width 时，内容更长的行依然能把底色撑出去，单给 max-content 时短行会缩成一小段
- *
- * 连续同类的行合并成一个元素（而不是一行一个）是刻意的：一次忘记写 .gitignore
- * 就能产生几万行新增，按行建元素会让浏览器为几万个节点排版；合并后典型的增删块只有个位数节点
+ * 一行或一串同类行。连续同类的行合并成一个元素（而不是一行一个）是刻意的：
+ * 一次忘记写 .gitignore 就能产生几万行新增，按行建元素会让浏览器为几万个节点排版，
+ * 而本视图没有虚拟滚动；合并后典型的增删块只有个位数节点
  */
 pre.diff .dl {
   display: block;
-  width: max-content;
-  min-width: 100%;
+  /* 左右内边距给在这里而不是 pre 上：底色要一直铺到卡片边缘，中间不留空隙 */
   padding: 0 8px;
 }
 pre.diff .add { background: var(--diff-add-bg); }
@@ -537,3 +539,92 @@ pre.diff .meta { color: var(--text-dim); }
 /* 可点开的行给出手型光标：看板的仓库标题行与文件行都能点开 diff */
 .row.head,
 .row.file { cursor: pointer; }
+
+/*
+ * ——— 行内动作：暂存 / 取消暂存 ———
+ *
+ * 与 VSCode 一样只在鼠标移入该行时出现。这里用 visibility 而不是 display：
+ * visibility: hidden 的元素仍然占位，鼠标移入时不会因为按钮"长出来"而整行重排、
+ * 也不会让路径的省略号位置跳动。
+ *
+ * 代价写在这里以免日后当成缺陷：visibility: hidden 的元素不可聚焦，因此这两个按钮
+ * 只能用鼠标操作。VSCode 那边有键盘快捷键兜底，本看板没有，暂时接受（要补的话，
+ * 得先设计一套快捷键，那是一件独立的事）
+ */
+.row .acts {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin-left: 4px;
+}
+.act {
+  visibility: hidden;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  line-height: 1;
+  padding: 0 3px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.row:hover .act { visibility: visible; }
+.act:hover { background: var(--hover-bg); color: var(--text); }
+
+/* 写操作进行中：禁止再点动作按钮（避免同一文件连点两次），并把光标换成进行中 */
+#board.busy { cursor: progress; }
+#board.busy .act { pointer-events: none; }
+
+/* ——— 覆盖层里的提交区 ——— */
+
+/* flex: 1 让提交区吃掉标题与 Esc 提示之间的全部空间，输入框因此能随窗口伸展 */
+#commit {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+#commit-msg {
+  flex: 1 1 200px;
+  min-width: 100px;
+  max-width: 380px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+#commit-msg:focus {
+  outline: none;
+  border-color: var(--git-modified);
+}
+#commit button {
+  flex: none;
+  font: inherit;
+  color: var(--text);
+  background: var(--badge-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+#commit button:hover { background: var(--hover-bg); }
+/* 正在写的时候两个按钮都置灰：一次只允许一个写操作在飞 */
+#commit button:disabled { opacity: 0.5; cursor: default; }
+
+/* 最近一次写操作的结果。空的时候整行消失（:empty 对"没有任何子节点"成立，
+   而 textContent = '' 正好清空子节点） */
+#diff-op {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  /* git 的输出是多行的（commit 摘要、push 进度），原样换行显示 */
+  white-space: pre-wrap;
+  color: var(--cont-fg);
+  border-bottom: 1px solid var(--card-border);
+}
+#diff-op:empty { display: none; }
+#diff-op.error { color: var(--git-conflicting); }

@@ -45,8 +45,19 @@
   <header>
     <button id="diff-back" type="button"></button>
     <span id="diff-title"></span>
+    <!-- 提交区：写提交信息并提交、推送。放在标题栏里而不是另起一栏，是因为它作用于
+         "当前这个仓库"，而打开覆盖层时恰好已经确定了是哪个仓库；三个控件的文字与
+         占位符都由 app.js 按语言填（这里只放结构） -->
+    <span id="commit">
+      <input id="commit-msg" type="text" autocomplete="off" spellcheck="false">
+      <button id="commit-btn" type="button"></button>
+      <button id="push-btn" type="button"></button>
+    </span>
     <span id="diff-esc"><kbd>Esc</kbd></span>
   </header>
+  <!-- 最近一次写操作的结果：成功显示 git 的原话，失败显示 git 的原话或错误。
+      单独一行而不是塞进正文，是因为正文每次重载都会被重建，提示会被一起冲掉 -->
+  <p id="diff-op"></p>
   <div id="diff-body"></div>
 </div>
 <script src="app.js"></script>

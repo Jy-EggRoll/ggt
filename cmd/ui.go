@@ -20,6 +20,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -142,6 +143,16 @@ func (c *uiCache) repos() *uiPayload {
 	c.data = collectUIPayload(c.ctx)
 	c.at = time.Now()
 	return c.data
+}
+
+// invalidate 丢弃当前快照，让下一次读取重新采集。
+//
+// 写操作之后必须调用：缓存窗口是 2 秒，不清掉的话页面紧接着刷新拿到的仍是写之前的状态，
+// 表现为"点了没反应"、两秒后才突然变化——这种迟一拍的反馈比慢更让人困惑
+func (c *uiCache) invalidate() {
+	c.mu.Lock()
+	c.data = nil
+	c.mu.Unlock()
 }
 
 // collectUIPayload 并发采集全部仓库的状态并排好序。
@@ -301,15 +312,9 @@ func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
 	var file *uiFile
 	var paths []string
 	if filePath != "" {
-		f, ok := findUIFile(repo, filePath)
-		if !ok {
-			writeUIDiffError(w, http.StatusNotFound, l10n.T("Unknown file", nil))
-			return
-		}
-		// 纵深防御：porcelain 给出的路径本就应当是仓库内的相对路径，这里再挡一次，
-		// 免得将来某条状态解析路径被改坏之后，页面能顺着 ../ 读出去
-		if !filepath.IsLocal(filePath) {
-			writeUIDiffError(w, http.StatusBadRequest, l10n.T("Invalid file path", nil))
+		f, err := lookupUIFile(repo, filePath)
+		if err != nil {
+			writeUIDiffError(w, statusOf(err, http.StatusInternalServerError), err.Error())
 			return
 		}
 		file = &f
@@ -317,12 +322,8 @@ func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
 		out.OrigPath = f.OrigPath
 		out.Untracked = f.Untracked
 		out.Unmerged = f.Unmerged
-		// 重命名要同时给新旧两个路径：只给新路径时旧路径那半边匹配不上，
-		// git 会退化成"删一个文件 + 加一个文件"两条记录，看不出这是一次重命名
-		paths = append(paths, f.Path)
-		if f.OrigPath != "" {
-			paths = append(paths, f.OrigPath)
-		}
+		// 重命名要同时给新旧两个路径，理由见 uiAffectedPaths
+		paths = uiAffectedPaths(f)
 	}
 
 	ctx := r.Context()
@@ -471,6 +472,63 @@ func findUIFile(r *uiRepo, path string) (uiFile, bool) {
 	return uiFile{}, false
 }
 
+// uiParamError 是"页面传来的参数不合法"这一类错误，附带应当回给页面的状态码。
+//
+// 为什么要带状态码：同一份路径校验被读（/api/diff）与写（暂存、取消暂存）两条路径共用，
+// 而两条路径的失败码不同——读是 400/404，写更贴近 409。让校验处决定状态码、
+// 调用处只管回响应，就不会出现两处各自发挥、慢慢漂移的情况
+type uiParamError struct {
+	status int
+	msg    string
+}
+
+func (e *uiParamError) Error() string { return e.msg }
+
+// statusOf 取出错误里携带的状态码；不是 uiParamError 时返回 fallback。
+//
+// 两条调用路径的 fallback 不同，这正是它必须成为参数的原因：
+//   - 读路径（/api/diff）的校验失败只可能是参数错误，真出现别的就是我们的 bug，fallback 用 500
+//   - 写路径还会遇到 git 自身的拒绝（存在冲突、没有暂存内容、未配置身份），
+//     那属于"当前状态不允许这个操作"，fallback 用 409 与真正的服务端故障区分开
+func statusOf(err error, fallback int) int {
+	var pe *uiParamError
+	if errors.As(err, &pe) {
+		return pe.status
+	}
+	return fallback
+}
+
+// lookupUIFile 校验页面传来的文件路径，返回快照里的条目。
+//
+// 两道检查都与 /api/diff 一致，且只有这一份实现：
+//   - 必须命中快照里的条目 -> 404。页面传来的 <仓库, 文件> 只能来自上一次 /api/repos，
+//     因此即便有人手工构造请求，也读不到、更动不到配置之外的仓库与仓库之外的文件
+//   - 必须是仓库内的相对路径 -> 400。纵深防御：porcelain 给出的路径本就应当是仓库内的相对路径，
+//     这里再挡一次，免得将来某条状态解析路径被改坏之后，页面能顺着 ../ 动到仓库外
+func lookupUIFile(repo *uiRepo, path string) (uiFile, error) {
+	file, ok := findUIFile(repo, path)
+	if !ok {
+		return uiFile{}, &uiParamError{http.StatusNotFound, l10n.T("Unknown file", nil)}
+	}
+	if !filepath.IsLocal(path) {
+		return uiFile{}, &uiParamError{http.StatusBadRequest, l10n.T("Invalid file path", nil)}
+	}
+	return file, nil
+}
+
+// uiAffectedPaths 给出一次 git 操作要覆盖的路径集合。
+//
+// 重命名必须同时给新旧两个路径：这一点在 diff 上是"看不出是重命名"，在暂存操作上更严重——
+// 实测只给新路径取消暂存，旧路径那份删除会留在暂存区（状态变成 "D old + ?? new"），
+// 看起来像没撤干净
+func uiAffectedPaths(f uiFile) []string {
+	paths := []string{f.Path}
+	if f.OrigPath != "" {
+		paths = append(paths, f.OrigPath)
+	}
+	return paths
+}
+
 // writeUIDiff 输出 diff 响应。与 handleRepos 一样关掉 HTML 转义：
 // diff 正文里 < > & 极常见，转义后排查接口时看到的 JSON 无法阅读
 func writeUIDiff(w http.ResponseWriter, out uiDiff) {
@@ -495,6 +553,157 @@ func writeUIDiffJSON(w http.ResponseWriter, out uiDiff) {
 	if err := enc.Encode(out); err != nil {
 		// 响应头已发出，无法再改状态码，只能记录日志
 		logger.Error(l10n.T("Failed to encode the diff response", nil), "error", err)
+	}
+}
+
+// ——— 写操作：暂存 / 取消暂存 / 提交 / 推送 ———
+//
+// 四者都改仓库状态，因此一律挂在 POST 上：基座的 writeGuard 只对非 GET/HEAD 做同源校验，
+// 挂在 GET 上等于自己把 CSRF 那道防线绕掉
+//
+// 共同的三条前提：
+//   - 仓库必须命中已有快照，页面根本传不进配置之外的路径
+//   - 文件必须同时命中该仓库快照里的条目、且是仓库内的相对路径
+//   - 失败原因一律把 git 的原话透给页面，不翻译成"操作失败"：push 失败可能是没 upstream、
+//     可能是网络、可能是权限，笼统的提示等于让用户自己去猜
+
+// uiWriteRequest 是四个写端点共用的请求体。
+// 不拆成四个结构：字段少且同名同义，拆开只会让前端多记几种形状
+type uiWriteRequest struct {
+	// Repo 是仓库绝对路径，必须与 /api/repos 返回的一致
+	Repo string `json:"repo"`
+	// File 是相对仓库根的路径，仅暂存/取消暂存使用
+	File string `json:"file"`
+	// Message 是提交信息，仅提交使用
+	Message string `json:"message"`
+}
+
+// uiWriteResult 是四个写端点的统一响应。
+// 成功带 Output（git 的原话：提交摘要、push 进度），失败带 Error
+type uiWriteResult struct {
+	Output string `json:"output,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// handleWrite 是所有写操作的公共骨架：方法校验 -> 取仓库 -> 跑具体动作 -> 失效快照 -> 回响应。
+// 各端点只负责"跑哪条 git 命令"，路径校验与响应形状都收敛在这里
+func (c *uiCache) handleWrite(w http.ResponseWriter, r *http.Request, run func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error)) {
+	// 只认 POST：写操作挂在 GET 上会被基座的同源校验直接放过，那正是 CSRF 想利用的形状
+	if r.Method != http.MethodPost {
+		writeUIWrite(w, http.StatusMethodNotAllowed, uiWriteResult{Error: l10n.T("Only POST is allowed", nil)})
+		return
+	}
+
+	var req uiWriteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeUIWrite(w, http.StatusBadRequest, uiWriteResult{Error: l10n.T("Invalid request body", nil)})
+		return
+	}
+
+	repo, ok := findUIRepo(c.repos(), req.Repo)
+	if !ok {
+		writeUIWrite(w, http.StatusNotFound, uiWriteResult{Error: l10n.T("Unknown repository", nil)})
+		return
+	}
+
+	out, err := run(r.Context(), repo, req)
+
+	// 不论成败都失效快照：失败也可能是"部分生效"（例如 push 已经送达但退出码非零），
+	// 而重新采集一次的代价远小于让页面停在一个错的旧状态上
+	c.invalidate()
+
+	if err != nil {
+		// git 的说明在 output 里（RunCombinedContext 即使非零退出也返回它），而 err 只是
+		// "exit status 128" 这种毫无信息量的包装。对用户来说，"没有 upstream 分支""没有
+		// 可提交的内容"这类原话才是他判断该做什么的依据，因此有 output 就用 output
+		msg := strings.TrimSpace(out)
+		if msg == "" {
+			msg = err.Error()
+		}
+		writeUIWrite(w, statusOf(err, http.StatusConflict), uiWriteResult{Error: msg})
+		return
+	}
+	writeUIWrite(w, http.StatusOK, uiWriteResult{Output: out})
+}
+
+// handleStage 暂存一个文件。
+func (c *uiCache) handleStage(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error) {
+		file, err := lookupUIFile(repo, req.File)
+		if err != nil {
+			return "", err
+		}
+		// 未合并的文件明确拒绝，这是本视图唯一一处"不给做"的操作。
+		// 理由：对冲突文件执行 git add 等于把工作区那一份（通常还带着 <<<<<<< 标记）
+		// 当成分辨结果暂存下来，一次点击就可能把冲突标记提交进去。
+		// 本看板把冲突标成 "!"，含义是"这里要人来处理"，而不是"点一下就解决"
+		if file.Unmerged {
+			return "", &uiParamError{
+				http.StatusConflict,
+				l10n.T("This file is unmerged; stage the resolution from a terminal", nil),
+			}
+		}
+		// add -A 而不是 add：工作区删除的文件也要能暂存，plain add 不记录删除
+		// （实测 " D g.txt" 经 add 后变成 "D  g.txt"）
+		return git.RunCombinedContext(ctx, repo.Path, append([]string{"add", "-A", "--"}, uiAffectedPaths(file)...)...)
+	})
+}
+
+// handleUnstage 取消暂存一个文件。
+//
+// 用 reset HEAD -- 而不是 restore --staged：实测在"尚无提交"的仓库上 restore 会直接失败
+// （fatal: could not resolve HEAD），而"刚 add 完、还没第一次提交就想撤回"恰恰是最需要
+// 这个按钮的时候；reset HEAD -- 在那种仓库上正常工作
+func (c *uiCache) handleUnstage(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error) {
+		file, err := lookupUIFile(repo, req.File)
+		if err != nil {
+			return "", err
+		}
+		return git.RunCombinedContext(ctx, repo.Path, append([]string{"reset", "-q", "HEAD", "--"}, uiAffectedPaths(file)...)...)
+	})
+}
+
+// handleCommit 用页面给的提交信息创建一次提交，只提交已暂存的改动。
+//
+// "只提交已暂存"不需要额外判断：git commit 本来就只提交暂存区，有未合并条目时它自己会拒绝，
+// 没有暂存内容时也会明确报错——那些原话对用户比任何自拟提示都有用
+func (c *uiCache) handleCommit(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error) {
+		msg := strings.TrimSpace(req.Message)
+		if msg == "" {
+			return "", &uiParamError{http.StatusBadRequest, l10n.T("The commit message is empty", nil)}
+		}
+		// 以 argv 直接传参（不经 shell），信息里的任何字符都不会被解释；
+		// 以 - 开头也安全：-m 会把它当成自己的参数而不是选项（实测过 "-foo bar"）
+		return git.RunCombinedContext(ctx, repo.Path, "commit", "-m", msg)
+	})
+}
+
+// handlePush 推送当前分支。
+//
+// 不替用户建立跟踪关系（不加 -u）：往哪个远程、哪个分支推送是仓库拓扑的一部分，
+// 由服务自作主张建好跟踪，一旦推错对象代价很高。git 自己会明确拒绝并说明该怎么建
+// （有远程但没 upstream 时说 "has no upstream branch" 并给出 --set-upstream 的用法；
+// 连远程都没配时说 "No configured push destination"），这些原话直接透给页面
+func (c *uiCache) handlePush(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
+		return git.RunCombinedContext(ctx, repo.Path, "push")
+	})
+}
+
+// writeUIWrite 回一个写操作的结果。
+// 与其它端点一样关掉 HTML 转义：git 的输出里 < > & 常见（例如冲突标记），
+// 转义后页面看到的会是一串 \u003c
+func writeUIWrite(w http.ResponseWriter, status int, out uiWriteResult) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(out); err != nil {
+		// 响应头已发出，无法再改状态码，只能记录日志
+		logger.Error(l10n.T("Failed to encode the write response", nil), "error", err)
 	}
 }
 
@@ -562,6 +771,12 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	// 点开某个仓库或文件时的只读 diff。与 /api/repos 挂在同一个 mux 上，
 	// 因此同样在 webui 基座的 Host/Origin/token 三道护栏之内
 	mux.HandleFunc("/api/diff", cache.handleDiff)
+	// 四个写端点。它们同样只挂在 mux 上而不额外加护栏：基座对非 GET/HEAD 会先做
+	// Origin/Referer 同源校验，再限 body 大小，写请求的 CSRF 面由那一层负责
+	mux.HandleFunc("/api/stage", cache.handleStage)
+	mux.HandleFunc("/api/unstage", cache.handleUnstage)
+	mux.HandleFunc("/api/commit", cache.handleCommit)
+	mux.HandleFunc("/api/push", cache.handlePush)
 
 	// 页面自己不会说"当前语言是哪个"，由 Go 端把语言写进两个占位符：
 	//   - __GGT_LANG_VALUE__ 供页面内翻译表选语言

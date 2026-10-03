@@ -51,6 +51,11 @@ const MSG = {
     diffUnmerged: 'Unmerged — conflict markers shown below',
     diffTruncated: 'Output truncated — the change is too large to show in full',
     back: 'Back',
+    stage: 'Stage this file',
+    unstage: 'Unstage this file',
+    commit: 'Commit',
+    push: 'Push',
+    commitMsg: 'Commit message',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -72,6 +77,11 @@ const MSG = {
     diffUnmerged: '未合并 —— 下面显示冲突标记',
     diffTruncated: '输出过大，已截断，仅显示前面一部分',
     back: '返回',
+    stage: '暂存这个文件',
+    unstage: '取消暂存这个文件',
+    commit: '提交',
+    push: '推送',
+    commitMsg: '提交信息',
   },
 };
 
@@ -117,9 +127,16 @@ const diffEl = document.getElementById('diff');
 const diffBackEl = document.getElementById('diff-back');
 const diffTitleEl = document.getElementById('diff-title');
 const diffBodyEl = document.getElementById('diff-body');
+const diffOpEl = document.getElementById('diff-op');
+const commitMsgEl = document.getElementById('commit-msg');
+const commitBtnEl = document.getElementById('commit-btn');
+const pushBtnEl = document.getElementById('push-btn');
 
 // 返回按钮的文字在 JS 里填：它要跟随语言，而 index.html 是静态骨架、不参与翻译
 diffBackEl.textContent = '← ' + t('back');
+commitBtnEl.textContent = t('commit');
+pushBtnEl.textContent = t('push');
+commitMsgEl.placeholder = t('commitMsg');
 
 // 从 URL 取 token。页面是由 Go 端带 token 的地址打开的，之后所有请求改用请求头传递：
 // 把凭据留在 URL 里会进入浏览器历史、也可能随 Referer 泄露
@@ -191,6 +208,21 @@ function fileStatus(f) {
   if (WORKTREE[wk]) return WORKTREE[wk];
   // 认不出的状态码不猜：保留原始字符并沿用未跟踪的中性色，便于发现解析遗漏
   return { letter: (ix + wk).trim().slice(0, 1) || '?', cls: 'st-ignored' };
+}
+
+// actions 决定这一行要不要出「暂存 / 取消暂存」按钮。判据就是 porcelain 的两个状态位：
+//   - 可暂存：工作区那一侧有改动（含未跟踪、含删除）——未跟踪文件的两位都是 '?'
+//   - 可取消暂存：暂存区那一侧有改动（含新增、含删除）；未跟踪文件不在索引里，故排除
+// 未合并的文件两个按钮都不给：冲突要人来解决，给一个"点一下就解决"的按钮太容易误伤
+// （后端也会拒绝，见 handleStage；这里不给按钮只是别把危险动作摆在手边）
+function actions(f) {
+  if (f.unmerged) return { stage: false, unstage: false };
+  const ix = f.index || '.';
+  const wk = f.work || '.';
+  return {
+    stage: wk !== '.',
+    unstage: !f.untracked && ix !== '.',
+  };
 }
 
 // ——— 文件类型图标（Seti） ———
@@ -382,13 +414,24 @@ function rowHTML(s) {
     const slash = f.path.lastIndexOf('/');
     const base = slash === -1 ? f.path : f.path.slice(slash + 1);
     const dir = slash === -1 ? '' : f.path.slice(0, slash);
+    // 动作按钮排在状态字母之后（行尾最右），与 VSCode 的列表行一致。
+    // data-act 而不是两个不同的 class 选择器：点击处只需读一个属性值就知道该干哪件事
+    const act = actions(f);
+    let acts = '';
+    if (act.stage || act.unstage) {
+      acts = '<span class="acts">';
+      if (act.stage) acts += '<button class="act" type="button" data-act="stage" title="' + esc(t('stage')) + '">+</button>';
+      if (act.unstage) acts += '<button class="act" type="button" data-act="unstage" title="' + esc(t('unstage')) + '">−</button>';
+      acts += '</span>';
+    }
     return (
       iconHTML(base) +
       // 目录用 .dir 而不是 .branch：.branch 的规则只作用于仓库标题行（.row.head .branch），
       // 用在文件行上会匹配不到任何规则，目录便继承了文件名的状态色——而两处注释都写明
       // 目录应当比文件名更淡。这是一处类名与规则名对不上的笔误，颜色上的表现是"路径整段同色"
       '<span class="path">' + esc(base) + (dir ? '<span class="dir"> ' + esc(dir) + '</span>' : '') + '</span>' +
-      '<span class="letter">' + esc(st.letter) + '</span>'
+      '<span class="letter">' + esc(st.letter) + '</span>' +
+      acts
     );
   }
 
@@ -623,30 +666,25 @@ function renderDiff(repo, file, out) {
   diffBodyEl.innerHTML = blocks.join('');
 }
 
-// openDiff 打开某个仓库（file 为空 → 整个仓库）或某个文件的 diff。
-// 异步：本地接口也有一次往返，期间先显示"加载中"，避免看起来是点了没反应
-async function openDiff(spec) {
-  const repo = spec.repo;
-  const file = spec.file || null;
-  const seq = ++diffSeq;
+// diffSpec 是覆盖层当前展示的那一行（仓库 + 可选文件）。
+// 提交或推送之后要重取一次 diff（暂存区变了，两段内容就跟着变），靠它重建请求
+let diffSpec = null;
 
-  // 标题只用我们已经知道的信息（仓库名、文件路径），不必等接口回来才显示
-  const shown = file ? (file.origPath ? file.origPath + ' → ' + file.path : file.path) : '';
-  diffTitleEl.innerHTML =
-    '<span>' + esc(repo.name) + '</span>' + (shown ? '<span class="dir"> ' + esc(shown) + '</span>' : '');
+// draftMsg 按仓库暂存提交信息草稿。
+// 为什么需要它：写好了又去翻看看板、或切到另一个仓库再回来，信息不该丢；
+// 而把信息留在同一个输入框里不管，则会串仓——给 A 写的信息被提给了 B
+const draftMsg = new Map();
+
+// loadDiff 按 diffSpec 取一次 diff 并渲染。
+// 与 openDiff 分开，是因为写操作之后要"重取同一份"而不该重走一遍打开的副作用
+// （改标题、抢焦点、重置滚动位置）
+async function loadDiff() {
+  const spec = diffSpec;
+  const seq = ++diffSeq;
   diffBodyEl.textContent = t('diffLoading');
 
-  diffOpen = true;
-  diffScrollX = window.scrollX;
-  diffEl.classList.add('open');
-  diffEl.setAttribute('aria-hidden', 'false');
-  // 看板仍是布局中的元素，只是被盖住；不锁住 html 的话滚轮与方向键还能滚它
-  document.documentElement.style.overflow = 'hidden';
-  stopPolling();
-  diffBackEl.focus();
-
-  const params = new URLSearchParams({ repo: repo.path });
-  if (file) params.set('file', file.path);
+  const params = new URLSearchParams({ repo: spec.repo.path });
+  if (spec.file) params.set('file', spec.file.path);
 
   let out;
   try {
@@ -659,8 +697,35 @@ async function openDiff(spec) {
 
   // 用户在响应到达之前按了 Esc（或又点开了别的）就把这次结果丢掉，
   // 否则会出现"已经回到看板却又被旧结果写了一次"
-  if (seq !== diffSeq || !diffOpen) return;
-  renderDiff(repo, file, out);
+  if (seq !== diffSeq || !diffOpen || spec !== diffSpec) return;
+  renderDiff(spec.repo, spec.file || null, out);
+}
+
+// openDiff 打开某个仓库（file 为空 → 整个仓库）或某个文件的 diff。
+// 异步：本地接口也有一次往返，期间先显示"加载中"，避免看起来是点了没反应
+async function openDiff(spec) {
+  const repo = spec.repo;
+  const file = spec.file || null;
+  diffSpec = spec;
+
+  // 标题只用我们已经知道的信息（仓库名、文件路径），不必等接口回来才显示
+  const shown = file ? (file.origPath ? file.origPath + ' → ' + file.path : file.path) : '';
+  diffTitleEl.innerHTML =
+    '<span>' + esc(repo.name) + '</span>' + (shown ? '<span class="dir"> ' + esc(shown) + '</span>' : '');
+  // 上一次的写操作结果属于上一个仓库，不该带到这次来
+  setOp('');
+  commitMsgEl.value = draftMsg.get(repo.path) || '';
+
+  diffOpen = true;
+  diffScrollX = window.scrollX;
+  diffEl.classList.add('open');
+  diffEl.setAttribute('aria-hidden', 'false');
+  // 看板仍是布局中的元素，只是被盖住；不锁住 html 的话滚轮与方向键还能滚它
+  document.documentElement.style.overflow = 'hidden';
+  stopPolling();
+  diffBackEl.focus();
+
+  await loadDiff();
 }
 
 // closeDiff 关闭覆盖层并恢复看板。
@@ -668,6 +733,7 @@ function closeDiff() {
   if (!diffOpen) return;
   diffOpen = false;
   diffSeq++; // 作废可能还在路上的那次响应
+  if (diffSpec) draftMsg.set(diffSpec.repo.path, commitMsgEl.value);
   diffEl.classList.remove('open');
   diffEl.setAttribute('aria-hidden', 'true');
   document.documentElement.style.overflow = '';
@@ -678,20 +744,121 @@ function closeDiff() {
   startPolling();
 }
 
+// ——— 写操作：暂存 / 取消暂存 / 提交 / 推送 ———
+
+// writeBusy 为真时拒绝新的写操作：一次只让一个请求在飞。
+// 行尾那两个按钮只有几个像素宽，连点两下的代价是发出两条 git 命令，其中一条必然失败，
+// 弹出一条让人摸不着头脑的错误
+let writeBusy = false;
+
+// setOp 显示最近一次写操作的结果。失败用红色：这块看板上红色一律表示"需要你看一眼"
+function setOp(text, isError) {
+  diffOpEl.textContent = text || '';
+  diffOpEl.classList.toggle('error', !!isError);
+}
+
+// postJSON 发一个写请求。四个写端点都在 POST 上：基座只对非 GET/HEAD 做同源校验，
+// 同源 fetch 会自动带上 Origin；token 仍走请求头，与读请求同一套
+async function postJSON(path, body) {
+  const headers = Object.assign({ 'Content-Type': 'application/json' }, authHeaders || {});
+  const res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
+  const out = await res.json().catch(() => ({}));
+  // 非 JSON 响应（基座直接回的 401/403 纯文本）也要能说出原因，否则页面只会显示"失败了"
+  if (out.error === undefined && !res.ok) out.error = 'HTTP ' + res.status;
+  return out;
+}
+
+// runWrite 是所有写操作的公共外壳：置忙 -> 发请求 -> 显示结果 -> 重取数据。
+// 无论成败都重取：失败也可能已经改变了仓库状态（例如 push 已送达但退出码非零）
+async function runWrite(path, body) {
+  if (writeBusy) return null;
+  writeBusy = true;
+  board.classList.add('busy');
+  commitBtnEl.disabled = true;
+  pushBtnEl.disabled = true;
+  let out;
+  try {
+    out = await postJSON(path, body);
+    // git 的原话优先：失败的说明（没有 upstream、没有可提交的内容）与成功的摘要
+    // 都是用户判断"到底发生了什么"的唯一依据，页面不再自拟一套说法
+    setOp(out.error || out.output || '', !!out.error);
+  } catch (err) {
+    out = { error: err.message };
+    setOp(t('loadFailed', { err: err.message }), true);
+  } finally {
+    writeBusy = false;
+    board.classList.remove('busy');
+    commitBtnEl.disabled = false;
+    pushBtnEl.disabled = false;
+    refresh();
+  }
+  return out;
+}
+
+// applyFileAction 执行行内的暂存 / 取消暂存。
+async function applyFileAction(spec, action) {
+  const out = await runWrite(action === 'stage' ? '/api/stage' : '/api/unstage', {
+    repo: spec.repo.path,
+    file: spec.file.path,
+  });
+  if (!out) return;
+  // 覆盖层关着的时候没有提示行可写，只能借用右下角那行状态；开着时已由 setOp 显示过
+  if (diffOpen) return;
+  statusEl.classList.toggle('error', !!out.error);
+  statusEl.textContent = out.error || '';
+}
+
+// commitFromUI 用输入框里的信息提交。成功才清空输入框：失败时保留原文，
+// 便于用户改一处再试，而不是从头再敲一遍
+async function commitFromUI() {
+  const out = await runWrite('/api/commit', { repo: diffSpec.repo.path, message: commitMsgEl.value.trim() });
+  if (!out || out.error) return;
+  commitMsgEl.value = '';
+  draftMsg.delete(diffSpec.repo.path);
+  await loadDiff(); // 暂存区已经变了，diff 的两段内容要跟着变
+}
+
+// pushFromUI 推送当前分支。推送不改动两段 diff 的内容，但会把"领先 N"这类状态清掉，
+// 因此看板已在 runWrite 里重取；这里只把 diff 也重取一次以保持一致
+async function pushFromUI() {
+  const out = await runWrite('/api/push', { repo: diffSpec.repo.path });
+  if (out && !out.error) await loadDiff();
+}
+
 // 点行即可打开：用事件委托而不是给每行挂监听——行元素会被复用、也会被增删，
 // 逐个挂就要在 reconcile 里同步维护，委托只需这一处
 board.addEventListener('click', (e) => {
   const row = e.target.closest('.row');
   if (!row || !row.__spec) return;
-  if (row.__spec.kind !== 'head' && row.__spec.kind !== 'file') return;
-  openDiff(row.__spec);
+  const s = row.__spec;
+  if (s.kind !== 'head' && s.kind !== 'file') return;
+  // 行尾的动作按钮优先于"打开 diff"：它是行内动作，不该顺带把整页 diff 打开
+  const act = e.target.closest('.act');
+  if (act) {
+    applyFileAction(s, act.dataset.act);
+    return;
+  }
+  openDiff(s);
 });
 
 diffBackEl.addEventListener('click', closeDiff);
+commitBtnEl.addEventListener('click', commitFromUI);
+pushBtnEl.addEventListener('click', pushFromUI);
+
+// 回车即提交：写提交信息时手不用离开键盘
+commitMsgEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') commitFromUI();
+});
 
 document.addEventListener('keydown', (e) => {
-  // 只认 Esc：覆盖层是只读视图，没有输入框，不需要考虑"正在输入时 Esc 另有含义"
-  if (e.key === 'Escape') closeDiff();
+  if (e.key !== 'Escape' || !diffOpen) return;
+  // 焦点在提交输入框里时，Esc 先退出输入而不是关掉整页——否则"想退出输入框"这个动作
+  // 会把刚写好的提交信息一起丢掉（它会留在草稿里，但用户并不知道）。再按一次才关
+  if (document.activeElement === commitMsgEl) {
+    commitMsgEl.blur();
+    return;
+  }
+  closeDiff();
 });
 
 // ——— 主循环 ———
