@@ -26,7 +26,10 @@
 </head>
 <body>
 <!-- aria-busy 在首次数据到达前为 true，屏幕阅读器据此知道内容还在加载 -->
-<main id="board" aria-busy="true"></main>
+<!-- cont-layer 是续段标识的专用容器，本身不在文档流里占位（子元素都是绝对定位，
+     放在哪个容器下都不影响坐标）。把它独立成一层是为了让"换掉全部续段标识"变成
+     一次 replaceChildren，而不是逐个增删——后者在几万行的看板上代价很大，见 app.js 的 layout -->
+<main id="board" aria-busy="true"><div id="cont-layer"></div></main>
 <p id="empty" hidden></p>
 <p id="status" role="status" aria-live="polite"></p>
 <!--
