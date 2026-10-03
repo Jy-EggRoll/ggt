@@ -50,6 +50,7 @@ const MSG = {
     diffBinary: 'Binary file — contents not shown',
     diffUnmerged: 'Unmerged — conflict markers shown below',
     diffTruncated: 'Output truncated — the change is too large to show in full',
+    groupUnmerged: 'Unmerged Changes',
     back: 'Back',
     stage: 'Stage this file',
     unstage: 'Unstage this file',
@@ -81,6 +82,7 @@ const MSG = {
     diffBinary: '二进制文件 —— 不显示内容',
     diffUnmerged: '未合并 —— 下面显示冲突标记',
     diffTruncated: '输出过大，已截断，仅显示前面一部分',
+    groupUnmerged: '未合并的改动',
     back: '返回',
     stage: '暂存这个文件',
     unstage: '取消暂存这个文件',
@@ -203,41 +205,39 @@ const WORKTREE = {
 
 // fileStatus 把一个变更文件归到 VSCode 的某一个 Status 上。
 //
+// side 决定看哪一侧：'index' 是暂存区相对 HEAD（porcelain 的 X 位），'work' 是工作区相对
+// 暂存区（Y 位）。分组之后同一个文件会在两组里各出现一次，而两组的字母本来就不是同一个
+// （暂存组看 X 位、未暂存组看 Y 位），这正是分组的价值所在
+//
 // 归并规则与理由：
 //   - 未合并优先。VSCode 的七种冲突状态（BOTH_MODIFIED 等）统一取字母 '!' 与
 //     conflictingResourceForeground，上游注释写明不用 ⚠ 是因为它在 Windows 上显示很糟
 //   - 未跟踪取 'U'。注意这与 `git status --short` 的 '??' 不同，是 VSCode 的字母表
 //   - 已经被忽略的条目取 'I'（依赖 git.RunStatus 把 ignored 也解析出来）
-//   - 一个文件同时有暂存与未暂存改动时（porcelain 的 MM），VSCode 会让它同时出现在
-//     「Staged Changes」与「Changes」两个分组里；本看板是平铺列表没有分组，
-//     因此取暂存侧为主——与 VSCode 的 Status 中 INDEX_* 是独立取值这一事实一致
-function fileStatus(f) {
+function fileStatus(f, side) {
   if (f.unmerged) return { letter: '!', cls: 'st-conflicting' };
   if (f.untracked) return { letter: 'U', cls: 'st-untracked' };
-  const ix = f.index || ' ';
-  const wk = f.work || ' ';
-  if (ix !== ' ' && ix !== '?' && ix !== '!') {
-    if (STAGED[ix]) return STAGED[ix];
-  }
-  if (ix === '!') return { letter: 'I', cls: 'st-ignored' };
-  if (WORKTREE[wk]) return WORKTREE[wk];
-  // 认不出的状态码不猜：保留原始字符并沿用未跟踪的中性色，便于发现解析遗漏
-  return { letter: (ix + wk).trim().slice(0, 1) || '?', cls: 'st-ignored' };
-}
-
-// actions 决定这一行要不要出「暂存 / 取消暂存」按钮。判据就是 porcelain 的两个状态位：
-//   - 可暂存：工作区那一侧有改动（含未跟踪、含删除）——未跟踪文件的两位都是 '?'
-//   - 可取消暂存：暂存区那一侧有改动（含新增、含删除）；未跟踪文件不在索引里，故排除
-// 未合并的文件两个按钮都不给：冲突要人来解决，给一个"点一下就解决"的按钮太容易误伤
-// （后端也会拒绝，见 handleStage；这里不给按钮只是别把危险动作摆在手边）
-function actions(f) {
-  if (f.unmerged) return { stage: false, unstage: false };
   const ix = f.index || '.';
   const wk = f.work || '.';
-  return {
-    stage: wk !== '.',
-    unstage: !f.untracked && ix !== '.',
-  };
+  if (ix === '!') return { letter: 'I', cls: 'st-ignored' };
+  if (side === 'index') {
+    // 认不出的状态码不猜：保留原始字符并沿用中性色，便于发现解析遗漏
+    return STAGED[ix] || { letter: ix, cls: 'st-ignored' };
+  }
+  return WORKTREE[wk] || { letter: wk, cls: 'st-ignored' };
+}
+
+// hasStaged / hasWork 判断一个文件在某一侧是否有改动，分组的依据就是它俩
+function hasStaged(f) {
+  if (f.unmerged || f.untracked) return false;
+  const ix = f.index || '.';
+  return ix !== '.' && ix !== '?';
+}
+
+function hasWork(f) {
+  if (f.unmerged) return false;
+  if (f.untracked) return true; // 未跟踪文件的两位都是 '?'，按"只在未暂存这一组"处理
+  return (f.work || '.') !== '.';
 }
 
 // ——— 文件类型图标（Seti） ———
@@ -364,11 +364,23 @@ async function fetchRepos() {
 
 // ——— 行结构 ———
 
+// UI_GROUPS 是卡片内部的分组，顺序照 VSCode 的源码管理视图：未合并的在最前，
+// 然后已暂存、然后未暂存。同一文件同时有暂存与未暂存改动时会在两组各出现一次——VSCode 就是这样，
+// 而两组的行各自只提供自己那一侧的操作，语义因此是自洽的
+const UI_GROUPS = [
+  { id: 'merge', label: 'groupUnmerged', has: (f) => f.unmerged },
+  { id: 'index', label: 'diffStaged', has: hasStaged },
+  { id: 'work', label: 'diffUnstaged', has: hasWork },
+];
+
 // buildSpecs 把仓库列表摊平成行序列。顺序即渲染顺序，排序由服务端完成（排序规则只有一处实现）
 //
 // 干净的仓库只占一行（只有标题行，不额外补一行「工作区干净」说明）：
 // 实测真实配置下 37 个仓库里有 33 个是干净的，若每个都补一行说明，
 // 大半屏都在重复同一句话，而它的信息量等于零——也正是用户提出的痛点
+//
+// 分组是 VSCode 语义的照搬：每个仓库内部按 UI_GROUPS 分段，空分组不显示。
+// 分组的行头也占一行（高度与其它行同为 22px），因此布局那套"行高即常量"的前提不受影响
 function buildSpecs(repos) {
   const specs = [];
   for (const repo of repos) {
@@ -377,11 +389,23 @@ function buildSpecs(repos) {
     if (repo.error) {
       // 采集失败的仓库必须显式说明失败，不能显示成「工作区干净」
       specs.push({ key: repo.path + '\u0000e', kind: 'note', repo, text: t('failed') + ': ' + repo.error });
-    } else if (repo.files.length > 0) {
-      for (const f of repo.files) {
-        // 行的 key 用文件路径而不是下标：文件增删时，其余文件的行元素还能被复用，
-        // 用下标的话一次插入就会让后面所有行的 key 全变，全部重建、动画全丢
-        specs.push({ key: repo.path + '\u0000f\u0000' + f.path, kind: 'file', repo, file: f });
+    } else {
+      for (const group of UI_GROUPS) {
+        const files = repo.files.filter(group.has);
+        if (files.length === 0) continue; // 空分组不显示（VSCode 也不显示）
+        specs.push({ key: repo.path + '\u0000g\u0000' + group.id, kind: 'group', repo, group, count: files.length });
+        for (const f of files) {
+          // 行的 key 用"分组 + 文件路径"而不是下标：文件增删时其余行的元素还能被复用，
+          // 用下标的话一次插入就让后面所有行的 key 全变、全部重建、动画全丢。
+          // 而带上分组是必须的——同一个文件会在两组各出现一次，不带分组的 key 会让两组抢同一个元素
+          specs.push({
+            key: repo.path + '\u0000g\u0000' + group.id + '\u0000f\u0000' + f.path,
+            kind: 'file',
+            repo,
+            group,
+            file: f,
+          });
+        }
       }
     }
     // 干净仓库不再补说明行：实时状态已经在标题行上（分支、领先/落后、游离 HEAD、尚无提交）
@@ -421,23 +445,30 @@ function rowHTML(s) {
     return parts.join('');
   }
 
+  if (s.kind === 'group') {
+    // 分组行头：组名 + 该组的文件数。不可点（没有 kind 为 group 的点击分支）
+    return '<span class="group-name">' + esc(t(s.group.label)) + '</span>' +
+      '<span class="badge">' + s.count + '</span>';
+  }
+
   if (s.kind === 'file') {
     const f = s.file;
-    const st = fileStatus(f);
+    const side = s.group ? s.group.id : 'work';
+    const st = fileStatus(f, side);
     // 路径拆成「文件名 + 目录」两部分：文件名用状态色，目录用更淡的色。
     // 与 VSCode 在列表模式下把路径作为 description 淡化显示一致，也让同类文件名更容易对齐扫读
     const slash = f.path.lastIndexOf('/');
     const base = slash === -1 ? f.path : f.path.slice(slash + 1);
     const dir = slash === -1 ? '' : f.path.slice(0, slash);
-    // 动作按钮排在状态字母之后（行尾最右），与 VSCode 的列表行一致。
-    // data-act 而不是两个不同的 class 选择器：点击处只需读一个属性值就知道该干哪件事
-    const act = actions(f);
+    // 行尾的动作按钮：只给"属于这一组"的那一个。未暂存组给「暂存」，已暂存组给「取消暂存」，
+    // 未合并组两个都不给（冲突要人来解决，后端也会拒绝）——与 VSCode 的行内动作一致
     let acts = '';
-    if (act.stage || act.unstage) {
-      acts = '<span class="acts">';
-      if (act.stage) acts += '<button class="act" type="button" data-act="stage" title="' + esc(t('stage')) + '">+</button>';
-      if (act.unstage) acts += '<button class="act" type="button" data-act="unstage" title="' + esc(t('unstage')) + '">−</button>';
-      acts += '</span>';
+    if (side === 'work') {
+      acts = '<span class="acts"><button class="act" type="button" data-act="stage" title="' +
+        esc(t('stage')) + '">+</button></span>';
+    } else if (side === 'index') {
+      acts = '<span class="acts"><button class="act" type="button" data-act="unstage" title="' +
+        esc(t('unstage')) + '">−</button></span>';
     }
     return (
       iconHTML(base) +
@@ -468,7 +499,7 @@ function reconcile(specs) {
 
     const cls = ['row', s.kind];
     if (s.foot) cls.push('foot');
-    if (s.file) cls.push(fileStatus(s.file).cls);
+    if (s.file) cls.push(fileStatus(s.file, s.group ? s.group.id : 'work').cls);
     if (el.className !== cls.join(' ')) el.className = cls.join(' ');
 
     const html = rowHTML(s);

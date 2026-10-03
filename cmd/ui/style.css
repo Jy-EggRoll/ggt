@@ -222,6 +222,25 @@ body {
   color: var(--text-dim);
 }
 
+/*
+ * 分组行头（未合并的改动 / 已暂存的改动 / 未暂存的改动）。
+ * 高度与文件行同为 --row-h，因此不破坏布局那套"行高即常量"的前提（见 app.js 的 layout）。
+ * 颜色只用次要前景色：分组的语义靠文字与位置表达，不额外引入一组颜色
+ */
+.row.group {
+  height: var(--row-h);
+  line-height: var(--row-h);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.row.group .badge { margin-left: auto; }
+
 /* 路径容器要能收缩才能出省略号：min-width:0 是必需的，flex 项默认 min-width:auto，
    不给它的话长路径会把行尾的状态字母顶出行外 */
 .row .path {
