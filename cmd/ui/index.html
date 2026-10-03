@@ -29,6 +29,26 @@
 <main id="board" aria-busy="true"></main>
 <p id="empty" hidden></p>
 <p id="status" role="status" aria-live="polite"></p>
+<!--
+  diff 视图的容器：覆盖整页替换看板（用户明确要求"点开后整页看 diff，Esc 或返回键回看板"）。
+  这里只放固定不变的骨架——标题栏里有返回按钮与 kbd 提示，正文由 app.js 按 /api/diff 的返回填充。
+  之所以外壳写在 HTML 而不是像行那样由 JS 生成：行是数据驱动的（数量随数据变化），
+  而这个壳的结构与数据无关，放这里能让"页面上有哪几个可聚焦元素"一眼看全。
+  默认不带 open 类即不可见（见 style.css），也因此在初始状态下不参与键盘 Tab 序。
+
+  位置很关键：必须排在下面那行 <script> 之前。app.js 是经典脚本（非 defer/module），
+  在这一行就同步执行，它开头的 getElementById 会立刻取这几个元素；
+  放到脚本之后取到的就是 null，表现为"页面一片空白、控制台报 addEventListener of null"
+  ——本轮就是这么踩的，排查时看到的是白屏，很难联想到是标签顺序
+-->
+<div id="diff" aria-hidden="true">
+  <header>
+    <button id="diff-back" type="button"></button>
+    <span id="diff-title"></span>
+    <span id="diff-esc"><kbd>Esc</kbd></span>
+  </header>
+  <div id="diff-body"></div>
+</div>
 <script src="app.js"></script>
 </body>
 </html>

@@ -23,10 +23,13 @@ vars:
   L10N_ARGS: '--pkg github.com/jy-eggroll/eggokit/l10n --src cmd,internal --dir internal/locales'
 
 tasks:
-  # build（当前平台）仍声明 sources/generates 做增量判断，因此它下面列的资源目录要跟着维护：
-  # 除了 Go 源码还列了 internal/locales/*.json——语言文件由 go:embed 打进二进制，
-  # 改动它同样需要重新构建，只列 ./**/*.go 的话 Task 会把任务误判为 up-to-date 而沿用旧译文
-  # 以后新增任何被 embed 的资源目录，记得同步加进 build 的 sources
+  # build（当前平台）仍声明 sources/generates 做增量判断，因此它下面列的资源目录要跟着维护。
+  # 目前有两处资源由 go:embed 打进二进制，改动任何一个都必须重新构建——只列 ./**/*.go 的话
+  # Task 会把任务误判为 up-to-date 而沿用旧版本：
+  #   internal/locales/*.json  语言文件（漏了它，二进制里会是旧译文）
+  #   cmd/ui/*                 WebUI 页面资产（漏了它，改了 app.js 页面却毫无变化——这是实际
+  #                            踩过的：前端改动全部"生效失败"，而构建一路报 OK，很难往这里想）
+  # 以后新增任何被 embed 的资源目录，记得同步加进这里
   # 注意：build-all 已改为一条 buildall 命令，不做增量判断，因此不受此约束影响
   default:
     desc: 完整构建与验证：格式化检查 + 静态检查 + 单元测试 + 竞态检测 + 全平台编译
@@ -135,6 +138,7 @@ tasks:
       - go.mod
       - go.sum
       - internal/locales/*.json
+      - cmd/ui/*
     generates:
       - build/{{.APP}}{{exeExt}}
 

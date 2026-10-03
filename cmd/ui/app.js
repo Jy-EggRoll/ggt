@@ -41,6 +41,16 @@ const MSG = {
     loadFailed: 'Failed to load: {{err}}',
     failed: 'status failed',
     noRepos: 'No repositories configured — add one with "ggt repo add <path>"',
+    diffStaged: 'Staged Changes',
+    diffUnstaged: 'Unstaged Changes',
+    diffEmpty: 'No changes',
+    diffLoading: 'Loading…',
+    diffFailed: 'Failed to load the diff: {{err}}',
+    diffUntracked: 'New file (untracked) — shown in full as an addition',
+    diffBinary: 'Binary file — contents not shown',
+    diffUnmerged: 'Unmerged — conflict markers shown below',
+    diffTruncated: 'Output truncated — the change is too large to show in full',
+    back: 'Back',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -52,6 +62,16 @@ const MSG = {
     loadFailed: '加载失败：{{err}}',
     failed: '状态读取失败',
     noRepos: '尚未配置仓库 —— 用 "ggt repo add <路径>" 添加',
+    diffStaged: '已暂存的改动',
+    diffUnstaged: '未暂存的改动',
+    diffEmpty: '没有改动',
+    diffLoading: '加载中…',
+    diffFailed: '加载 diff 失败：{{err}}',
+    diffUntracked: '新文件（未跟踪）—— 整份按新增展示',
+    diffBinary: '二进制文件 —— 不显示内容',
+    diffUnmerged: '未合并 —— 下面显示冲突标记',
+    diffTruncated: '输出过大，已截断，仅显示前面一部分',
+    back: '返回',
   },
 };
 
@@ -93,10 +113,18 @@ const EXTERNAL_SCROLL_TOLERANCE = 3;
 const board = document.getElementById('board');
 const emptyEl = document.getElementById('empty');
 const statusEl = document.getElementById('status');
+const diffEl = document.getElementById('diff');
+const diffBackEl = document.getElementById('diff-back');
+const diffTitleEl = document.getElementById('diff-title');
+const diffBodyEl = document.getElementById('diff-body');
+
+// 返回按钮的文字在 JS 里填：它要跟随语言，而 index.html 是静态骨架、不参与翻译
+diffBackEl.textContent = '← ' + t('back');
 
 // 从 URL 取 token。页面是由 Go 端带 token 的地址打开的，之后所有请求改用请求头传递：
 // 把凭据留在 URL 里会进入浏览器历史、也可能随 Referer 泄露
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const authHeaders = TOKEN ? { 'X-WebUI-Token': TOKEN } : undefined;
 
 // rowEls 是「上一次渲染留下的行元素」，按 key 索引。
 // 保留它们是为了 DOM 复用：数据刷新时能复用的元素就复用，位置变化由 CSS transition 平滑过渡；
@@ -282,8 +310,7 @@ function iconHTML(path) {
 // ——— 数据获取 ———
 
 async function fetchRepos() {
-  const headers = TOKEN ? { 'X-WebUI-Token': TOKEN } : undefined;
-  const res = await fetch('/api/repos', { headers, cache: 'no-store' });
+  const res = await fetch('/api/repos', { headers: authHeaders, cache: 'no-store' });
   if (!res.ok) throw new Error('HTTP ' + res.status);
   return res.json();
 }
@@ -357,7 +384,10 @@ function rowHTML(s) {
     const dir = slash === -1 ? '' : f.path.slice(0, slash);
     return (
       iconHTML(base) +
-      '<span class="path">' + esc(base) + (dir ? '<span class="branch"> ' + esc(dir) + '</span>' : '') + '</span>' +
+      // 目录用 .dir 而不是 .branch：.branch 的规则只作用于仓库标题行（.row.head .branch），
+      // 用在文件行上会匹配不到任何规则，目录便继承了文件名的状态色——而两处注释都写明
+      // 目录应当比文件名更淡。这是一处类名与规则名对不上的笔误，颜色上的表现是"路径整段同色"
+      '<span class="path">' + esc(base) + (dir ? '<span class="dir"> ' + esc(dir) + '</span>' : '') + '</span>' +
       '<span class="letter">' + esc(st.letter) + '</span>'
     );
   }
@@ -392,6 +422,9 @@ function reconcile(specs) {
     }
 
     next.set(s.key, el);
+    // 元素与它当前对应的行数据挂钩：元素是复用的，数据每次渲染都在换，
+    // 点击时（事件委托）只有从这里才能拿到"这一行是哪个仓库的哪个文件"
+    el.__spec = s;
     els.push(el);
   }
 
@@ -488,6 +521,179 @@ function layout(els, specs) {
   board.style.height = colH + 'px';
 }
 
+// ——— diff 视图 ———
+//
+// 覆盖整页打开某个仓库或某个文件的改动（对齐结论：不做语法高亮、分「已暂存 / 未暂存」两段、
+// 覆盖整页替换看板、Esc 或返回键回看板）。
+
+// diffOpen 为真表示覆盖层正打开。它同时关掉三件事，各自的理由不同：
+//   - 轮询：看板被盖住，刷了也没人看，而每次刷新都要让服务端为每个仓库起一趟 git
+//   - resize 重排：看板仍是"被盖住但仍在布局中"，尺寸没有变化，重排纯属白花
+//   - 滚轮转横向：覆盖层里滚轮应当滚动 diff 正文，被抢去滚看板会让 diff 滚不动
+let diffOpen = false;
+// 打开前的横向滚动位置。看板在覆盖层关闭后要回到用户刚才看的那一列，
+// 否则关掉 diff 会莫名跳回最左
+let diffScrollX = 0;
+// 每次打开的序号：响应回来时用它丢弃"用户已经关掉或换了目标"的那次结果
+let diffSeq = 0;
+
+// diffLineClass 按行首字符判定这一行属于哪一类。
+// 必须先判元信息再判 +/-：diff --git、index、---、+++ 全都以 - 或 + 开头，
+// 顺序写反会把它们染成增删色，页面看起来像多改了几行
+function diffLineClass(line) {
+  if (
+    line.startsWith('diff --git ') ||
+    line.startsWith('index ') ||
+    line.startsWith('--- ') ||
+    line.startsWith('+++ ') ||
+    line.startsWith('new file mode ') ||
+    line.startsWith('deleted file mode ') ||
+    line.startsWith('old mode ') ||
+    line.startsWith('new mode ') ||
+    line.startsWith('similarity index ') ||
+    line.startsWith('rename ') ||
+    line.startsWith('copy ') ||
+    line.startsWith('\\') // "\ No newline at end of file"
+  ) {
+    return 'meta';
+  }
+  if (line.startsWith('@@')) return 'hunk';
+  if (line.startsWith('+')) return 'add';
+  if (line.startsWith('-')) return 'del';
+  return '';
+}
+
+// diffHTML 把一份统一 diff 转成用于 <pre> 的 HTML：按行首字符着色，
+// 并把连续同类行合并进同一个元素。
+//
+// 为什么合并：一次忘记写 .gitignore 就能产生几万行新增，按行建元素会让浏览器为几万个节点
+// 排版（本视图没有虚拟滚动）。合并后典型的增删块只有个位数节点，而视觉上完全一致
+function diffHTML(text, allAdded) {
+  const lines = text.split('\n');
+  // 统一 diff 与文件正文都以换行结尾，split 会多出一个空串；不去掉它，末尾就会多出一条空行
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+
+  const groups = [];
+  for (const line of lines) {
+    // allAdded 用于未跟踪文件：那边拿到的是文件正文而不是 diff，每一行都是新增
+    const cls = allAdded ? 'add' : diffLineClass(line);
+    const last = groups[groups.length - 1];
+    if (last && last.cls === cls) last.lines.push(line);
+    else groups.push({ cls: cls, lines: [line] });
+  }
+
+  return groups
+    .map((g) => '<span class="dl' + (g.cls ? ' ' + g.cls : '') + '">' + esc(g.lines.join('\n')) + '</span>')
+    .join('');
+}
+
+// renderDiff 把 /api/diff 的响应画进覆盖层。
+// repo 与 file 只用于标题，内容一律来自响应——页面不猜"应该有哪些改动"
+function renderDiff(repo, file, out) {
+  const blocks = [];
+
+  if (out.error) {
+    blocks.push('<p class="diff-note">' + esc(t('diffFailed', { err: out.error })) + '</p>');
+    diffBodyEl.innerHTML = blocks.join('');
+    return;
+  }
+
+  // 四条提示都放在正文之前：它们说明"下面的内容为什么长这样或为什么不完整"，
+  // 放在末尾会被长 diff 推到看不见的地方
+  if (out.untracked) blocks.push('<p class="diff-note">' + esc(t('diffUntracked')) + '</p>');
+  if (out.unmerged) blocks.push('<p class="diff-note">' + esc(t('diffUnmerged')) + '</p>');
+  if (out.binary) blocks.push('<p class="diff-note">' + esc(t('diffBinary')) + '</p>');
+  if (out.truncated) blocks.push('<p class="diff-note">' + esc(t('diffTruncated')) + '</p>');
+
+  const sections = [];
+  if (out.staged) sections.push({ title: t('diffStaged'), html: diffHTML(out.staged, false) });
+  if (out.unstaged) {
+    sections.push({ title: t('diffUnstaged'), html: diffHTML(out.unstaged, !!out.untracked) });
+  }
+  for (const s of sections) {
+    blocks.push('<section><h2>' + esc(s.title) + '</h2><pre class="diff">' + s.html + '</pre></section>');
+  }
+
+  // 只在"既没有分段也没有提示"时才是真的没有改动：二进制未跟踪文件就是这种情形，
+  // 它有提示、正文为空，此时说一句"没有改动"会与提示自相矛盾
+  if (sections.length === 0 && blocks.length === 0) {
+    blocks.push('<p class="diff-note">' + esc(t('diffEmpty')) + '</p>');
+  }
+
+  diffBodyEl.innerHTML = blocks.join('');
+}
+
+// openDiff 打开某个仓库（file 为空 → 整个仓库）或某个文件的 diff。
+// 异步：本地接口也有一次往返，期间先显示"加载中"，避免看起来是点了没反应
+async function openDiff(spec) {
+  const repo = spec.repo;
+  const file = spec.file || null;
+  const seq = ++diffSeq;
+
+  // 标题只用我们已经知道的信息（仓库名、文件路径），不必等接口回来才显示
+  const shown = file ? (file.origPath ? file.origPath + ' → ' + file.path : file.path) : '';
+  diffTitleEl.innerHTML =
+    '<span>' + esc(repo.name) + '</span>' + (shown ? '<span class="dir"> ' + esc(shown) + '</span>' : '');
+  diffBodyEl.textContent = t('diffLoading');
+
+  diffOpen = true;
+  diffScrollX = window.scrollX;
+  diffEl.classList.add('open');
+  diffEl.setAttribute('aria-hidden', 'false');
+  // 看板仍是布局中的元素，只是被盖住；不锁住 html 的话滚轮与方向键还能滚它
+  document.documentElement.style.overflow = 'hidden';
+  stopPolling();
+  diffBackEl.focus();
+
+  const params = new URLSearchParams({ repo: repo.path });
+  if (file) params.set('file', file.path);
+
+  let out;
+  try {
+    const res = await fetch('/api/diff?' + params.toString(), { headers: authHeaders, cache: 'no-store' });
+    out = await res.json();
+    if (!res.ok && !out.error) out = { error: 'HTTP ' + res.status };
+  } catch (err) {
+    out = { error: err.message };
+  }
+
+  // 用户在响应到达之前按了 Esc（或又点开了别的）就把这次结果丢掉，
+  // 否则会出现"已经回到看板却又被旧结果写了一次"
+  if (seq !== diffSeq || !diffOpen) return;
+  renderDiff(repo, file, out);
+}
+
+// closeDiff 关闭覆盖层并恢复看板。
+function closeDiff() {
+  if (!diffOpen) return;
+  diffOpen = false;
+  diffSeq++; // 作废可能还在路上的那次响应
+  diffEl.classList.remove('open');
+  diffEl.setAttribute('aria-hidden', 'true');
+  document.documentElement.style.overflow = '';
+  diffBodyEl.textContent = ''; // 释放大 diff 占用的 DOM
+  window.scrollTo(diffScrollX, 0);
+  // 覆盖层期间没有刷新过看板，关闭时补一次再恢复轮询（期间工作区可能已经变了）
+  refresh();
+  startPolling();
+}
+
+// 点行即可打开：用事件委托而不是给每行挂监听——行元素会被复用、也会被增删，
+// 逐个挂就要在 reconcile 里同步维护，委托只需这一处
+board.addEventListener('click', (e) => {
+  const row = e.target.closest('.row');
+  if (!row || !row.__spec) return;
+  if (row.__spec.kind !== 'head' && row.__spec.kind !== 'file') return;
+  openDiff(row.__spec);
+});
+
+diffBackEl.addEventListener('click', closeDiff);
+
+document.addEventListener('keydown', (e) => {
+  // 只认 Esc：覆盖层是只读视图，没有输入框，不需要考虑"正在输入时 Esc 另有含义"
+  if (e.key === 'Escape') closeDiff();
+});
+
 // ——— 主循环 ———
 
 // render 把一份仓库数据画到页面上。与取数分开，是为了图标主题晚一步就绪时
@@ -539,9 +745,10 @@ function stopPolling() {
   pollTimer = null;
 }
 
-// 窗口尺寸变化会改变列高，必须重新布局（不重新取数）
+// 窗口尺寸变化会改变列高，必须重新布局（不重新取数）。
+// 覆盖层打开期间不重排：看板尺寸没变，重排要量行高、纯属白花，且此刻没人看得到结果
 window.addEventListener('resize', () => {
-  if (lastSpecs.length > 0) layout(lastEls, lastSpecs);
+  if (!diffOpen && lastSpecs.length > 0) layout(lastEls, lastSpecs);
 });
 
 // 系统明暗主题切换时图标表要换一套（Seti 的浅色段是另一份平行表），因此重画一次；
@@ -616,6 +823,9 @@ function stepScroll(now) {
 window.addEventListener(
   'wheel',
   (e) => {
+    // diff 覆盖层打开时把手势让回浏览器：那边要滚的是 diff 正文（纵向），
+    // 被本处理器抢去转横向会让正文完全滚不动
+    if (diffOpen) return;
     // 横向手势（触控板横扫、Shift+滚轮）交给浏览器原生处理：那条路自带缓动，手感最好
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.deltaY === 0) return;
     e.preventDefault();
@@ -634,10 +844,13 @@ window.addEventListener(
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     stopPolling();
-  } else {
-    refresh();
-    startPolling();
+    return;
   }
+  // 覆盖层打开期间由 closeDiff 统一恢复（它会先 refresh 再 startPolling），
+  // 这里不能抢先启动，否则看板会在 diff 后面偷偷刷新
+  if (diffOpen) return;
+  refresh();
+  startPolling();
 });
 
 document.title = 'ggt';

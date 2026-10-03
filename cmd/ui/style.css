@@ -23,6 +23,8 @@
  *                             （list.hoverBackground 深 #2A2D2E / 浅 #F0F0F0）
  *   变更状态色                extensions/git/package.json 的 contributes.colors defaults
  *                             （gitDecoration.* 九个令牌，见下方变量）
+ *   diff 增删行底色            src/vs/platform/theme/common/colors/editorColors.ts
+ *                             （diffEditor.insertedLineBackground / removedLineBackground，见下方变量）
  *   文件类型图标              VSCode 默认图标主题 Seti，字形与映射见 seti-icon-theme.json
  *
  * 卡片背景、边框、圆角、列间距是 ggt 自有的「卡片」概念，VSCode 侧栏里没有等价物（它只有列表行），
@@ -64,6 +66,17 @@
   --badge-bg: #3a3d41;
   --cont-bg: #2d2d30;
   --cont-fg: #d7ba7d;
+
+  /* diff 的增删底色：照抄 VSCode 的 diffEditor.insertedLineBackground / removedLineBackground。
+     为什么取 *LineBackground 而不是 insertedTextBackground/removedTextBackground：本视图按"整行"
+     着色（行首 +/- 已经标出增删，整行底色更利于扫读），与 VSCode 的整行背景是同一语义；
+     而 TextBackground 那一对只覆盖变更的字符段，用在这里会变成"底色只铺一半"。
+     取值出处 src/vs/platform/theme/common/colors/editorColors.ts：
+       insertedLineBackground -> defaultInsertColor = new Color(new RGBA(155, 185, 85, .2)) = #9bb95533
+       removedLineBackground  -> defaultRemoveColor  = new Color(new RGBA(255, 0, 0, .2))   = #ff000033
+     这两个取值在深色与浅色主题下是同一个，因此这里不按主题分叉 */
+  --diff-add-bg: #9bb95533;
+  --diff-del-bg: #ff000033;
 }
 
 @media (prefers-color-scheme: light) {
@@ -346,11 +359,22 @@ body {
   position: fixed;
   inset: 0;
   margin: 0;
-  display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-dim);
   font-size: 14px;
+}
+
+/*
+ * 只在没有 hidden 属性时才铺满全屏。
+ * 不能把 display: flex 直接写进上面那条规则：[hidden] 的 UA 规则（display: none）会被
+ * 任何作者样式的 display 声明盖过，于是本元素即使 hidden 也照旧铺满全屏——它带着 inset: 0，
+ * 于是静默地吞掉整页的点击（表现为"点了没反应"，控制台也没有报错）。
+ * 这一条是补上的：本轮新增"点行看 diff"之后才暴露出来。此前看板上没有任何可点的东西，
+ * 覆盖全屏也碍不着谁，因此一直没被发现
+ */
+#empty:not([hidden]) {
+  display: flex;
 }
 
 /* 右下角的一行元信息：数据多旧、这次采集花了多久、以及出错原因。
@@ -373,3 +397,143 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .row, .cont { transition: none; }
 }
+
+/*
+ * ——— diff 视图 ———
+ *
+ * 覆盖整页替换看板（用户明确要求「点开后整页看 diff，Esc 或返回键回看板」）。
+ * 用 fixed + inset:0 而不是把看板 display:none：看板的行是绝对定位的，一旦被移出布局，
+ * app.js 里的 layout 就量不到行高（offsetHeight 归零），关闭后必须先重排才能恢复——
+ * 而"盖住但不移出布局"让看板始终维持着关闭前的状态，回来时不需要重排、也不会闪一下
+ */
+#diff {
+  position: fixed;
+  inset: 0;
+  /* 默认不显示：用 display 而不是 visibility，未打开时不参与键盘 Tab 序 */
+  display: none;
+  flex-direction: column;
+  background: var(--bg);
+  /* 盖住 #empty 与 #status（两者都是 fixed 且无 z-index），否则空仓提示会浮在 diff 之上 */
+  z-index: 10;
+}
+#diff.open { display: flex; }
+
+#diff header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--card-border);
+}
+
+/* 返回按钮复用徽标的中性配色，避免为它单独引入一组色值 */
+#diff-back {
+  flex: none;
+  font: inherit;
+  color: var(--text);
+  background: var(--badge-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+#diff-back:hover { background: var(--hover-bg); }
+
+#diff-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+/* 标题里的文件路径比仓库名淡一档，与文件行里"目录淡化"的处理一致 */
+#diff-title .dir {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* Esc 提示靠右，与标题分开——它是键盘操作提示，不属于标题内容 */
+#diff-esc {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+#diff-esc kbd {
+  font: inherit;
+  border: 1px solid var(--card-border);
+  border-radius: 3px;
+  padding: 1px 4px;
+  background: var(--badge-bg);
+}
+
+/* diff 正文是唯一的纵向滚动容器：overscroll-behavior 阻断滚动链，
+   否则滚到底后继续滚会去滚动被盖住的看板 */
+#diff-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px 12px 24px;
+}
+
+#diff-body h2 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+#diff-body .diff-note {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--cont-fg);
+}
+/* 段与段之间留白；提示在前、分段在后，所以两种相邻都要考虑 */
+#diff-body section + section,
+#diff-body .diff-note + section { margin-top: 16px; }
+
+/*
+ * diff 正文。padding 只给纵向：横向留白交给 .dl 自己，否则整行底色会在行首行尾
+ * 留下一截没有底色的空隙（.dl 的 min-width:100% 是相对 pre 的 content box 算的）
+ */
+pre.diff {
+  margin: 0;
+  padding: 6px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+}
+
+/*
+ * 一行或一串同类行。width:max-content 配合 min-width:100% 让底色铺满整行：
+ * 单给 min-width 时，内容更长的行依然能把底色撑出去，单给 max-content 时短行会缩成一小段
+ *
+ * 连续同类的行合并成一个元素（而不是一行一个）是刻意的：一次忘记写 .gitignore
+ * 就能产生几万行新增，按行建元素会让浏览器为几万个节点排版；合并后典型的增删块只有个位数节点
+ */
+pre.diff .dl {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  padding: 0 8px;
+}
+pre.diff .add { background: var(--diff-add-bg); }
+pre.diff .del { background: var(--diff-del-bg); }
+/*
+ * @@ 段头与 diff/index/---/+++ 这类 git 元信息统一用淡色。
+ * 为什么不给段头单独配色：本视图已经约定"不做语法高亮"，只有真正增删的行着色；
+ * 若把段头也染色（曾用绿色），在一屏里它和新增行是同一个色系，容易被误读成"多了一行"。
+ * git 的 color.diff.frag 默认确实是青色，但终端配色由调色板决定、没有可引用的固定值，
+ * 与其编一个十六进制，不如按"非内容行统一淡化"处理
+ */
+pre.diff .hunk,
+pre.diff .meta { color: var(--text-dim); }
+
+/* 可点开的行给出手型光标：看板的仓库标题行与文件行都能点开 diff */
+.row.head,
+.row.file { cursor: pointer; }

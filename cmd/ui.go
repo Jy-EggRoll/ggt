@@ -7,8 +7,8 @@
 //     多仓库日常最需要一眼看清的
 //
 // 分工：监听、端口顺延、Host/Origin/token 三道护栏、静态资源托管、拉起浏览器全部由
-// eggokit/webui 提供（本文件不重复实现）；这里只负责命令行参数、业务 API（/api/repos）、
-// 采集与排序，以及启动摘要的打印
+// eggokit/webui 提供（本文件不重复实现）；这里只负责命令行参数、业务 API（/api/repos、
+// /api/diff）、采集与排序，以及启动摘要的打印
 //
 // 页面资产的迭代方式：前端是原生 HTML/CSS/JS，经 go:embed 打进二进制，没有构建步骤。
 // 因此改完前端必须重新 `go build` 才会生效（刷新浏览器不会），这是与项目其余部分一致的
@@ -21,11 +21,16 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
@@ -233,6 +238,266 @@ func (c *uiCache) handleRepos(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
+// uiDiffLimit 是单次 diff 回给页面的字节上限。
+//
+// 为什么要截断：锁文件、压缩产物这类自动生成的大文件，一次 diff 可能有几十 MB，
+// 而看板的用途只是"看一眼改了什么"。把整份塞进 JSON 会让浏览器解析与排版一起卡住，
+// 而堆内存也白花。截断处落在行边界上，页面会明确标注"输出已截断"，
+// 不会让人误以为改动只有这些
+const uiDiffLimit = 2 << 20
+
+// uiUntrackedLimit 是未跟踪文件正文送入页面的字节上限（理由同 uiDiffLimit）
+const uiUntrackedLimit = 1 << 20
+
+// uiBinarySniffLen 是判断"是不是二进制"时嗅探的前缀长度。
+// 与 git 自身的规则一致：只看前 8000 字节里有没有 NUL，不读全文
+const uiBinarySniffLen = 8000
+
+// uiDiff 是 /api/diff 的响应体。
+//
+// 为什么分两段而不是给一份"与 HEAD 相比"的合并 diff：已暂存（index vs HEAD）与未暂存
+// （工作区 vs index）是两种不同性质的改动，VSCode 也把它们分成两个组各自查看。
+// 合成一段会让人分不清"我暂存了什么、又改了哪些还没暂存"
+type uiDiff struct {
+	Repo string `json:"repo"`
+	// File 为空表示"整个仓库"，即用户点的是仓库标题行
+	File     string `json:"file,omitempty"`
+	OrigPath string `json:"origPath,omitempty"`
+	// Untracked 为真时 Unstaged 是文件正文而不是 diff：未跟踪文件不在 index 里，
+	// git 对它不产生 diff（替代写法 git diff --no-index /dev/null 在 Windows 上不成立，
+	// 那边没有 /dev/null）。页面把它整体按"新增"渲染
+	Untracked bool `json:"untracked"`
+	Unmerged  bool `json:"unmerged"`
+	// Staged 是 index vs HEAD，Unstaged 是工作区 vs index，均为不带颜色的统一 diff
+	Staged   string `json:"staged"`
+	Unstaged string `json:"unstaged"`
+	// Binary 只用于未跟踪文件：它是二进制时不返回正文（返回了也是乱码），
+	// 页面据此显示提示。已跟踪文件的二进制改动由 git 自己在 diff 里写成
+	// "Binary files ... differ"，页面认那一行，后端不必再判一次
+	Binary    bool   `json:"binary"`
+	Truncated bool   `json:"truncated"`
+	Error     string `json:"error,omitempty"`
+}
+
+// handleDiff 是 /api/diff 的处理函数。
+//
+// 仓库与文件都只从"已有快照里实际存在的条目"里取，而不是直接采信请求里的路径：
+// 页面传来的 <repo, file> 必须能在上一次 /api/repos 的结果里找到，否则一律 404。
+// 这样即便有人手工构造请求（token 已在 Host/Origin/token 三道护栏之内，但护栏不等于
+// 授权任意路径），也读不到配置之外的仓库、更读不到仓库之外的文件
+func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
+	repoPath := r.URL.Query().Get("repo")
+	filePath := r.URL.Query().Get("file")
+
+	repo, ok := findUIRepo(c.repos(), repoPath)
+	if !ok {
+		writeUIDiffError(w, http.StatusNotFound, l10n.T("Unknown repository", nil))
+		return
+	}
+
+	out := uiDiff{Repo: repo.Path, File: filePath}
+
+	// file 为 nil 表示"整个仓库"。指针而不是零值：需要区分"没有这个文件"与"没传文件"
+	var file *uiFile
+	var paths []string
+	if filePath != "" {
+		f, ok := findUIFile(repo, filePath)
+		if !ok {
+			writeUIDiffError(w, http.StatusNotFound, l10n.T("Unknown file", nil))
+			return
+		}
+		// 纵深防御：porcelain 给出的路径本就应当是仓库内的相对路径，这里再挡一次，
+		// 免得将来某条状态解析路径被改坏之后，页面能顺着 ../ 读出去
+		if !filepath.IsLocal(filePath) {
+			writeUIDiffError(w, http.StatusBadRequest, l10n.T("Invalid file path", nil))
+			return
+		}
+		file = &f
+		out.File = f.Path
+		out.OrigPath = f.OrigPath
+		out.Untracked = f.Untracked
+		out.Unmerged = f.Unmerged
+		// 重命名要同时给新旧两个路径：只给新路径时旧路径那半边匹配不上，
+		// git 会退化成"删一个文件 + 加一个文件"两条记录，看不出这是一次重命名
+		paths = append(paths, f.Path)
+		if f.OrigPath != "" {
+			paths = append(paths, f.OrigPath)
+		}
+	}
+
+	ctx := r.Context()
+	if out.Untracked {
+		text, binary, truncated, err := readUntrackedFile(repo.Path, out.File)
+		if err != nil {
+			writeUIDiffError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		out.Unstaged, out.Binary, out.Truncated = text, binary, truncated
+		writeUIDiff(w, out)
+		return
+	}
+
+	// 按状态位跳过必然为空的那一侧：一个文件通常只有一侧有改动（暂存了或没暂存），
+	// 少起一个 git 进程直接反映为点击之后的等待更短。整个仓库没有状态位可依据，两侧都取
+	if file == nil || (file.Index != "." && file.Index != "?") {
+		text, truncated, err := diffText(ctx, repo.Path, true, paths)
+		if err != nil {
+			writeUIDiffError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		out.Staged, out.Truncated = text, out.Truncated || truncated
+	}
+	if file == nil || file.Work != "." {
+		text, truncated, err := diffText(ctx, repo.Path, false, paths)
+		if err != nil {
+			writeUIDiffError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		out.Unstaged, out.Truncated = text, out.Truncated || truncated
+	}
+
+	writeUIDiff(w, out)
+}
+
+// diffText 取一份不带颜色的统一 diff，staged 为真取 index vs HEAD，否则取工作区 vs index。
+//
+// 三个参数都是"为了让输出可解析"而不是为了好看：
+//   - --no-color：去掉 ANSI 转义，页面按行首字符自己着色，两处都上色会互相打架
+//   - --no-ext-diff：挡住用户配置的外部 diff 工具（diff.external），它可能输出 HTML
+//     或任何格式，页面解析不了，表现为"点了没反应"
+//   - --no-textconv：挡住 textconv 过滤器，否则二进制文件会被转成文本，
+//     页面再也认不出它是二进制
+func diffText(ctx context.Context, repoPath string, staged bool, paths []string) (string, bool, error) {
+	args := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv"}
+	if staged {
+		args = append(args, "--cached")
+	}
+	if len(paths) > 0 {
+		// "--" 之前是选项之后是路径：少了它，以 - 开头的文件名会被当成选项
+		args = append(args, "--")
+		args = append(args, paths...)
+	}
+
+	out, err := git.RunContext(ctx, repoPath, args...)
+	if err != nil {
+		return "", false, err
+	}
+	text, truncated := truncateAtLine(out, uiDiffLimit)
+	return text, truncated, nil
+}
+
+// truncateAtLine 把文本截到 limit 字节以内，并保证截断落在行边界上。
+// 返回是否真的截断了。落在行边界是为了既不切出半个 UTF-8 字符，也不留下半行
+// 让人以为文件就长这样
+func truncateAtLine(s string, limit int) (string, bool) {
+	if len(s) <= limit {
+		return s, false
+	}
+	if i := strings.LastIndexByte(s[:limit], '\n'); i >= 0 {
+		return s[:i+1], true
+	}
+	// 整份内容只有一行且超过上限：只能硬切，但要退到合法的 UTF-8 边界，
+	// 否则 JSON 编码会用 U+FFFD 替换掉残缺字节，页面上出现一串乱码方块
+	cut := s[:limit]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut, true
+}
+
+// readUntrackedFile 读未跟踪文件的正文，供页面按"整份都是新增"展示。
+//
+// 相对路径与仓库根拼接后会解析符号链接再比对：仓库里可能存在指向仓库外的软链，
+// 只做 filepath.IsLocal 挡不住它，而这道读取是唯一一处按请求触碰文件系统的地方
+func readUntrackedFile(repoPath, rel string) (string, bool, bool, error) {
+	root, err := filepath.EvalSymlinks(repoPath)
+	if err != nil {
+		return "", false, false, err
+	}
+	full, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return "", false, false, err
+	}
+	back, err := filepath.Rel(root, full)
+	if err != nil || !filepath.IsLocal(back) {
+		return "", false, false, fmt.Errorf("%s", l10n.T("Invalid file path", nil))
+	}
+
+	f, err := os.Open(full)
+	if err != nil {
+		return "", false, false, err
+	}
+	defer f.Close()
+
+	// 多读一个字节用来判断有没有被截断：LimitReader 读到上限就停，
+	// 只看长度是否等于上限无法区分"刚好到上限"与"还有更多"
+	data, err := io.ReadAll(io.LimitReader(f, uiUntrackedLimit+1))
+	if err != nil {
+		return "", false, false, err
+	}
+	truncated := len(data) > uiUntrackedLimit
+	if truncated {
+		data = data[:uiUntrackedLimit]
+	}
+
+	sniff := data
+	if len(sniff) > uiBinarySniffLen {
+		sniff = sniff[:uiBinarySniffLen]
+	}
+	if bytes.IndexByte(sniff, 0) >= 0 {
+		return "", true, truncated, nil
+	}
+	return string(data), false, truncated, nil
+}
+
+// findUIRepo 在快照里按路径精确匹配仓库。路径由页面原样回传（它就是从这份快照拿的），
+// 因此不需要也不应该做任何规范化：规范化会引入"两个不同请求映射到同一仓库"的可能
+func findUIRepo(p *uiPayload, path string) (*uiRepo, bool) {
+	for i := range p.Repos {
+		if p.Repos[i].Path == path {
+			return &p.Repos[i], true
+		}
+	}
+	return nil, false
+}
+
+// findUIFile 在仓库快照里按相对路径精确匹配变更文件。
+func findUIFile(r *uiRepo, path string) (uiFile, bool) {
+	for _, f := range r.Files {
+		if f.Path == path {
+			return f, true
+		}
+	}
+	return uiFile{}, false
+}
+
+// writeUIDiff 输出 diff 响应。与 handleRepos 一样关掉 HTML 转义：
+// diff 正文里 < > & 极常见，转义后排查接口时看到的 JSON 无法阅读
+func writeUIDiff(w http.ResponseWriter, out uiDiff) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// diff 是随工作区变化的实时数据，任何一层缓存都不该留下副本
+	w.Header().Set("Cache-Control", "no-store")
+	writeUIDiffJSON(w, out)
+}
+
+// writeUIDiffError 用合适的 HTTP 状态码回一个只有 Error 字段的响应。
+// 失败的响应同样走 JSON：页面只有一条解析路径，不必为错误另写一套分支
+func writeUIDiffError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	writeUIDiffJSON(w, uiDiff{Error: msg})
+}
+
+func writeUIDiffJSON(w http.ResponseWriter, out uiDiff) {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(out); err != nil {
+		// 响应头已发出，无法再改状态码，只能记录日志
+		logger.Error(l10n.T("Failed to encode the diff response", nil), "error", err)
+	}
+}
+
 // newUICmd 构造 "ggt ui" 命令。
 func newUICmd() *cobra.Command {
 	var (
@@ -294,6 +559,9 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	cache := &uiCache{ctx: ctx}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/repos", cache.handleRepos)
+	// 点开某个仓库或文件时的只读 diff。与 /api/repos 挂在同一个 mux 上，
+	// 因此同样在 webui 基座的 Host/Origin/token 三道护栏之内
+	mux.HandleFunc("/api/diff", cache.handleDiff)
 
 	// 页面自己不会说"当前语言是哪个"，由 Go 端把语言写进两个占位符：
 	//   - __GGT_LANG_VALUE__ 供页面内翻译表选语言
