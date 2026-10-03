@@ -692,6 +692,64 @@ func (c *uiCache) handlePush(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleFetch 手动拉取全部仓库的远程数据（每个仓库一次 git fetch --all --prune）。
+//
+// 为什么是"全部仓库"一个动作而不是每个仓库一个按钮：这个按钮是 autofetch 的替代，
+// 要解决的问题是"把远程的新情况一次性拿回来"；逐仓库排一排按钮只会让看板变吵，
+// 而拉取某一个仓库在终端里更顺手
+//
+// 并发跑：与 ggt sync 共用 worker.Map 与同一个并发度设置。串行做几十个远程仓库要等到
+// 地老天荒，并发下总耗时约等于最慢的那一个
+//
+// 不复用 handleWrite 那套骨架：那个是"针对某一个仓库"的（要从请求里取 repo、校验文件），
+// 这里对快照里的全部仓库各跑一次，硬套会让它多出一个"仓库为空即全部"的隐式约定
+func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeUIWrite(w, http.StatusMethodNotAllowed, uiWriteResult{Error: l10n.T("Only POST is allowed", nil)})
+		return
+	}
+
+	// 只需要仓库名与错误文本，不需要更多字段；outcome 保持按仓库顺序返回（worker.Map 保序）
+	type outcome struct {
+		name string
+		err  string
+	}
+	repos := c.repos().Repos
+	outcomes := worker.Map(r.Context(), repos, Concurrency(), func(ctx context.Context, repo uiRepo) outcome {
+		// 用 RunCombinedContext：失败原因在 git 的 stderr 里，err 本身只是 "exit status N"
+		out, err := git.RunCombinedContext(ctx, repo.Path, "fetch", "--all", "--prune")
+		if err != nil {
+			return outcome{name: repo.Name, err: strings.TrimSpace(out)}
+		}
+		return outcome{name: repo.Name}
+	})
+
+	// fetch 会改变 ahead/behind，因此不论成败都让快照失效，让页面立刻看到新的领先/落后
+	c.invalidate()
+
+	failures := make([]string, 0, len(outcomes))
+	for _, o := range outcomes {
+		if o.err != "" {
+			failures = append(failures, o.name+": "+o.err)
+		}
+	}
+	if len(failures) > 0 {
+		// 只展开第一个失败的完整原话，其余报个数：失败可能有几十个，全塞进一行提示
+		// 会把它撑成一大段，反而看不出到底有几个仓库失败了
+		msg := l10n.T("Fetched {{.Count}} repositories, {{.Failed}} failed",
+			map[string]any{"Count": len(outcomes), "Failed": len(failures)})
+		msg += "\n" + failures[0]
+		if len(failures) > 1 {
+			msg += "\n" + l10n.T("… and {{.Count}} more", map[string]any{"Count": len(failures) - 1})
+		}
+		writeUIWrite(w, http.StatusConflict, uiWriteResult{Error: msg})
+		return
+	}
+	writeUIWrite(w, http.StatusOK, uiWriteResult{
+		Output: l10n.T("Fetched {{.Count}} repositories", map[string]any{"Count": len(outcomes)}),
+	})
+}
+
 // writeUIWrite 回一个写操作的结果。
 // 与其它端点一样关掉 HTML 转义：git 的输出里 < > & 常见（例如冲突标记），
 // 转义后页面看到的会是一串 \u003c
@@ -777,6 +835,8 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	mux.HandleFunc("/api/unstage", cache.handleUnstage)
 	mux.HandleFunc("/api/commit", cache.handleCommit)
 	mux.HandleFunc("/api/push", cache.handlePush)
+	// 拉取是"对全部仓库"的一次行动，因此单独一个端点，不挂在某个仓库上
+	mux.HandleFunc("/api/fetch", cache.handleFetch)
 
 	// 页面自己不会说"当前语言是哪个"，由 Go 端把语言写进两个占位符：
 	//   - __GGT_LANG_VALUE__ 供页面内翻译表选语言

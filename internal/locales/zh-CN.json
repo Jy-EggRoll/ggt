@@ -61,6 +61,8 @@
   "Failed to serialize the configuration: {{.Err}}": "序列化配置失败: {{.Err}}",
   "Failed to write file: {{.Err}}": "写入文件失败: {{.Err}}",
   "Failed: {{.Label}} - {{.Err}}": "处理失败: {{.Label}} - {{.Err}}",
+  "Fetched {{.Count}} repositories": "已拉取 {{.Count}} 个仓库",
+  "Fetched {{.Count}} repositories, {{.Failed}} failed": "已拉取 {{.Count}} 个仓库，其中 {{.Failed}} 个失败",
   "File list written to: {{.Path}}": "文件列表已写入: {{.Path}}",
   "File lists (repositories: {{.Count}})": "文件列表 (仓库数: {{.Count}})",
   "Finished: {{.Success}} succeeded, {{.Failed}} failed": "处理完成: 成功 {{.Success}}, 失败 {{.Failed}}",
@@ -236,5 +238,6 @@
   "{{.Label}}: pulled successfully": "{{.Label}} 拉取成功",
   "{{.Label}}: uncommitted changes present, manual handling required": "{{.Label}} 本地有未提交的更改，必须手动处理",
   "{{.Low}}~{{.High}}MB": "{{.Low}}~{{.High}}MB",
-  "{{.Title}}: {{.Count}}": "{{.Title}}：{{.Count}} 个"
+  "{{.Title}}: {{.Count}}": "{{.Title}}：{{.Count}} 个",
+  "… and {{.Count}} more": "…… 另有 {{.Count}} 个"
 }

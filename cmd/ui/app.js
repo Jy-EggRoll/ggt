@@ -56,6 +56,8 @@ const MSG = {
     commit: 'Commit',
     push: 'Push',
     commitMsg: 'Commit message',
+    fetch: 'Fetch all',
+    fetching: 'Fetching…',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -82,6 +84,8 @@ const MSG = {
     commit: '提交',
     push: '推送',
     commitMsg: '提交信息',
+    fetch: '拉取全部',
+    fetching: '正在拉取…',
   },
 };
 
@@ -132,12 +136,15 @@ const diffOpEl = document.getElementById('diff-op');
 const commitMsgEl = document.getElementById('commit-msg');
 const commitBtnEl = document.getElementById('commit-btn');
 const pushBtnEl = document.getElementById('push-btn');
+const fetchBtnEl = document.getElementById('fetch-btn');
+const boardOpEl = document.getElementById('op');
 
 // 返回按钮的文字在 JS 里填：它要跟随语言，而 index.html 是静态骨架、不参与翻译
 diffBackEl.textContent = '← ' + t('back');
 commitBtnEl.textContent = t('commit');
 pushBtnEl.textContent = t('push');
 commitMsgEl.placeholder = t('commitMsg');
+fetchBtnEl.textContent = t('fetch');
 
 // 从 URL 取 token。页面是由 Go 端带 token 的地址打开的，之后所有请求改用请求头传递：
 // 把凭据留在 URL 里会进入浏览器历史、也可能随 Referer 泄露
@@ -770,10 +777,15 @@ function closeDiff() {
 // 弹出一条让人摸不着头脑的错误
 let writeBusy = false;
 
-// setOp 显示最近一次写操作的结果。失败用红色：这块看板上红色一律表示"需要你看一眼"
+// setOp / setBoardOp 各写一处操作结果行：覆盖层标题栏下的 #diff-op，与看板左下角的 #op。
+// 分两处而不是共用一处，是因为两者可能同时存在，共用一个元素会互相覆盖
 function setOp(text, isError) {
   diffOpEl.textContent = text || '';
   diffOpEl.classList.toggle('error', !!isError);
+}
+function setBoardOp(text, isError) {
+  boardOpEl.textContent = text || '';
+  boardOpEl.classList.toggle('error', !!isError);
 }
 
 // postJSON 发一个写请求。四个写端点都在 POST 上：基座只对非 GET/HEAD 做同源校验，
@@ -787,50 +799,63 @@ async function postJSON(path, body) {
   return out;
 }
 
-// runWrite 是所有写操作的公共外壳：置忙 -> 发请求 -> 显示结果 -> 重取数据。
+// runWrite 是所有写操作的公共外壳：置忙 -> 发请求 -> 把结果交给调用方显示 -> 重取数据。
+// 结果写到哪里由调用方决定（覆盖层里还是看板左下角），因为只有调用方知道
+//
 // 无论成败都重取：失败也可能已经改变了仓库状态（例如 push 已送达但退出码非零）
-async function runWrite(path, body) {
+async function runWrite(path, body, show) {
   if (writeBusy) return null;
   writeBusy = true;
   board.classList.add('busy');
   commitBtnEl.disabled = true;
   pushBtnEl.disabled = true;
+  fetchBtnEl.disabled = true;
   let out;
   try {
     out = await postJSON(path, body);
     // git 的原话优先：失败的说明（没有 upstream、没有可提交的内容）与成功的摘要
     // 都是用户判断"到底发生了什么"的唯一依据，页面不再自拟一套说法
-    setOp(out.error || out.output || '', !!out.error);
+    show(out.error || out.output || '', !!out.error);
   } catch (err) {
     out = { error: err.message };
-    setOp(t('loadFailed', { err: err.message }), true);
+    show(t('loadFailed', { err: err.message }), true);
   } finally {
     writeBusy = false;
     board.classList.remove('busy');
     commitBtnEl.disabled = false;
     pushBtnEl.disabled = false;
+    fetchBtnEl.disabled = false;
     refresh();
   }
   return out;
 }
 
 // applyFileAction 执行行内的暂存 / 取消暂存。
-async function applyFileAction(spec, action) {
-  const out = await runWrite(action === 'stage' ? '/api/stage' : '/api/unstage', {
-    repo: spec.repo.path,
-    file: spec.file.path,
-  });
-  if (!out) return;
-  // 覆盖层关着的时候没有提示行可写，只能借用右下角那行状态；开着时已由 setOp 显示过
-  if (diffOpen) return;
-  statusEl.classList.toggle('error', !!out.error);
-  statusEl.textContent = out.error || '';
+function applyFileAction(spec, action) {
+  return runWrite(
+    action === 'stage' ? '/api/stage' : '/api/unstage',
+    { repo: spec.repo.path, file: spec.file.path },
+    setBoardOp,
+  );
+}
+
+// fetchAll 拉取全部仓库的远程数据。
+// 先写一行"正在拉取"：拉取是网络操作，几十个仓库可能要等好几秒，没有提示会让人
+// 以为按钮没反应（这行文字随后会被结果覆盖）
+function fetchAll() {
+  if (writeBusy) return;
+  setBoardOp(t('fetching'), false);
+  return runWrite('/api/fetch', {}, setBoardOp);
 }
 
 // commitFromUI 用输入框里的信息提交。成功才清空输入框：失败时保留原文，
 // 便于用户改一处再试，而不是从头再敲一遍
 async function commitFromUI() {
-  const out = await runWrite('/api/commit', { repo: diffSpec.repo.path, message: commitMsgEl.value.trim() });
+  const out = await runWrite(
+    '/api/commit',
+    { repo: diffSpec.repo.path, message: commitMsgEl.value.trim() },
+    setOp,
+  );
   if (!out || out.error) return;
   commitMsgEl.value = '';
   draftMsg.delete(diffSpec.repo.path);
@@ -840,7 +865,7 @@ async function commitFromUI() {
 // pushFromUI 推送当前分支。推送不改动两段 diff 的内容，但会把"领先 N"这类状态清掉，
 // 因此看板已在 runWrite 里重取；这里只把 diff 也重取一次以保持一致
 async function pushFromUI() {
-  const out = await runWrite('/api/push', { repo: diffSpec.repo.path });
+  const out = await runWrite('/api/push', { repo: diffSpec.repo.path }, setOp);
   if (out && !out.error) await loadDiff();
 }
 
@@ -863,6 +888,7 @@ board.addEventListener('click', (e) => {
 diffBackEl.addEventListener('click', closeDiff);
 commitBtnEl.addEventListener('click', commitFromUI);
 pushBtnEl.addEventListener('click', pushFromUI);
+fetchBtnEl.addEventListener('click', fetchAll);
 
 // 回车即提交：写提交信息时手不用离开键盘
 commitMsgEl.addEventListener('keydown', (e) => {

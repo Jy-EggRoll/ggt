@@ -391,6 +391,47 @@ body {
 }
 #status.error { color: var(--git-conflicting); }
 
+/* ——— 看板层面的操作区（左下角）——— */
+#tools {
+  position: fixed;
+  left: 12px;
+  bottom: 8px;
+  /* 低于 diff 覆盖层（10）：覆盖层打开时这些动作被盖住，它们作用于整个看板而不是当前 diff */
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 24px);
+}
+#fetch-btn {
+  flex: none;
+  font: inherit;
+  color: var(--text);
+  background: var(--badge-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+#fetch-btn:hover { background: var(--hover-bg); }
+/* 拉取进行中置灰：一次只允许一个写操作在飞 */
+#fetch-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* 最近一次看板层面操作的结果。可能含 git 的多行原话，因此允许折行并限宽限高——
+   限宽免得它把按钮挤出屏幕，限高免得一段长报错把整块看板盖住（超出部分可滚动查看） */
+#op {
+  min-width: 0;
+  max-width: min(60vw, 640px);
+  max-height: 6em;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--cont-fg);
+}
+#op:empty { display: none; }
+#op.error { color: var(--git-conflicting); }
+
 /* 尊重「减少动态效果」的系统设置：这类用户对位移动画敏感，动画会让界面难以使用。
    滚轮那条平滑在这里管不到（它已改由 app.js 驱动），app.js 会用同一个媒体查询
    把动画时长降为 0，两处必须保持一致 */

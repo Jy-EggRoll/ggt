@@ -61,6 +61,8 @@
   "Failed to serialize the configuration: {{.Err}}": "Failed to serialize the configuration: {{.Err}}",
   "Failed to write file: {{.Err}}": "Failed to write file: {{.Err}}",
   "Failed: {{.Label}} - {{.Err}}": "Failed: {{.Label}} - {{.Err}}",
+  "Fetched {{.Count}} repositories": "Fetched {{.Count}} repositories",
+  "Fetched {{.Count}} repositories, {{.Failed}} failed": "Fetched {{.Count}} repositories, {{.Failed}} failed",
   "File list written to: {{.Path}}": "File list written to: {{.Path}}",
   "File lists (repositories: {{.Count}})": "File lists (repositories: {{.Count}})",
   "Finished: {{.Success}} succeeded, {{.Failed}} failed": "Finished: {{.Success}} succeeded, {{.Failed}} failed",
@@ -236,5 +238,6 @@
   "{{.Label}}: pulled successfully": "{{.Label}}: pulled successfully",
   "{{.Label}}: uncommitted changes present, manual handling required": "{{.Label}}: uncommitted changes present, manual handling required",
   "{{.Low}}~{{.High}}MB": "{{.Low}}~{{.High}}MB",
-  "{{.Title}}: {{.Count}}": "{{.Title}}: {{.Count}}"
+  "{{.Title}}: {{.Count}}": "{{.Title}}: {{.Count}}",
+  "… and {{.Count}} more": "… and {{.Count}} more"
 }

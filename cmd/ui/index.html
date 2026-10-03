@@ -33,6 +33,18 @@
 <p id="empty" hidden></p>
 <p id="status" role="status" aria-live="polite"></p>
 <!--
+  看板层面的操作区，固定在左下角。目前只有"拉取全部仓库"一个动作，以及它右侧那行结果。
+  结果行与覆盖层里的 #diff-op 分开：两者可能同时存在（覆盖层打开时看板那一层被盖住，
+  但状态不该丢），共用一个元素会互相覆盖。
+
+  层级刻意低于 diff 覆盖层，覆盖层打开时它整个被盖住——这些动作作用于整个看板，
+  与正在看的那个仓库的 diff 无关
+-->
+<div id="tools">
+  <button id="fetch-btn" type="button"></button>
+  <span id="op" role="status" aria-live="polite"></span>
+</div>
+<!--
   diff 视图的容器：覆盖整页替换看板（用户明确要求"点开后整页看 diff，Esc 或返回键回看板"）。
   这里只放固定不变的骨架——标题栏里有返回按钮与 kbd 提示，正文由 app.js 按 /api/diff 的返回填充。
   之所以外壳写在 HTML 而不是像行那样由 JS 生成：行是数据驱动的（数量随数据变化），
