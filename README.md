@@ -223,6 +223,27 @@ task l10n:check    # 只读门禁，已接入 task verify，CI 会跑
 页面上的写操作与读操作受同一套门禁保护（只绑本机、Host 允许清单、token、写请求同源校验），
 且仓库与文件都必须来自页面已看到的那份状态快照，手工构造的请求传不进配置之外的路径。
 
+**配色跟随你的 VSCode 主题**
+
+把任意一个合法的 VSCode 主题 JSON 丢进配置目录（`~/.config/go-git-ggt/` 或它的 `themes/`
+子目录），刷新页面就能在左下角的下拉框里选它——你在 VSCode 里用的是哪套，看板就是哪套。
+
+主题文件按 VSCode 自己的规则解析：JSONC 的注释与尾逗号、`include` 链逐层合并、以及
+**主题没写的令牌回落到 VSCode 颜色注册表的默认值**（`gitDecoration.*`、`diffEditor.*`
+这些颜色本来就不在主题文件里，VSCode 用的正是那些默认值）。因此颜色与 VSCode 的观感一致，
+而不是"看起来差不多"。
+
+下拉框里另有内置的 12 套：VSCode 官方的 8 套（2026 Dark/Light、Dark/Light Modern、Dark+/Light+、
+Visual Studio Dark/Light）与 Catppuccin 的 4 套口味。选「跟随系统」则按系统深浅自动在内置的
+2026 Dark / 2026 Light 之间切换（默认就是这个）。选中的主题记在配置文件的 `theme` 键里，
+也可以直接改它或 `ggt config set theme <id>`。
+
+内置主题文件逐字取自上游（VSCode 与 Catppuccin，均为 MIT 许可，许可文本随文件一起放在
+`internal/theme/builtin/*/LICENSE.txt`）。
+
+已知限制：不支持 VSCode 的高对比主题（`hcDark`/`hcLight`）——那是为无障碍场景单独设计的一套
+视觉，不是换几个色值就行；也不读主题里的 `tokenColors`（语法高亮），本看板不做语法高亮。
+
 ```bash
 ggt ui                # 起服务并自动打开浏览器
 ggt ui --no-open      # 只打印地址
