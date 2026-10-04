@@ -903,6 +903,22 @@ Examples:
 	return c
 }
 
+// renderIndexHTML 把语言、主题配色与设置快照注入首页模板。
+//
+// 从 runUI 里抽出来是为了能在测试里把注入结果整体看一遍：占位符与它所在的表达式同名时
+// （例如 window.__X__ = __X__），ReplaceAll 会把赋值左边也一起换掉，生成一段语法错误的
+// 脚本——服务端一切正常，只是页面整个不动。这一条是踩过的
+//
+// 注入设置快照是给"页面行为"读用的（当前只有通知自动消失的时长）。注入整份而不只注入
+// 用得到的那一项：占位符是"每加一项配置就要改一次渲染函数"的写法，而这份快照按注册表
+// 生成，将来页面再多读一项也不必改这里
+func renderIndexHTML(indexHTML []byte, lang string) []byte {
+	out := bytes.ReplaceAll(indexHTML, []byte("__GGT_HTML_LANG__"), []byte(lang))
+	out = bytes.ReplaceAll(out, []byte("__GGT_LANG_VALUE__"), []byte(lang))
+	out = bytes.ReplaceAll(out, []byte("__GGT_SETTINGS_JSON__"), uiSettingsJSON(config.GetDefaultConfigPath()))
+	return bytes.ReplaceAll(out, []byte("__GGT_THEME_CSS__"), []byte(resolveTheme()))
+}
+
 // runUI 组装并启动 WebUI 服务，阻塞到服务结束。
 func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []string) error {
 	// 独立于任何请求的上下文：采集要跨请求复用，见 uiCache.ctx 的说明
@@ -963,10 +979,7 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	// 烧死在启动时就会表现为"改了不生效"。主题只注入配色 CSS：候选清单与当前选择由
 	// 设置面板自己取（/api/settings），不再随首页多带一份
 	renderIndex := func() []byte {
-		lang := l10n.Current()
-		out := bytes.ReplaceAll(indexHTML, []byte("__GGT_HTML_LANG__"), []byte(lang))
-		out = bytes.ReplaceAll(out, []byte("__GGT_LANG_VALUE__"), []byte(lang))
-		return bytes.ReplaceAll(out, []byte("__GGT_THEME_CSS__"), []byte(resolveTheme()))
+		return renderIndexHTML(indexHTML, l10n.Current())
 	}
 
 	srv, err := webui.New(webui.Config{

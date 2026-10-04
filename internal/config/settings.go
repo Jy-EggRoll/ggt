@@ -51,6 +51,9 @@ const (
 const (
 	maxConcurrency = 1024
 	maxBucketMB    = 1_000_000
+	// maxNotifyTimeout 是通知自动消失时长的上界（秒）。
+	// 它没有内存安全的理由，纯是"别让用户填一个等于永不消失的数"——那种意图应当直接填 0
+	maxNotifyTimeout = 600
 )
 
 // Option 是配置项的一个候选取值。
@@ -234,6 +237,18 @@ var settings = []Setting{
 		Options:  themePreferenceOptions,
 	},
 	{
+		// 通知自动消失的时长，秒。0 表示不自动消失——这也是默认值：
+		// 默认让提示留着，比默认把用户还没看完的提示收走更安全
+		Key:      "notify_timeout",
+		Title:    l10n.T("Notification timeout", nil),
+		Kind:     KindInt,
+		Default:  0,
+		Expected: l10n.T("seconds before a notification closes itself (0 = never)", nil),
+		Parse:    parseIntInRange(0, maxNotifyTimeout),
+		Min:      intPtr(0),
+		Max:      intPtr(maxNotifyTimeout),
+	},
+	{
 		Key:       "repo_paths",
 		Title:     l10n.T("Repositories", nil),
 		Kind:      KindPaths,
@@ -298,15 +313,24 @@ func parseBool(s string) (any, error) {
 	return nil, ErrInvalidValue
 }
 
-// parsePositiveInt 返回一个"正整数且不超过 max"的解析器。
-func parsePositiveInt(max int) func(string) (any, error) {
+// parseIntInRange 返回一个"整数且落在 [min, max] 内"的解析器。
+//
+// 下界做成参数而不是固定为 1，是因为有的项 0 是合法取值：通知自动消失的时长用 0 表示
+// "不自动消失"，而分桶阈值必须为正，传 1 即可——两种语义共用一处实现，
+// 解析器与各项自己的 Min/Max 才不会各写一份、各自漂移
+func parseIntInRange(min, max int) func(string) (any, error) {
 	return func(s string) (any, error) {
 		n, err := strconv.Atoi(strings.TrimSpace(s))
-		if err != nil || n <= 0 || n > max {
+		if err != nil || n < min || n > max {
 			return nil, ErrInvalidValue
 		}
 		return n, nil
 	}
+}
+
+// parsePositiveInt 返回一个"正整数且不超过 max"的解析器。
+func parsePositiveInt(max int) func(string) (any, error) {
+	return parseIntInRange(1, max)
 }
 
 // enumParser 由候选清单生成解析器：取值必须命中清单（大小写不敏感），

@@ -173,6 +173,18 @@ const MSG = {
 
 const LANG = (typeof window.__GGT_LANG__ === 'string' && window.__GGT_LANG__) || 'en';
 
+// PAGE_SETTINGS 是服务端随首页注入的设置快照（按配置注册表生成），供"页面行为"读用。
+// 不在页面启动时去 /api/settings 取一次，是因为这些取值只影响页面行为、不影响首屏渲染，
+// 为它们多一次请求不值得。拿不到时按空数组处理，各用途退回自己的默认行为
+const PAGE_SETTINGS = Array.isArray(window.__GGT_SETTINGS__) ? window.__GGT_SETTINGS__ : [];
+
+// settingValue 从快照里取一项的文本形态取值，这一项不在快照里时返回 fallback。
+// 设置面板不走这里——面板每次打开都现取一次，否则命令行改过的值要刷新页面才看得见
+function settingValue(key, fallback) {
+  const item = PAGE_SETTINGS.find((it) => it && it.key === key);
+  return item && item.value !== undefined ? item.value : fallback;
+}
+
 // t 取出当前语言的文案并做 {{var}} 插值。
 // 用 split/join 而不是 replace：变量值里若含 $& 这类替换模式字符，replace 会把它们当模式解析
 function t(key, vars) {
@@ -1032,12 +1044,18 @@ function closeDiff() {
 // 超限丢最旧的——用户要找的是刚发生的那几条
 const NOTIF_MAX = 50;
 
+// NOTIFY_TIMEOUT_MS 是提示自动消失的时长，0 表示不自动消失。它来自配置项 notify_timeout，
+// 经首页注入的设置快照读到。默认 0：让提示留着，比猜一个时长、把用户还没看完的提示收走安全。
+// 读了配置项的页面改动要刷新才生效，因此这个键也在 cmd/ui_settings.go 的 uiReloadKeys 里
+const NOTIFY_TIMEOUT_MS = Math.max(0, Math.round(Number(settingValue('notify_timeout', 0)) || 0)) * 1000;
+
 // notifItems 是通知的唯一数据源，按发生顺序（旧 -> 新）存放，右下角的堆叠与面板里的历史
 // 都从它渲染，不各自维护一份。每项含：
 //   text / level / at  正文、严重度（info|warn|error）、发生时间
 //   el                 右下角那一条的元素（收起或清除后置空），挂在数据上是为了让
 //                      "追加一条"不必重建已有元素，也不会让屏幕上的通知重放入场动画
 //   dismissed          是否已经被用户收起过：收起只是关掉提示，条目仍留在历史里
+//   timer              自动消失的定时器（0 时长或 error 档没有；收起、清除时一并停掉）
 const notifItems = [];
 
 // 未读数：右下角堆叠上出现一条不等于用户在面板里看过，因此单独记一个数，
@@ -1127,7 +1145,12 @@ function renderToasts() {
   for (const item of notifItems) {
     // 收起过的条目不再回到屏幕上，但它还在历史里（见 dismissToast）
     if (item.dismissed) continue;
-    if (!item.el) item.el = buildToast(item);
+    if (!item.el) {
+      item.el = buildToast(item);
+      // 倒计时挂在元素上，且只在造出来时装一次：整块重建会让已在屏幕上的通知
+      // 重放动画，也会把倒计时一起重置
+      startToastCountdown(item);
+    }
     notificationsEl.appendChild(item.el);
   }
   // 清场：超限丢掉的那些、以及被清除掉的，元素都该离开容器
@@ -1151,6 +1174,7 @@ function notify(text, severity) {
   notifItems.push(item);
   while (notifItems.length > NOTIF_MAX) {
     const dropped = notifItems.shift();
+    stopToastCountdown(dropped);
     if (dropped.el) {
       dropped.el.remove();
       dropped.el = null;
@@ -1172,11 +1196,44 @@ function notifFromResult(text, isError) {
   notify(text, isError ? 'error' : 'info');
 }
 
+// stopToastCountdown 停掉某条提示的倒计时（本来没在走也安全）。
+// 提示被收起、被清除、被上限挤掉时都要停：留着定时器，稍后它会对一条已经不在屏幕上的
+// 提示再调一次收起，虽然幂等，但会让"这条通知到底还在不在计时"变得说不清
+function stopToastCountdown(item) {
+  if (item.timer) {
+    clearTimeout(item.timer);
+    item.timer = null;
+  }
+}
+
+// startToastCountdown 给一条提示装上倒计时。三条规则都由"提示是给人看的，不该在没看完时
+// 消失"这条推出来：
+//   - 时长 0 表示不自动消失（默认就是 0）
+//   - error 档不倒计时：错误提示多半要人去处理（拉取失败、提交被拒），
+//     正读到一半、或去别处处理完再回来时它已经没了，等于把线索藏起来
+//   - 鼠标停在上面就停表，移开重新计时：停上去往往正是要看清楚它
+function startToastCountdown(item) {
+  if (NOTIFY_TIMEOUT_MS <= 0 || item.level === 'error' || !item.el) return;
+  const arm = () => {
+    stopToastCountdown(item);
+    item.timer = setTimeout(() => {
+      item.timer = null;
+      dismissToast(item);
+    }, NOTIFY_TIMEOUT_MS);
+  };
+  item.el.addEventListener('mouseenter', () => stopToastCountdown(item));
+  item.el.addEventListener('mouseleave', () => {
+    if (!item.dismissed) arm();
+  });
+  arm();
+}
+
 // dismissToast 只收起右下角那一条，条目本身留在历史里。
 // 与"清除"分开是有意的（VSCode 也是这么分的）：收起弹出来的提示，往往只表示"我看过了、别挡着"，
 // 不等于要把这条记录从历史里抹掉——事后回到通知中心还要能翻到它。
 // 这也是本文件里 dismissed 与 removeNotif 两套动作并存的原因
 function dismissToast(item) {
+  stopToastCountdown(item);
   if (item.el) {
     item.el.remove();
     item.el = null;
@@ -1193,6 +1250,7 @@ function removeNotif(item) {
   const i = notifItems.indexOf(item);
   if (i === -1) return;
   notifItems.splice(i, 1);
+  stopToastCountdown(item);
   if (item.el) {
     item.el.remove();
     item.el = null;

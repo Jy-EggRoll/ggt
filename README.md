@@ -112,6 +112,7 @@ ggt config validate            # 体检配置文件
 | `theme` | string | 空 | 看板选用的主题；空表示跟随系统深浅。取值是主题 id（见设置面板的「主题」） |
 | `theme_dark` | string | `builtin:vscode/2026-dark.json` | 跟随系统时，系统为深色用哪套主题（对应 VSCode 的 `workbench.preferredDarkColorTheme`） |
 | `theme_light` | string | `builtin:vscode/2026-light.json` | 跟随系统时，系统为浅色用哪套主题（对应 `workbench.preferredLightColorTheme`） |
+| `notify_timeout` | int | `0` | 网页通知自动消失的秒数，`0` 表示不自动关闭。错误档通知不受这一项影响，鼠标停在通知上时暂停计时 |
 
 示例配置：
 

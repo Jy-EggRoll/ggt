@@ -30,6 +30,13 @@
      验收断言失去意义 -->
 <link rel="icon" href="data:,">
 <script>window.__GGT_LANG__ = "__GGT_LANG_VALUE__";</script>
+<!-- 设置快照：页面行为要用的那几个取值（例如通知自动消失的时长）随首页一次带过来，
+     免得页面为了一个数字再发一次请求。它按配置注册表生成，页面里出现新的消费点时
+     不必动服务端。设置面板不用这份快照——面板每次打开都现取一次，否则命令行改过的
+     值要刷新页面才看得见。
+     占位符特意与前面的变量名不同名：同名的话 ReplaceAll 会把赋值左边也一起换掉，
+     生成一段语法错误的脚本（这一条踩过，见 renderIndexHTML 的注释） -->
+<script>window.__GGT_SETTINGS__ = __GGT_SETTINGS_JSON__;</script>
 </head>
 <body>
 <!-- aria-busy 在首次数据到达前为 true，屏幕阅读器据此知道内容还在加载 -->

@@ -52,6 +52,9 @@ type Config struct {
 	// 对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme
 	ThemeDark  string `mapstructure:"theme_dark" json:"theme_dark"`
 	ThemeLight string `mapstructure:"theme_light" json:"theme_light"`
+	// NotifyTimeout 是网页通知自动消失的秒数。0 表示不自动消失，也就是零值即默认，
+	// 因此 applyConfigDefaults 同样不需要为它补值
+	NotifyTimeout int `mapstructure:"notify_timeout" json:"notify_timeout"`
 }
 
 // getConfigPath 计算配置文件的默认路径，失败时返回 error 而不终止进程。
@@ -191,6 +194,7 @@ func defaultConfig() *Config {
 //     在这里静默替换掉，用户就再也看不到"你写的级别我没认"这条提示了）
 //   - repo_paths / parent_paths 为 nil → 空切片，使序列化结果是 [] 而不是 null
 //   - ignore_submodules 是 bool，零值 false 即"默认包含子模块"，无需补值
+//   - notify_timeout 是 int，零值 0 即"通知不自动消失"，无需补值
 //
 // 取值一律向 settings 注册表要，本函数不再出现任何默认值字面量：原先这里把
 // 500/800/"decimal"/"en" 又抄了一遍，与 settings[].Default 分叉时没有任何测试能拦住。

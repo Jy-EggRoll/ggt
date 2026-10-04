@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +11,42 @@ import (
 
 	"github.com/jy-eggroll/ggt/internal/config"
 )
+
+// TestRenderIndexHTMLInjectsEveryPlaceholder 断言首页渲染后不留占位符，
+// 且注入进去的都是页面能直接读的东西。
+//
+// 这条测试的由来：占位符与它所在的表达式同名时（window.__X__ = __X__），ReplaceAll 会把
+// 赋值左边也一起换掉，页面拿到一段语法错误的脚本——服务端没有任何异常，只是页面整个不动
+func TestRenderIndexHTMLInjectsEveryPlaceholder(t *testing.T) {
+	// 隔离配置：注入设置快照会读配置文件，不能碰开发者自己的那一份
+	t.Setenv("HOME", t.TempDir())
+	indexHTML, err := fs.ReadFile(uiAssets, "ui/index.html")
+	if err != nil {
+		t.Fatalf("读取首页模板失败：%v", err)
+	}
+
+	out := string(renderIndexHTML(indexHTML, "zh-CN"))
+	// 逐个点名而不是断言"没有 __GGT_ 这样的子串"：页面里的变量名 __GGT_LANG__ 与
+	// __GGT_SETTINGS__ 本来就带这个前缀，那种断言会把它们一起算成残留
+	for _, placeholder := range []string{
+		"__GGT_HTML_LANG__", "__GGT_LANG_VALUE__", "__GGT_SETTINGS_JSON__", "__GGT_THEME_CSS__",
+	} {
+		if strings.Contains(out, placeholder) {
+			t.Errorf("首页仍留有占位符 %s", placeholder)
+		}
+	}
+	for _, want := range []string{
+		`<html lang="zh-CN">`,
+		`window.__GGT_LANG__ = "zh-CN";`,
+		// 数组字面量：注入的是整份视图，页面直接读它
+		`window.__GGT_SETTINGS__ = [`,
+		`"key":"notify_timeout"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("渲染后的首页里找不到 %q", want)
+		}
+	}
+}
 
 // callSettings 直接调用设置端点的处理函数。
 //
