@@ -94,6 +94,8 @@ ggt config validate            # 体检配置文件
 
 `repo_paths` 与 `parent_paths` 不能用 `config set` 修改——增删请走 `ggt repo add` / `remove` / `add-parent`，那里有去重、git 仓库校验与路径规范化。
 
+下面这些项在网页上也能改：`ggt ui` 底栏那颗齿轮点开就是设置面板，逐项列出候选、取值说明与「恢复默认」，改完点保存即写进同一个配置文件（`ggt config path` 打印的就是它）。由别的命令管理的项（仓库列表、扫描目录）在面板上只显示不给改
+
 支持的配置项：
 
 | 配置项 | 类型 | 默认值 | 说明 |
@@ -107,7 +109,7 @@ ggt config validate            # 体检配置文件
 | `size_unit` | string | `decimal` | `size` 命令的 MB 换算口径：`decimal`（1 MB = 1,000,000 字节）或 `binary`（1 MB = 1024×1024 字节，即 MiB） |
 | `language` | string | `en` | 输出语言，可选 `en` 或 `zh-CN`。命令行 `--lang` / `-l` 优先于此项 |
 | `log_level` | string | `warn` | 诊断日志级别，可选 `debug`/`info`/`warn`/`error`。命令行 `-v`/`-vv` 优先于此项；取值非法时不中止命令，改为回退默认级别并提示 |
-| `theme` | string | 空 | 看板选用的主题；空表示跟随系统深浅。取值是主题 id（见看板的主题选择器） |
+| `theme` | string | 空 | 看板选用的主题；空表示跟随系统深浅。取值是主题 id（见设置面板的「主题」） |
 | `theme_dark` | string | `builtin:vscode/2026-dark.json` | 跟随系统时，系统为深色用哪套主题（对应 VSCode 的 `workbench.preferredDarkColorTheme`） |
 | `theme_light` | string | `builtin:vscode/2026-light.json` | 跟随系统时，系统为浅色用哪套主题（对应 `workbench.preferredLightColorTheme`） |
 
@@ -242,8 +244,11 @@ task l10n:check    # 只读门禁，已接入 task verify，CI 会跑
 - **diff 是一层近乎全屏的面板**：四周留白 + 圆角 + 阴影，背后的看板做模糊，一眼看得出它是浮在
   看板之上的一层，关掉就回到那张卡片。它与仓库卡片共用同一套浮层骨架（`.overlay`），
   只是层级更高——从卡片里进，关掉回到卡片
-- **底栏**：整宽固定在底部，左侧是「更新于 …」与上一次操作的结果，右侧是「拉取全部」与主题
-  选择器。列高按底栏高度让出空间，最下面一行卡片不会被压住
+- **底栏**：整宽固定在底部，左侧是「更新于 …」与上一次操作的结果，右侧是「拉取全部」、设置
+  （齿轮）与通知铃铛。列高按底栏高度让出空间，最下面一行卡片不会被压住
+- **设置面板**：齿轮点开，把上面那张配置表逐项列出来——候选取值、取值说明、整数边界、
+  「恢复默认」，改完点保存。由别的命令管理的项（仓库列表、扫描目录）只显示当前值并注明该用
+  哪个命令，面板上不给改。主题这类被服务端烧进首页的取值改完会自动刷新页面
 - **暂存 / 取消暂存**：鼠标移到变更文件行上，行尾出现 `+` 或 `−`。未合并（有冲突）的文件不提供
   这个按钮——`git add` 一个仍带着冲突标记的文件等于把这些标记当成分辨结果，一次误点就可能提交进去
 - **写提交信息并提交、推送当前分支**：在 diff 视图的标题栏里输入提交信息，回车或点「提交」即
@@ -256,14 +261,15 @@ task l10n:check    # 只读门禁，已接入 task verify，CI 会跑
 **配色跟随你的 VSCode 主题**
 
 把任意一个合法的 VSCode 主题 JSON 丢进配置目录（`~/.config/go-git-ggt/` 或它的 `themes/`
-子目录），刷新页面就能在左下角的下拉框里选它——你在 VSCode 里用的是哪套，看板就是哪套。
+子目录），在设置面板的「主题」里选它（改完页面会自己刷新）——你在 VSCode 里用的是哪套，
+看板就是哪套。
 
 主题文件按 VSCode 自己的规则解析：JSONC 的注释与尾逗号、`include` 链逐层合并、以及
 **主题没写的令牌回落到 VSCode 颜色注册表的默认值**（`gitDecoration.*`、`diffEditor.*`
 这些颜色本来就不在主题文件里，VSCode 用的正是那些默认值）。因此颜色与 VSCode 的观感一致，
 而不是"看起来差不多"。
 
-下拉框里另有内置的 12 套：VSCode 官方的 8 套（2026 Dark/Light、Dark/Light Modern、Dark+/Light+、
+候选里另有内置的 12 套：VSCode 官方的 8 套（2026 Dark/Light、Dark/Light Modern、Dark+/Light+、
 Visual Studio Dark/Light）与 Catppuccin 的 4 套口味。
 
 主题的三个配置键逐项对应 VSCode 的三个设置项：
