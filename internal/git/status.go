@@ -20,10 +20,11 @@
 //   - 代价是 v2 的记录类型更多（普通变更 1 / 重命名 2 / 未合并 u / 未跟踪 ? / 忽略 !），
 //     解析要按类型分派。这份复杂度被本文件一次性吸收，调用方只面对结构体
 //
-// 已知限制：本文件的采集是全量读取 git 输出。若某个仓库存在海量未忽略的未跟踪文件
-// （例如忘了写 .gitignore 的 node_modules），status 输出可能达到几十 MB。上游 VSCode
-// 的做法是用流式解析并在超过 statusLimit（默认 10000 条）时杀掉子进程（git.ts:2835），
-// ggt 暂未做这层保护；一旦 WebUI 面向超大仓库，这里是第一个需要加限制的地方。
+// 海量输出的处理：某个仓库若有大量未忽略的未跟踪文件（例如忘了写 .gitignore 的
+// node_modules），status 输出可能达到几十 MB。上游 VSCode 的做法是流式解析、条目数超过
+// statusLimit（默认 10000）就杀掉子进程，并把已经解析到的部分照常返回、把 didHitLimit
+// 报到界面（git.ts:2784-2793）。本文件采用同一套做法，见 statusLimit 与 git.go 的
+// runWithRecordLimit；截断会体现在 Status.LimitHit 上。
 package git
 
 import (
@@ -75,7 +76,19 @@ type Status struct {
 	Behind int
 	// Files 是全部变更条目，顺序与 git 输出一致（git 自身按路径排序）
 	Files []StatusFile
+	// LimitHit 表示本次采集因为条目数超过 statusLimit 而被提前截断，Files 只是前面一段。
+	// 之所以要把这件事报出来：截断本身是静默的，界面若不提示，用户会以为"这个仓库就这么多
+	// 改动"。上游同样把 didHitLimit 一路报到界面（git.ts:2793）
+	LimitHit bool
 }
+
+// statusLimit 是单次 status 采集允许的条目上限，超过就终止 git 子进程并截断结果。
+//
+// 取值与上游一致（VSCode 的 git.statusLimit 默认 10000，见 git.ts:2784 与
+// repository.ts:2964），语义也一致：0 表示不限制。这里先做成常数而不是接进配置文件：
+// ggt 现有的同类上限（看板的分页大小、泳道图的最大条数）也都是常数，配置项留到真有人要
+// 调整时再加，免得为一个从没被改过的旋钮多维护一份配置。
+const statusLimit = 10000
 
 // RunStatus 采集指定仓库的工作区状态快照。
 //
@@ -89,17 +102,29 @@ type Status struct {
 //   - GIT_OPTIONAL_LOCKS=0：禁止 git 在 status 期间写入 index（刷新 stat 缓存）。
 //     批量轮询几十个仓库时，若允许写 index，就可能与用户自己的 git add/commit 抢
 //     index.lock，表现为偶发的 "Unable to create ... index.lock: File exists"。
-//     这是上游 VSCode 对 status 采用的同一做法（git.ts:2796）
+//     这是上游 VSCode 对 status 采用的同一做法（git.ts:2745）
 //
 // 并发由调用方决定：本函数只负责一次采集，不做任何缓存。WebUI 的轮询接口需要在
 // 自己那层做缓存与并发控制，否则每个页面请求都会重跑全部仓库。
+//
+// 条目数超过 statusLimit 时会被截断，截断结果照常返回，同时把 LimitHit 置为 true
 func RunStatus(ctx context.Context, repoPath string) (*Status, error) {
-	output, err := runWithOutputEnv(ctx, repoPath, []string{"GIT_OPTIONAL_LOCKS=0"},
+	return runStatus(ctx, repoPath, statusLimit)
+}
+
+// runStatus 是 RunStatus 的实现。limit 之所以做成参数，是为了让测试能注入一个很小的值
+// （否则要构造一万个文件才能覆盖到截断这条路径）；外部的默认上限见 statusLimit。
+//
+// limit 取 0 表示不限制，与上游 git.ts:2788 的 "limit !== 0" 判断同义。
+func runStatus(ctx context.Context, repoPath string, limit int) (*Status, error) {
+	output, hitLimit, err := runWithRecordLimit(ctx, repoPath, []string{"GIT_OPTIONAL_LOCKS=0"}, limit,
 		"status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all")
 	if err != nil {
 		return nil, err
 	}
-	return ParseStatus(output), nil
+	st := ParseStatus(output)
+	st.LimitHit = hitLimit
+	return st, nil
 }
 
 // ParseStatus 解析 `git status --porcelain=v2 -z --branch` 的输出。

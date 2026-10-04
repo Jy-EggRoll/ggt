@@ -301,7 +301,14 @@ const STAGED = {
 };
 
 // 工作区侧（Y 位）
+//
+// A 这一档对应 git 的 intent-to-add（`git add -N`）：v2 输出形如 "1 .A N... path"，
+// 即索引位是 "."、工作区位是 "A"。上游把它当"已新增"处理（repository.ts 的 raw.y === 'A'
+// 映射到 INTENT_TO_ADD，字母 'A'、配色 addedResourceForeground）。此前这里没有 A，
+// 该记录会落到下面 fileStatus 的兜底分支，字母侥幸还是 A，颜色却取了"已忽略"的灰并加斜体，
+// 与 VSCode 的绿 A 不一致——这是实测（`git add -N` 后取 status）发现的
 const WORKTREE = {
+  A: { letter: 'A', cls: 'st-added' },
   M: { letter: 'M', cls: 'st-modified' },
   D: { letter: 'D', cls: 'st-deleted' },
   T: { letter: 'T', cls: 'st-type-changed' },
@@ -1434,8 +1441,14 @@ function graphCircle(index, radius, strokeWidth, color) {
     r: radius,
   });
   c.style.strokeWidth = strokeWidth + 'px';
+  // 只有带颜色的圆点才在这里定填充。没颜色的那个是 HEAD 的内圈，它的填充、以及所有圆点的
+  // 描边颜色，都交给 CSS：这两个颜色必须等于"这一行当前的实际底色"，而底色会随 hover 与
+  // 选中变化，写进 JS 就固定成了初始底色，hover 时会露出一圈不跟着变的色边。上游把这两件
+  // 事也放在样式表里（scm.css 的 .graph > circle 与 circle:last-child 规则，含 hover 与
+  // 选中三组变体），此前这里的注释把那段误读成"上游不设填充（SVG 默认黑）"，于是把填充
+  // 硬编码成了 --bg（editor.background），而这一行真正坐在 --panel-bg（editorWidget.background）
+  // 上，两者本就不是同一个颜色，见 style.css 里那段圆点规则
   if (color) c.style.fill = color;
-  else c.style.fill = 'var(--bg)'; // HEAD 的内圈：上游不设填充（SVG 默认黑），浅色主题上会成黑点
   return c;
 }
 

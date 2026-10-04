@@ -11,6 +11,7 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -205,5 +206,62 @@ func TestRunStatus_AheadAndBehind(t *testing.T) {
 	}
 	if st.Ahead != 1 || st.Behind != 0 {
 		t.Errorf("Ahead/Behind = %d/%d，期望 1/0", st.Ahead, st.Behind)
+	}
+}
+
+// writeUntrackedFiles 在仓库里造 n 个未跟踪文件，用来把 status 输出撑到指定规模。
+// 文件名补零是为了让 git 的排序结果稳定，断言里因此不必关心具体是哪些文件。
+func writeUntrackedFiles(t *testing.T, repo string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		name := filepath.Join(repo, fmt.Sprintf("untracked-%03d.txt", i))
+		if err := os.WriteFile(name, []byte("x"), 0644); err != nil {
+			t.Fatalf("写入未跟踪文件失败: %v", err)
+		}
+	}
+}
+
+// TestRunStatus_LimitHit 验证「条目数超过上限就截断并终止 git 子进程」这条保护路径。
+//
+// 为什么必须走真实仓库：截断发生在子进程的输出流上（runWithRecordLimit 边读边数、超限
+// 杀进程），属于 I/O 行为，喂一段固定样本给 ParseStatus 永远碰不到它。这条路径的价值
+// 在于内存兜底——没有它，一个忘了写 .gitignore 的 node_modules 就能把几十 MB 读进内存。
+//
+// 上限注入 5 这种小值，而不是真造一万个文件：runStatus 把 limit 做成参数正是为了这件事
+func TestRunStatus_LimitHit(t *testing.T) {
+	repo := newTestRepo(t)
+	writeUntrackedFiles(t, repo, 20)
+
+	st, err := runStatus(context.Background(), repo, 5)
+	if err != nil {
+		t.Fatalf("runStatus 返回错误: %v", err)
+	}
+	if !st.LimitHit {
+		t.Errorf("20 个未跟踪文件、上限 5，应报告本次采集被截断")
+	}
+	if len(st.Files) == 0 {
+		t.Errorf("截断后仍应返回已经读到的条目，实际为空")
+	}
+	// 记录里还有 "# branch.*" 头记录，它们同样占记录数，所以这里只断言不超过上限
+	if len(st.Files) > 5 {
+		t.Errorf("截断后条目数 = %d，不应超过上限 5", len(st.Files))
+	}
+}
+
+// TestRunStatus_LimitZeroMeansUnlimited 验证 limit 取 0 表示不限制，
+// 与上游 git.ts:2788 的 "limit !== 0" 判断同义——上游允许把 statusLimit 配成 0 关掉保护
+func TestRunStatus_LimitZeroMeansUnlimited(t *testing.T) {
+	repo := newTestRepo(t)
+	writeUntrackedFiles(t, repo, 20)
+
+	st, err := runStatus(context.Background(), repo, 0)
+	if err != nil {
+		t.Fatalf("runStatus 返回错误: %v", err)
+	}
+	if st.LimitHit {
+		t.Errorf("上限为 0 表示不限制，不应报告截断")
+	}
+	if len(st.Files) != 20 {
+		t.Errorf("未限制时应返回全部 20 个未跟踪文件，实际 %d 个", len(st.Files))
 	}
 }
