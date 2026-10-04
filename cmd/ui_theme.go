@@ -103,6 +103,10 @@ var themeOwnVars = map[theme.Type]map[string]string{
 type uiThemeData struct {
 	// Current 是当前选中的主题 id，空表示跟随系统
 	Current string `json:"current"`
+	// Dark / Light 是"跟随系统"时深色与浅色各自用的那套（配置的 theme_dark / theme_light）。
+	// 页面据此把两个偏好下拉框的当前值摆正——服务端不做"哪套生效"的判断，那是浏览器的活
+	Dark  string `json:"dark"`
+	Light string `json:"light"`
 	// Groups 是选择器里的分组；Label 为空的那组表示"用户自己放进来的"，
 	// 标题由页面按当前语言给（页面文案不走 Go 的 l10n 管线）
 	Groups []uiThemeGroup `json:"groups"`
@@ -138,38 +142,94 @@ func currentThemeID() string {
 	return strings.TrimSpace(s)
 }
 
+// 主题相关的三个配置键。它们逐项对应 VSCode 的三个设置项：
+//
+//	theme        <- workbench.colorTheme（空串 = 自动跟随系统）
+//	theme_dark   <- workbench.preferredDarkColorTheme
+//	theme_light  <- workbench.preferredLightColorTheme
+//
+// 为什么是"一个显式指定 + 两个偏好"而不是"跟随/指定开关 + 一个 id"：VSCode 的模型正是前者——
+// 自动检测开着时用的不是某一套写死的主题，而是用户分别指定的深、浅两套；关掉之后才由
+// colorTheme 说了算。照抄它意味着"跟随系统"也能定制，而不是只能吃内置的那两套
+const (
+	themeKey      = "theme"
+	themeDarkKey  = "theme_dark"
+	themeLightKey = "theme_light"
+)
+
+// themePref 读一个"跟随系统"下的主题偏好，读不到或写成空串就回落到内置默认。
+//
+// 与 currentThemeID 的差别在于空串的含义：theme 的空串是"跟随系统"，是有意义的取值；
+// 而这两个偏好一旦为空就无从渲染，必须回落到默认，故两者不能共用一个函数
+func themePref(key, fallback string) string {
+	v, err := config.EffectiveAt(config.GetDefaultConfigPath(), key)
+	if err != nil {
+		return fallback
+	}
+	s, _ := v.(string)
+	if s = strings.TrimSpace(s); s == "" {
+		return fallback
+	}
+	return s
+}
+
 // resolveTheme 解析出本次页面渲染该用的 CSS 与选择器数据。
 //
 // 选中的主题解析失败时（文件被删了、内容写坏了）回退到跟随系统并记一条日志：
 // 页面不该因为一个坏主题文件就整页没有颜色，而"配色悄悄变回默认"这种事必须留下痕迹
 func resolveTheme() (string, uiThemeData) {
-	data := uiThemeData{Current: currentThemeID(), Groups: groupThemes(theme.Available(themeDirs()))}
+	data := uiThemeData{
+		Current: currentThemeID(),
+		Dark:    themePref(themeDarkKey, theme.DefaultDarkID),
+		Light:   themePref(themeLightKey, theme.DefaultLightID),
+		Groups:  groupThemes(theme.Available(themeDirs())),
+	}
 	if data.Current == "" {
-		return systemThemeCSS(), data
+		return systemThemeCSS(data.Dark, data.Light), data
 	}
 	resolved, err := theme.Resolve(data.Current)
 	if err != nil {
 		logger.Warn(l10n.T("Failed to load the selected theme; following the system instead", nil),
 			"theme", data.Current, "error", err)
 		data.Current = ""
-		return systemThemeCSS(), data
+		return systemThemeCSS(data.Dark, data.Light), data
 	}
 	return themeBlock(resolved), data
 }
 
-// systemThemeCSS 是"跟随系统"时的样式：把内置的深、浅两套都写进去，浅色那份套在
-// prefers-color-scheme 里，由浏览器自己按系统设置挑——服务端问不到你的系统是深是浅
-func systemThemeCSS() string {
+// systemThemeCSS 是"跟随系统"时的样式：把深、浅两套都写进去，浅色那份套在
+// prefers-color-scheme 里，由浏览器自己按系统设置挑——服务端问不到你的系统是深是浅。
+//
+// 哪一套是深、哪一套是浅由**角色**决定（theme_dark 进基础规则、theme_light 进浅色媒体查询），
+// 不看主题自己声明的明暗类型：这是 VSCode 的语义——preferredDarkColorTheme 说的是"系统是深色时
+// 用哪套"，用户可以真的把一套浅色主题填进去，那时它照样只在系统为深色时生效。
+// 主题自己的 type 仍然决定它的自有令牌取哪一档（见 themeOwnVars），两件事互不干扰。
+//
+// 配置里的 id 指到不存在或解析不了的主题时回落到内置默认并记日志：与"选中的主题解析失败"
+// 同一处理，页面不该因为配置里一个写坏的 id 就整页没有颜色
+func systemThemeCSS(darkID, lightID string) string {
 	var b strings.Builder
-	for _, id := range []string{theme.DefaultDarkID, theme.DefaultLightID} {
-		resolved, err := theme.Resolve(id)
+	for _, p := range []struct {
+		role     string
+		id       string
+		fallback string
+	}{
+		{"dark", darkID, theme.DefaultDarkID},
+		{"light", lightID, theme.DefaultLightID},
+	} {
+		resolved, err := theme.Resolve(p.id)
+		if err != nil && p.fallback != p.id {
+			logger.Warn(l10n.T("Failed to load the preferred theme; using the built-in default", nil),
+				"role", p.role, "theme", p.id, "error", err)
+			resolved, err = theme.Resolve(p.fallback)
+		}
 		if err != nil {
-			// 内置主题解析不了只可能是打包出了问题（单测里覆盖了），此时什么都不注入，
+			// 内置主题也解析不了，只可能是打包出了问题（单测里覆盖了），此时什么都不注入，
 			// 页面会因为没有颜色变量而呈现为不可读——这正是我们想要的"响亮地失败"
-			logger.Error(l10n.T("Failed to resolve a built-in theme", nil), "theme", id, "error", err)
+			logger.Error(l10n.T("Failed to resolve a built-in theme", nil), "theme", p.id, "error", err)
 			continue
 		}
-		if resolved.Type == theme.Light {
+		if p.role == "light" {
 			b.WriteString("@media (prefers-color-scheme: light){")
 			b.WriteString(themeBlock(resolved))
 			b.WriteString("}")
@@ -293,7 +353,10 @@ func themeDataJSON(data uiThemeData) string {
 	return string(b)
 }
 
-// handleTheme 切换看板主题：把选中的主题 id 写进配置文件的 theme 键。
+// handleTheme 写主题相关的三个配置键之一：{"key":"theme"|"theme_dark"|"theme_light","value":"<id>"}。
+//
+// 一个端点管三个键，而不是拆成三个端点：三者的校验与落盘完全一样（都要求"必须在可用列表里"，
+// 只有 theme 额外允许空串=跟随系统），拆开就等于把同一段逻辑抄三遍。
 //
 // 只接受"当前可用列表里确实存在的 id"，不接受任意字符串：这个端点的作用是让页面上的选择
 // 生效，而页面上的选项就是 Available() 给出的那些。放任意值进来，就等于一次请求能让配置里的
@@ -304,31 +367,50 @@ func (c *uiCache) handleTheme(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		// ID 为空表示跟随系统
-		ID string `json:"id"`
+		// Key 是三个主题键之一
+		Key string `json:"key"`
+		// Value 是主题 id；Key 为 theme 时空串表示跟随系统
+		Value string `json:"value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeUIWrite(w, http.StatusBadRequest, uiWriteResult{Error: l10n.T("Invalid request body", nil)})
 		return
 	}
 
-	id := strings.TrimSpace(req.ID)
-	if id != "" {
-		known := false
-		for _, t := range theme.Available(themeDirs()) {
-			if t.ID == id {
-				known = true
-				break
-			}
-		}
-		if !known {
-			writeUIWrite(w, http.StatusNotFound, uiWriteResult{Error: l10n.T("Unknown theme", nil)})
+	key := strings.TrimSpace(req.Key)
+	value := strings.TrimSpace(req.Value)
+	switch key {
+	case themeKey:
+		// 空串是有意义的取值：跟随系统
+	case themeDarkKey, themeLightKey:
+		// 两个偏好不接受空串：空串意味着"跟随系统时没有配色可渲染"，页面只会一片无色
+		if value == "" {
+			writeUIWrite(w, http.StatusBadRequest, uiWriteResult{Error: l10n.T("A theme id is required", nil)})
 			return
 		}
+	default:
+		writeUIWrite(w, http.StatusNotFound, uiWriteResult{Error: l10n.T("Unknown theme setting", nil)})
+		return
 	}
-	if err := config.SetKey("theme", id); err != nil {
+
+	if value != "" && !themeKnown(value) {
+		writeUIWrite(w, http.StatusNotFound, uiWriteResult{Error: l10n.T("Unknown theme", nil)})
+		return
+	}
+	if err := config.SetKey(key, value); err != nil {
 		writeUIWrite(w, http.StatusInternalServerError, uiWriteResult{Error: err.Error()})
 		return
 	}
 	writeUIWrite(w, http.StatusOK, uiWriteResult{Output: l10n.T("Theme saved", nil)})
+}
+
+// themeKnown 判断一个 id 是否在"当前可用主题"里。可用列表同时取决于内置主题与用户放进配置
+// 目录的文件，因此每次都重新枚举——这也是这里不做缓存的原因
+func themeKnown(id string) bool {
+	for _, t := range theme.Available(themeDirs()) {
+		if t.ID == id {
+			return true
+		}
+	}
+	return false
 }

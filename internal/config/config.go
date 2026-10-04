@@ -48,6 +48,10 @@ type Config struct {
 	// Theme 是网页看板选中的主题。空串表示跟随系统深浅（那是本节唯一的"有意义的零值"，
 	// 因此 applyConfigDefaults 不需要为它补默认值——补了也是空串）
 	Theme string `mapstructure:"theme" json:"theme"`
+	// ThemeDark / ThemeLight 是"跟随系统"时深色与浅色各自用哪套主题，
+	// 对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme
+	ThemeDark  string `mapstructure:"theme_dark" json:"theme_dark"`
+	ThemeLight string `mapstructure:"theme_light" json:"theme_light"`
 }
 
 // getConfigPath 计算配置文件的默认路径，失败时返回 error 而不终止进程。
@@ -199,6 +203,15 @@ func applyConfigDefaults(cfg *Config) {
 	}
 	if strings.TrimSpace(cfg.LogLevel) == "" {
 		cfg.LogLevel = defaultStringOf("log_level")
+	}
+	// theme_dark / theme_light 与 theme 不同：它们的空串没有含义（跟随系统时"没有配色可渲染"），
+	// 因此和上面几项一样补默认值。漏了这两个分支时，LoadConfigAt（走注册表的通用路径）与
+	// 这里会给出不同答案，而 TestLoadConfigAt 的"全默认配置"断言正好抓住这个分叉
+	if strings.TrimSpace(cfg.ThemeDark) == "" {
+		cfg.ThemeDark = defaultStringOf("theme_dark")
+	}
+	if strings.TrimSpace(cfg.ThemeLight) == "" {
+		cfg.ThemeLight = defaultStringOf("theme_light")
 	}
 	if cfg.RepoPaths == nil {
 		cfg.RepoPaths = []string{}

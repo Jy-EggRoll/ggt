@@ -40,20 +40,31 @@
      一次 replaceChildren，而不是逐个增删——后者在几万行的看板上代价很大，见 app.js 的 layout -->
 <main id="board" aria-busy="true"><div id="cont-layer"></div></main>
 <p id="empty" hidden></p>
-<p id="status" role="status" aria-live="polite"></p>
 <!--
-  看板层面的操作区，固定在左下角。目前只有"拉取全部仓库"一个动作，以及它右侧那行结果。
-  结果行与覆盖层里的 #diff-op 分开：两者可能同时存在（覆盖层打开时看板那一层被盖住，
-  但状态不该丢），共用一个元素会互相覆盖。
+  看板底栏，整宽固定在底部。左边是「数据多旧、这次采集花了多久」这行元信息，右边是看板层面的
+  动作与它们的结果。
 
-  层级刻意低于 diff 覆盖层，覆盖层打开时它整个被盖住——这些动作作用于整个看板，
+  为什么收进一条底栏：#status 原来是个文档流里的 <p>，而看板的高度按视口算，它因此被顶到
+  屏幕之外，实际几乎看不到；#tools 又浮在左下角，会压住最下面一行卡片。两者合成一条之后
+  各占一侧，互不重叠，也不再压住内容（列高已按底栏高度让出空间，见 app.js 的 layout）
+
+  结果行（#op）与覆盖层里的 #diff-op 分开：两者可能同时存在（覆盖层打开时底栏被盖住，
+  但状态不该丢），共用一个元素会互相覆盖
+
+  层级刻意低于 diff 覆盖层，覆盖层打开时它整条被盖住——这些动作作用于整个看板，
   与正在看的那个仓库的 diff 无关
 -->
 <div id="tools">
+  <p id="status" role="status" aria-live="polite"></p>
+  <span id="op" role="status" aria-live="polite"></span>
   <button id="fetch-btn" type="button"></button>
   <!-- 主题选择器：选项由 app.js 按服务端注入的那份清单搭出来（含"跟随系统"与各来源分组） -->
   <select id="theme-select" disabled></select>
-  <span id="op" role="status" aria-live="polite"></span>
+  <!-- 跟随系统时的深、浅两套偏好，对应 VSCode 的 workbench.preferredDark/LightColorTheme。
+       只在当前选的是"跟随系统"时显示：不跟随时它们不生效，摆在底栏里只会占地方挤掉别的控件。
+       选项同样由 app.js 按注入的清单搭出来（与被隐藏的初值一起，见 buildThemeSelect） -->
+  <select id="theme-dark" disabled hidden></select>
+  <select id="theme-light" disabled hidden></select>
 </div>
 <!--
   diff 视图的容器：覆盖整页替换看板（用户明确要求"点开后整页看 diff，Esc 或返回键回看板"）。

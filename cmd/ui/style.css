@@ -44,6 +44,11 @@
  *   --diff-add-bg --diff-del-bg
  */
 :root {
+  /* --page-pad / --statusbar-h 是页面上唯一的一份"留白与底栏高度"：app.js 算列高时从计算样式
+     里读它们（cssVar），而不是在 JS 里再写一遍数字——底栏是后加的，硬编码的话它一出现就会
+     压住最下面一行卡片 */
+  --page-pad: 16px;
+  --statusbar-h: 30px;
   /* --col-w 是列宽的唯一定义处：app.js 从计算样式里读它来算横向坐标，
      两边各写一份数字迟早会漂移（改了 CSS 忘了改 JS，表现为卡片与列错位） */
   --col-w: 320px;
@@ -74,7 +79,9 @@ html {
 
 body {
   margin: 0;
-  padding: 16px;
+  /* 四边留白统一取 --page-pad；底栏那 30px 不在 padding 里让，而是在列高里让（见 app.js），
+     否则卡片的可用高度会比视口多算一截、最后一行被底栏压住 */
+  padding: var(--page-pad);
   background: var(--bg);
   color: var(--text);
   /* 13px 是 VSCode 工作台的默认界面字号；字体族按 Linux 上 VSCode 的实际取值排布 */
@@ -123,6 +130,11 @@ body {
   transition: transform 0.3s ease;
   will-change: transform;
 }
+
+/* 新插入的行在首次定位前关掉过渡：行是绝对定位的，刚建出来时 transform 是 none（页面左上角），
+   真实坐标要等 layout() 才写入，带着过渡就会从左上角飞过来（暂存文件后最明显）。
+   这个类由 app.js 在新建行时加上、定位完成后下一帧摘掉，见 reconcile 与 layout */
+.row.no-anim { transition: none; }
 
 /* hover 高亮：色值来自 list.hoverBackground，与 VSCode 列表行的鼠标反馈一致 */
 .row:hover {
@@ -174,8 +186,10 @@ body {
 
 /*
  * 计数徽标：几何取自 VSCode 的 countBadge.css（3px 5px 内边距、11px 圆角、最小 18x18）。
- * 默认背景与前景这一对色值本轮没有在上游源码里定位到，因此沿用本项目原有的中性色，
- * 属于尚未对齐的一项，改动前请先查证 badge.background / badge.foreground 的默认值
+ * 背景与前景这一对同取 badge.background / badge.foreground（上游注册表默认值：深色
+ * #4D4D4D/#FFFFFF、浅色 #C4C4C4/#333333，见 internal/theme/defaults.json）。
+ * 此前只取背景、前景沿用 --text，于是浅色主题里出现过"深灰字压浅灰底"这种几乎读不出来的
+ * 组合——一对令牌就该成对使用
  */
 .badge {
   flex: none;
@@ -188,7 +202,7 @@ body {
   line-height: 11px;
   font-weight: 600;
   text-align: center;
-  color: var(--text-dim);
+  color: var(--badge-fg, var(--text-dim));
 }
 .badge.err { color: var(--git-conflicting); }
 
@@ -290,16 +304,46 @@ body {
  * 只给字母徽标上色（fileDecorations.colors 恒为 false），而这块看板以文件清单为主体，
  * 文件名上色更利于横向扫读，用户已确认保留
  */
-.row.file.st-modified,
-.row.file.st-stage-modified { color: var(--git-modified); }
-.row.file.st-added { color: var(--git-added); }
-.row.file.st-untracked { color: var(--git-untracked); }
-.row.file.st-renamed { color: var(--git-renamed); }
-.row.file.st-deleted,
-.row.file.st-stage-deleted { color: var(--git-deleted); }
-.row.file.st-ignored { color: var(--git-ignored); font-style: italic; }
-.row.file.st-conflicting { color: var(--git-conflicting); }
-.row.file.st-type-changed { color: var(--git-modified); }
+.row.file.st-modified { color: var(--git-modified); --tint: var(--git-modified); }
+/* 已暂存那一侧用 stage* 变体：这两个令牌此前映射了却从没被消费（样式表 0 处引用），
+   于是在所有主题下"已暂存的修改"和"未暂存的修改"都是同一个颜色。上游注册表里两者确实同值
+   （extensions/git/package.json 的 defaults 逐字如此），但主题写了它们时就该不同 */
+.row.file.st-stage-modified {
+  color: var(--git-stage-modified, var(--git-modified));
+  --tint: var(--git-stage-modified, var(--git-modified));
+}
+.row.file.st-added { color: var(--git-added); --tint: var(--git-added); }
+.row.file.st-untracked { color: var(--git-untracked); --tint: var(--git-untracked); }
+.row.file.st-renamed { color: var(--git-renamed); --tint: var(--git-renamed); }
+.row.file.st-deleted { color: var(--git-deleted); --tint: var(--git-deleted); }
+.row.file.st-stage-deleted {
+  color: var(--git-stage-deleted, var(--git-deleted));
+  --tint: var(--git-stage-deleted, var(--git-deleted));
+}
+.row.file.st-ignored { color: var(--git-ignored); --tint: var(--git-ignored); font-style: italic; }
+.row.file.st-conflicting { color: var(--git-conflicting); --tint: var(--git-conflicting); }
+.row.file.st-type-changed { color: var(--git-modified); --tint: var(--git-modified); }
+
+/*
+ * 行底色：每个状态各自的半透明色块，色源与它的文字色**同一个令牌**
+ *
+ * 为什么底色必须与文字同源：底色按"组"给（曾经是整组绿、整组黄）时，会出现"红字的删除行压在
+ * 绿底上"这种搭配——既难读，也把"这个文件怎么了"和"它属于哪一组"两件事糊成一个颜色。
+ * 现在两个维度各管一件事：
+ *   st-* → 决定色相（这个文件是 M/A/D/U/!…，也就是 --tint 取哪个令牌）
+ *   g-*  → 只决定同一色相下的深浅（它属于哪一组）
+ * 底色由 --tint 与卡片底色混出，样式表里因此仍然没有任何颜色字面量
+ */
+.row.file { background: color-mix(in srgb, var(--tint, var(--card-bg)) 12%, var(--card-bg)); }
+/* 已暂存那组更实、未暂存那组更淡——这就是两组的"小幅度区分"。不用两种色相区分：
+   同一个文件在两组各出现一次时（例如 staged M 与 unstaged M），两种色相会让"它到底怎么了"
+   更难判断；深浅只表达"已经进索引 / 还没进"，不抢状态信息的位 */
+.row.file.g-index { background: color-mix(in srgb, var(--tint, var(--card-bg)) 18%, var(--card-bg)); }
+.row.file.g-work { background: color-mix(in srgb, var(--tint, var(--card-bg)) 9%, var(--card-bg)); }
+
+/* hover 仍是平铺的 list.hoverBackground：与 VSCode 的行反馈一致，也避免两种半透明叠加后
+   越看越花。它必须写在上面那些之后——选择器权重相同时靠源码顺序决定胜负 */
+.row.file:hover { background: var(--hover-bg); }
 
 /* 续段标识：卡片被列边界切开后，下一列顶部用它说明「这是谁的后续」。
    不画左右实线边框而用虚线，是为了在视觉上与卡片主体区分开 */
@@ -346,13 +390,11 @@ body {
   display: flex;
 }
 
-/* 右下角的一行元信息：数据多旧、这次采集花了多久、以及出错原因。
-   刻意做得极轻，不占用仓库卡片的展示空间 */
+/* 底栏左侧的一行元信息：数据多旧、这次采集花了多久、以及出错原因。
+   做成底栏里的一项而不是浮在右下角，理由见 #tools 的说明 */
 #status {
-  position: fixed;
-  right: 12px;
-  bottom: 8px;
-  margin: 0;
+  /* margin-right: auto 把它留在左端、把后面的控件推到右端 */
+  margin: 0 auto 0 0;
   font-size: 11px;
   color: var(--text-dim);
   pointer-events: none;
@@ -360,41 +402,54 @@ body {
 }
 #status.error { color: var(--git-conflicting); }
 
-/* ——— 看板层面的操作区（左下角）——— */
+/* ——— 看板底栏 ———
+ * 整宽固定在底部，左侧「更新于…」，右侧是看板层面的动作（拉取全部、主题选择）与它们的结果。
+ * 为什么收成一条：#status 原来在文档流里，被按视口算高的看板顶到屏幕之外（几乎看不到），
+ * 而 #tools 浮在左下角会压住最后一行卡片；合成一条之后各占一侧，谁也不再压谁
+ */
 #tools {
   position: fixed;
-  left: 12px;
-  bottom: 8px;
-  /* 低于 diff 覆盖层（10）：覆盖层打开时这些动作被盖住，它们作用于整个看板而不是当前 diff */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--statusbar-h);
+  /* 低于 diff 覆盖层（10）：覆盖层打开时整条被盖住，这些动作作用于整个看板而不是当前 diff */
   z-index: 5;
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: calc(100vw - 24px);
+  padding: 0 12px;
+  background: var(--card-bg);
+  border-top: 1px solid var(--card-border);
 }
 #fetch-btn {
   flex: none;
   font: inherit;
-  color: var(--text);
-  background: var(--badge-bg);
-  border: 1px solid var(--card-border);
+  /* 主按钮取 VSCode 的 button.*：底色与前景来自同一组令牌。以前底色借徽章的、文字借全局
+     前景色，两者一旦不搭就是"看不清"（2026 Light 下深灰字压重蓝底），见 ui_theme.go 的说明 */
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  border: 0;
   border-radius: 4px;
   padding: 3px 8px;
   cursor: pointer;
 }
-#fetch-btn:hover { background: var(--hover-bg); }
+/* hover 回落到 list.hoverBackground：button.hoverBackground 在上游是 lighten()/darken()
+   算出来的，没有可照抄的字面值，因此不进 defaults.json（见 internal/theme/theme.go 的说明） */
+#fetch-btn:hover { background: var(--btn-hover-bg, var(--hover-bg)); }
 /* 拉取进行中置灰：一次只允许一个写操作在飞 */
 #fetch-btn:disabled { opacity: 0.5; cursor: default; }
 
-/* 主题选择器：与旁边的按钮同一套外观。初始 disabled，由 app.js 填完选项后解开——
-   这样在清单注入失败时它是一个灰色不可点的控件，而不是一个空下拉框 */
+/* 主题选择器：初始 disabled，由 app.js 填完选项后解开——
+   这样在清单注入失败时它是一个灰色不可点的控件，而不是一个空下拉框。
+   配色取 dropdown.*：它就是 VSCode 里下拉框的那组令牌（inputColors.ts） */
 #theme-select {
   flex: none;
   max-width: 12em;
   font: inherit;
-  color: var(--text);
-  background: var(--badge-bg);
-  border: 1px solid var(--card-border);
+  color: var(--dropdown-fg);
+  background: var(--dropdown-bg);
+  border: 1px solid var(--dropdown-border, var(--card-border));
   border-radius: 4px;
   padding: 3px 6px;
   cursor: pointer;
@@ -433,15 +488,43 @@ body {
  */
 #diff {
   position: fixed;
-  inset: 0;
+  /* 近乎全屏，而不是铺满整屏：四周留白 + 圆角 + 阴影，一眼就能看出"这是浮在看板之上的一层
+     面板"，被盖住的看板则由 body.diff-open::before 那层模糊虚化后透出来。
+     留白取 18px 而不是与 --page-pad 相等的 16px：两者相等时面板的边线与卡片的边线会糊成
+     一条，反而看不出层次 */
+  inset: 18px;
   /* 默认不显示：用 display 而不是 visibility，未打开时不参与键盘 Tab 序 */
   display: none;
   flex-direction: column;
-  background: var(--bg);
-  /* 盖住 #empty 与 #status（两者都是 fixed 且无 z-index），否则空仓提示会浮在 diff 之上 */
+  /* 浮层底色取 editorWidget.background：VSCode 的浮层用它，比 editor.background 略亮，
+     正好把面板从底下的看板里"抬"起来。取不到时回落到 editor.background */
+  background: var(--panel-bg, var(--bg));
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  /* widget.shadow 是 VSCode 给浮层用的阴影令牌，样式表里因此不需要任何颜色字面量 */
+  box-shadow: 0 8px 32px var(--widget-shadow, transparent);
+  /* 圆角要真的裁掉子元素（标题栏与正文都是直角），否则四角会露出内容 */
+  overflow: hidden;
+  /* 盖住 #empty 与底栏（#tools 是 z-index 5），否则底栏会浮在面板之上 */
   z-index: 10;
 }
 #diff.open { display: flex; }
+
+/* 面板背后的模糊层：只在 diff 打开时有（类由 app.js 的 syncScrollLock 切换，与滚动锁同一处，
+   免得出现"层已经关了、模糊还留着"）。为什么放在 body 上而不是 #diff 内部：负 z-index 的后代
+   会被父元素自己的背景盖住，backdrop-filter 模糊到的就是那块不透明的底色，等于没模糊；
+   放在 body 上，它的背后才是真正的看板 */
+body.diff-open::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  /* 低于面板（10）、高于看板与底栏（5），正好夹在两者之间 */
+  z-index: 9;
+  /* 半透明底色 + backdrop-filter 是"把底下内容虚化"的组合：只写 blur 也能模糊，
+     但叠一点底色能让面板与看板的对比更清楚（对比度不足时虚化看起来只是"花"） */
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
+  backdrop-filter: blur(6px);
+}
 
 #diff header {
   flex: none;
@@ -453,21 +536,21 @@ body {
   border-bottom: 1px solid var(--card-border);
 }
 
-/* 返回按钮复用徽标的中性配色，避免为它单独引入一组色值。
-   面板与 diff 两层各有一个返回键，外观共用同一套规则 */
+/* 返回按钮取 VSCode 的次要按钮令牌（button.secondary*）：返回不是主操作，用它才不会跟
+   "提交"那颗主按钮抢眼。面板与 diff 两层各有一个返回键，外观共用同一套规则 */
 #diff-back,
 #repo-back {
   flex: none;
   font: inherit;
-  color: var(--text);
-  background: var(--badge-bg);
+  color: var(--btn-secondary-fg);
+  background: var(--btn-secondary-bg);
   border: 1px solid var(--card-border);
   border-radius: 4px;
   padding: 3px 8px;
   cursor: pointer;
 }
 #diff-back:hover,
-#repo-back:hover { background: var(--hover-bg); }
+#repo-back:hover { background: var(--btn-secondary-hover-bg, var(--hover-bg)); }
 
 #diff-title,
 #repo-title {
@@ -495,7 +578,11 @@ body {
   border: 1px solid var(--card-border);
   border-radius: 3px;
   padding: 1px 4px;
-  background: var(--badge-bg);
+  /* 原来借的是徽章底色：浅色主题里那是重蓝块，键帽不该长成那样。键帽在 VSCode 里是
+     keybindingLabel.*，但它的默认值是带透明度的 RGBA，没有可照抄的十六进制字面量，
+     不值得为一个小键帽固化一份换算结果，因此改用中性边框勾勒 */
+  background: none;
+  color: var(--text-dim);
 }
 
 /* diff 正文是唯一的纵向滚动容器：overscroll-behavior 阻断滚动链，
@@ -675,27 +762,38 @@ pre.diff .meta { color: var(--text-dim); }
   min-width: 100px;
   max-width: 380px;
   font: inherit;
-  color: var(--text);
-  background: var(--bg);
+  /* 输入框取 input.*：它和按钮、下拉框一样是 VSCode 里独立的一组令牌 */
+  color: var(--input-fg, var(--text));
+  background: var(--input-bg, var(--bg));
   border: 1px solid var(--card-border);
   border-radius: 4px;
   padding: 3px 6px;
 }
 #commit-msg:focus {
   outline: none;
-  border-color: var(--git-modified);
+  /* 聚焦色取 focusBorder，而不是 git-modified——后者是"这个文件被改过"的语义，
+     与"这个输入框拿到了焦点"毫无关系 */
+  border-color: var(--focus-border, var(--git-modified));
 }
 #commit button {
   flex: none;
   font: inherit;
-  color: var(--text);
-  background: var(--badge-bg);
-  border: 1px solid var(--card-border);
+  /* 提交是主操作：button.* */
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  border: 0;
   border-radius: 4px;
   padding: 3px 8px;
   cursor: pointer;
 }
-#commit button:hover { background: var(--hover-bg); }
+#commit button:hover { background: var(--btn-hover-bg, var(--hover-bg)); }
+/* 推送与"提交"同排但次一等：用 button.secondary*，与返回键同一套 */
+#commit #push-btn {
+  color: var(--btn-secondary-fg);
+  background: var(--btn-secondary-bg);
+  border: 1px solid var(--card-border);
+}
+#commit #push-btn:hover { background: var(--btn-secondary-hover-bg, var(--hover-bg)); }
 /* 正在写的时候两个按钮都置灰：一次只允许一个写操作在飞 */
 #commit button:disabled { opacity: 0.5; cursor: default; }
 

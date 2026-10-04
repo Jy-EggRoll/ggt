@@ -63,6 +63,10 @@ const MSG = {
     theme: 'Theme',
     themeFollow: 'Follow the system',
     themeMine: 'My themes',
+    themeDarkPref: 'Dark',
+    themeLightPref: 'Light',
+    themeDarkPrefLabel: 'Preferred dark theme when following the system',
+    themeLightPrefLabel: 'Preferred light theme when following the system',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -96,6 +100,10 @@ const MSG = {
     theme: '主题',
     themeFollow: '跟随系统',
     themeMine: '我放进去的主题',
+    themeDarkPref: '深色',
+    themeLightPref: '浅色',
+    themeDarkPrefLabel: '跟随系统时的深色主题',
+    themeLightPrefLabel: '跟随系统时的浅色主题',
   },
 };
 
@@ -148,6 +156,9 @@ const commitBtnEl = document.getElementById('commit-btn');
 const pushBtnEl = document.getElementById('push-btn');
 const fetchBtnEl = document.getElementById('fetch-btn');
 const themeSelectEl = document.getElementById('theme-select');
+// 跟随系统时分别用哪套深色/浅色主题的两个下拉框，只在"跟随系统"下显示
+const themeDarkEl = document.getElementById('theme-dark');
+const themeLightEl = document.getElementById('theme-light');
 const boardOpEl = document.getElementById('op');
 const repoEl = document.getElementById('repo');
 const repoBackEl = document.getElementById('repo-back');
@@ -172,6 +183,9 @@ const authHeaders = TOKEN ? { 'X-WebUI-Token': TOKEN } : undefined;
 // 保留它们是为了 DOM 复用：数据刷新时能复用的元素就复用，位置变化由 CSS transition 平滑过渡；
 // 若每次都重建 DOM，卡片会瞬间跳到新位置，看起来像整页闪烁
 let rowEls = new Map();
+// newRows 是「本次渲染新建的行」，layout 定位完它们之后要在下一帧把过渡打开回来。
+// 之所以要记一批而不是逐行处理：见 reconcile 与 layout 末尾的说明
+let newRows = [];
 let lastSpecs = [];
 let lastEls = [];
 let lastRepos = [];
@@ -497,17 +511,31 @@ function rowHTML(s) {
 function reconcile(specs) {
   const next = new Map();
   const els = [];
+  // 每次渲染重置：上一轮的新行在 layout 之后已经交出去了（见 layout 末尾）
+  newRows = [];
 
   for (const s of specs) {
     let el = rowEls.get(s.key);
+    let isNew = false;
     if (!el) {
       el = document.createElement('div');
       board.appendChild(el);
+      isNew = true;
     }
 
     const cls = ['row', s.kind];
     if (s.foot) cls.push('foot');
+    // 分组类：只用来给「已暂存 / 未暂存」两组铺不同的半透明底色（见 style.css）。
+    // 状态类（st-*）负责文件自己的字母与文字颜色，两者互不干扰
+    if (s.group) cls.push('g-' + s.group.id);
     if (s.file) cls.push(fileStatus(s.file, s.group ? s.group.id : 'work').cls);
+    if (isNew) {
+      // 新行在首次定位前必须关掉过渡：行是绝对定位的，刚建出来时 transform 是 none
+      // （即页面左上角），而它的真实坐标要等 layout() 才写入，带着过渡就会「从左上角飞过来」
+      // ——暂存一个文件后，新出现在另一组里的那一行正是这么飞的
+      cls.push('no-anim');
+      newRows.push(el);
+    }
     if (el.className !== cls.join(' ')) el.className = cls.join(' ');
 
     const html = rowHTML(s);
@@ -567,7 +595,10 @@ function layout(els, specs) {
   const headH = cssVar('--head-h', 22);
   const rowH = cssVar('--row-h', 22);
   const contH = cssVar('--cont-h', 22);
-  const colH = window.innerHeight - 32; // 32 = 页面上下各 16px 内边距
+  // 列高 = 视口高 − 页面上下留白 − 底栏高度。三个数字都从 CSS 变量读（cssVar 见上），
+  // 不在这里自己写死：底栏是后加的，硬编码的话它一出现就会压住最下面一行卡片，
+  // 而"JS 里一份、CSS 里一份"的数字迟早会漂移
+  const colH = window.innerHeight - cssVar('--page-pad', 16) * 2 - cssVar('--statusbar-h', 30);
 
   // tailRows[i] 是第 i 条标题行之后、属于同一张卡片的内容行数，用来判断
   // 「列尾还值不值得起一张新卡片」。
@@ -634,6 +665,16 @@ function layout(els, specs) {
   contLayer.replaceChildren(conts);
   board.style.width = (col + 1) * (colW + GAP) + 'px';
   board.style.height = colH + 'px';
+
+  // 新行的坐标已经写入，下一帧再把过渡打开：同一帧里「关过渡 → 写坐标 → 开过渡」会被浏览器
+  // 合并成一次样式结算，等于没关，动画照样从左上角起飞（must 经过一次真正的样式结算才行）
+  if (newRows.length) {
+    const pending = newRows;
+    newRows = [];
+    requestAnimationFrame(() => {
+      for (const el of pending) el.classList.remove('no-anim');
+    });
+  }
 }
 
 // ——— diff 视图 ———
@@ -662,6 +703,9 @@ let panelSpec = null;
 // 于是面板还开着、页面却能滚动
 function syncScrollLock() {
   document.documentElement.style.overflow = diffOpen || panelOpen ? 'hidden' : '';
+  // 模糊层只在 diff 打开时铺上（见 style.css 的 body.diff-open）。它与滚动锁同一处切换：
+  // 两件事都由"有哪层覆盖层开着"决定，分头写迟早会出现"层关了、模糊还在"
+  document.body.classList.toggle('diff-open', diffOpen);
 }
 
 // resume 在两个覆盖层都关掉之后恢复看板：补一次取数（期间工作区可能已经变了）并恢复轮询
@@ -975,20 +1019,17 @@ function fetchAll() {
   return runWrite('/api/fetch', {}, setBoardOp);
 }
 
-// buildThemeSelect 按服务端注入的清单搭出主题选择器：第一项是"跟随系统"，其后按来源分组。
-//
-// 分组标题与"跟随系统"都是页面文案，因此在这里按当前语言给——服务端那份清单里，
-// 用户自己那组的标题刻意留空，就是交给这里填（页面文案不走 Go 的 l10n 管线）
-function buildThemeSelect() {
-  const data = window.__GGT_THEME__ && typeof window.__GGT_THEME__ === 'object' ? window.__GGT_THEME__ : {};
-  themeSelectEl.textContent = '';
-
-  const follow = document.createElement('option');
-  follow.value = '';
-  follow.textContent = t('themeFollow');
-  themeSelectEl.appendChild(follow);
-
-  for (const group of data.groups || []) {
+// fillThemeOptions 把一份主题清单填进某个下拉框。followLabel 非空时在最前面加一项空值选项——
+// 那是主选择器要的"跟随系统"；两个偏好下拉框不要它，它们本身就是"跟随系统时用哪套"
+function fillThemeOptions(sel, groups, followLabel) {
+  sel.textContent = '';
+  if (followLabel) {
+    const follow = document.createElement('option');
+    follow.value = '';
+    follow.textContent = followLabel;
+    sel.appendChild(follow);
+  }
+  for (const group of groups || []) {
     const optgroup = document.createElement('optgroup');
     optgroup.label = group.label || t('themeMine');
     for (const item of group.themes || []) {
@@ -997,12 +1038,36 @@ function buildThemeSelect() {
       option.textContent = item.name;
       optgroup.appendChild(option);
     }
-    themeSelectEl.appendChild(optgroup);
+    sel.appendChild(optgroup);
   }
+  sel.disabled = false;
+}
 
+// buildThemeSelect 按服务端注入的清单搭出三个选择器：主选择器（含"跟随系统"）与两个偏好
+// （跟随系统时分别用哪套深色/浅色，对应 VSCode 的 preferredDark/LightColorTheme）。
+//
+// 分组标题与"跟随系统"都是页面文案，因此在这里按当前语言给——服务端那份清单里，
+// 用户自己那组的标题刻意留空，就是交给这里填（页面文案不走 Go 的 l10n 管线）
+function buildThemeSelect() {
+  const data = window.__GGT_THEME__ && typeof window.__GGT_THEME__ === 'object' ? window.__GGT_THEME__ : {};
+
+  fillThemeOptions(themeSelectEl, data.groups, t('themeFollow'));
   themeSelectEl.value = data.current || '';
   themeSelectEl.setAttribute('aria-label', t('theme'));
-  themeSelectEl.disabled = false;
+
+  fillThemeOptions(themeDarkEl, data.groups, '');
+  themeDarkEl.value = data.dark || '';
+  themeDarkEl.setAttribute('aria-label', t('themeDarkPrefLabel'));
+
+  fillThemeOptions(themeLightEl, data.groups, '');
+  themeLightEl.value = data.light || '';
+  themeLightEl.setAttribute('aria-label', t('themeLightPrefLabel'));
+
+  // 两个偏好只在"跟随系统"下有意义：不跟随时把它们收起（VSCode 里这两个设置始终可见、
+  // 只是被忽略，而底栏空间有限，按依赖关系收起更省地方，也让"它们为什么在这里"不言自明）
+  const following = !(data.current || '');
+  themeDarkEl.hidden = !following;
+  themeLightEl.hidden = !following;
 }
 
 // 换主题：把选择写进配置文件，然后整页重载。
@@ -1011,13 +1076,28 @@ function buildThemeSelect() {
 // 客户端再实现一遍主题解析（重新取颜色、自己拼变量），同一件事两处实现迟早漂移。
 // 重载的代价只是一次本地请求，而换主题本来就是低频动作
 themeSelectEl.addEventListener('change', async () => {
-  const out = await runWrite('/api/theme', { id: themeSelectEl.value }, setBoardOp);
+  const out = await runWrite('/api/theme', { key: 'theme', value: themeSelectEl.value }, setBoardOp);
   if (!out || out.error) {
     buildThemeSelect(); // 没写成就把选择器拨回当前生效的那套，别让它显示一个没生效的值
     return;
   }
   location.reload();
 });
+
+// 两个偏好下拉框走同一条路，只是写的是不同的配置键（/api/theme 的 key 参数）
+for (const [sel, key] of [
+  [themeDarkEl, 'theme_dark'],
+  [themeLightEl, 'theme_light'],
+]) {
+  sel.addEventListener('change', async () => {
+    const out = await runWrite('/api/theme', { key, value: sel.value }, setBoardOp);
+    if (!out || out.error) {
+      buildThemeSelect();
+      return;
+    }
+    location.reload();
+  });
+}
 
 // commitFromUI 用输入框里的信息提交。成功才清空输入框：失败时保留原文，
 // 便于用户改一处再试，而不是从头再敲一遍

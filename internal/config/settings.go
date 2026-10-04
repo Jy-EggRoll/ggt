@@ -16,6 +16,9 @@ import (
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
 	"github.com/jy-eggroll/ggt/internal/locales"
+	// 主题偏好的默认值直接引用主题包里的常量，而不是在这里再抄一遍 "builtin:..." 这个 id 格式：
+	// 那个前缀是主题包自己的约定，抄一份就会出现"改了前缀、默认值指到不存在的主题"
+	"github.com/jy-eggroll/ggt/internal/theme"
 )
 
 // ErrInvalidValue 表示用户输入的值不合法。
@@ -120,6 +123,23 @@ var settings = []Setting{
 		// 默认值是空串 = 跟随系统深浅
 		Default:  "",
 		Expected: "a theme id (see the board's theme picker), or empty to follow the system",
+		Parse:    parseTheme,
+	},
+	{
+		// 这两个键对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme：
+		// "跟随系统"时深色用哪套、浅色用哪套，各自可选。它们只在 theme 为空（跟随系统）时生效，
+		// 与 VSCode 里"自动检测关闭时 preferred* 被忽略"是同一个模型
+		Key:      "theme_dark",
+		Kind:     KindString,
+		Default:  theme.DefaultDarkID,
+		Expected: "a theme id used when following the system and the system is dark",
+		Parse:    parseTheme,
+	},
+	{
+		Key:      "theme_light",
+		Kind:     KindString,
+		Default:  theme.DefaultLightID,
+		Expected: "a theme id used when following the system and the system is light",
 		Parse:    parseTheme,
 	},
 	{
