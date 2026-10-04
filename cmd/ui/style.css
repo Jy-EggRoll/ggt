@@ -967,8 +967,12 @@ kbd {
   flex: 1 1 auto;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 12px 12px 24px;
+  /* 上方留白交给第一个子元素的上边距，而不是容器自己的上内边距：
+     滚动容器会在这个内边距条里画出已经滚上去的正文，而粘性标题贴在内容盒上沿，
+     于是标题上方会露出一条别的行。上内边距为零之后，两者上沿重合，缝就没了 */
+  padding: 0 12px 24px;
 }
+#diff-body > :first-child { margin-top: 12px; }
 
 #diff-body h2 {
   margin: 0 0 6px;
@@ -984,6 +988,67 @@ kbd {
 /* 段与段之间留白；提示在前、分段在后，所以两种相邻都要考虑 */
 #diff-body section + section,
 #diff-body .diff-note + section { margin-top: 16px; }
+
+/*
+ * 整仓 diff 里的一个文件。标题贴在滚动容器顶部（sticky），好让人滚到一个文件的中段时
+ * 仍然知道自己在读哪个文件——"整页 diff 里分不清不同文件"就是这条要解决的问题
+ *
+ * content-visibility: auto 是给"一次改了几百个文件"准备的：屏幕外的段落跳过排版与绘制。
+ * contain-intrinsic-size 给浏览器一个高度估算，否则滚动条会随内容进出视口而跳动。
+ * 代价是估算与实际不符时滚动位置会小幅回调——两害相权，长列表卡死更难受
+ */
+.diff-file {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}
+.diff-file + .diff-file { margin-top: 14px; }
+
+.diff-file-head {
+  position: sticky;
+  top: 0;
+  /* 高于同一段里的正文；底栏与浮层各自另有层级，这里不参与那套刻度 */
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-bottom: 0;
+  border-radius: 4px 4px 0 0;
+}
+/* 长路径允许在任意位置断开：否则它会把右侧的增删行数挤出可视区 */
+.diff-file-path { overflow-wrap: anywhere; }
+/* 段落名（已暂存/未暂存）跟在标题里，字号与颜色都退到次要位置，让路径仍是第一眼看到的 */
+.diff-file-group {
+  flex: 0 0 auto;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.diff-file-from {
+  flex: 0 0 auto;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+/* 增删行数靠右：margin-left 只给这个容器，别让两个数字之间被撑开 */
+.diff-stats {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  font-weight: 400;
+  font-family: var(--font-mono);
+}
+.diff-stats .add { color: var(--git-added); }
+.diff-stats .del { color: var(--git-deleted); }
+/* 标题与正文连成一张卡：标题带边框，正文只留左右下三边 */
+.diff-file-head + pre.diff {
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+}
 
 /*
  * diff 正文。padding 只给纵向：横向留白交给 .dl 自己，否则整行底色会在行首行尾

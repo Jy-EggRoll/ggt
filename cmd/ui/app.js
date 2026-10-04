@@ -50,6 +50,8 @@ const MSG = {
     diffBinary: 'Binary file — contents not shown',
     diffUnmerged: 'Unmerged — conflict markers shown below',
     diffTruncated: 'Output truncated — the change is too large to show in full',
+    diffFileBinary: 'Binary',
+    diffUntrackedOmitted: '{{n}} untracked files are not part of the whole-repo diff — open a file row to see its contents',
     groupUnmerged: 'Unmerged Changes',
     changes: 'Changes',
     fetchRepo: 'Fetch',
@@ -119,6 +121,8 @@ const MSG = {
     diffBinary: '二进制文件 —— 不显示内容',
     diffUnmerged: '未合并 —— 下面显示冲突标记',
     diffTruncated: '输出过大，已截断，仅显示前面一部分',
+    diffFileBinary: '二进制',
+    diffUntrackedOmitted: '另有 {{n}} 个未跟踪文件不在整仓 diff 里，点它的文件行可以看内容',
     groupUnmerged: '未合并的改动',
     changes: '改动',
     fetchRepo: '拉取',
@@ -914,6 +918,60 @@ function diffHTML(text, allAdded) {
     .join('');
 }
 
+// diffFileStat 造一段文件头右侧的增删行数。
+// 二进制显示"二进制"而不是 +0 −0：那两个 0 是"git 数不出来"，不是"没改"
+function diffFileStat(f) {
+  if (!f) return '';
+  if (f.binary) {
+    return '<span class="diff-stats"><span class="diff-stat">' + esc(t('diffFileBinary')) + '</span></span>';
+  }
+  // 纯改名、只改权限这类改动增删都是 0：右侧再挂一个"+0 −0"只是噪声，
+  // 新旧路径那一段已经把事情说清了
+  if (f.added === 0 && f.removed === 0) return '';
+  return (
+    '<span class="diff-stats">' +
+    '<span class="diff-stat add">+' + esc(String(f.added)) + '</span>' +
+    '<span class="diff-stat del">−' + esc(String(f.removed)) + '</span>' +
+    '</span>'
+  );
+}
+
+// diffFileSections 把一段整仓 diff 按文件切开，每段带上名字与增删行数。
+//
+// 切的位置是行首的 "diff --git "：hunk 正文的每一行都以 +、- 或空格开头，顶格出现这串
+// 只可能是文件边界，因此按它切是安全的。
+//
+// 名字与行数用服务端给的清单（git --numstat -z 的结果：路径原样、改名有新旧两条、
+// 顺序与分段一致，见 cmd/ui_diff_test.go），按下标对上；分段比清单还多时退回显示 git
+// 原文那一行——位置错开的标题比难看的标题糟糕得多
+function diffFileSections(text, files) {
+  const parts = text.split(/^diff --git /m);
+  const head = parts.shift();
+  // 正文不以 "diff --git " 开头时不切：切了会把开头那一小段内容直接丢掉
+  if (parts.length === 0 || head.trim() !== '') return null;
+
+  const list = Array.isArray(files) ? files : [];
+  // 文本可能因为超过上限被截断，而截断只砍尾部：剩下的分段仍是清单的前缀，按下标配名照样成立。
+  // 反过来的情形（分段比清单还多）才是真对不上，那时退回显示 git 原文那一行
+  const aligned = list.length >= parts.length;
+
+  return parts.map((body, i) => {
+    const f = aligned ? list[i] : null;
+    const lines = body.split('\n');
+    // 去掉两行纯管道信息：路径已经在标题里，index 行只是一串 blob 哈希。
+    // 其余（模式变化、similarity、rename from/to）都留着，它们说的是实际发生的事
+    const rawTitle = lines.shift();
+    if (lines.length > 0 && lines[0].startsWith('index ')) lines.shift();
+    // 尾部的空串不用管：diffHTML 自己会去掉一次（统一 diff 与文件正文都以换行结尾）
+    return {
+      path: f ? f.path : rawTitle,
+      origPath: f ? f.origPath : '',
+      stat: diffFileStat(f),
+      html: diffHTML(lines.join('\n'), false),
+    };
+  });
+}
+
 // renderDiff 把 /api/diff 的响应画进覆盖层。
 // repo 与 file 只用于标题，内容一律来自响应——页面不猜"应该有哪些改动"
 function renderDiff(repo, file, out) {
@@ -925,20 +983,51 @@ function renderDiff(repo, file, out) {
     return;
   }
 
-  // 四条提示都放在正文之前：它们说明"下面的内容为什么长这样或为什么不完整"，
+  // 五条提示都放在正文之前：它们说明"下面的内容为什么长这样或为什么不完整"，
   // 放在末尾会被长 diff 推到看不见的地方
   if (out.untracked) blocks.push('<p class="diff-note">' + esc(t('diffUntracked')) + '</p>');
   if (out.unmerged) blocks.push('<p class="diff-note">' + esc(t('diffUnmerged')) + '</p>');
   if (out.binary) blocks.push('<p class="diff-note">' + esc(t('diffBinary')) + '</p>');
   if (out.truncated) blocks.push('<p class="diff-note">' + esc(t('diffTruncated')) + '</p>');
+  // 整仓视图看不到未跟踪文件（git diff 不含它们）。与其让人以为"这个仓库只有这些改动"，
+  // 不如说清它们在哪儿看
+  if (!file) {
+    const untracked = (repo.files || []).filter((it) => it.untracked).length;
+    if (untracked > 0) {
+      blocks.push('<p class="diff-note">' + esc(t('diffUntrackedOmitted', { n: untracked })) + '</p>');
+    }
+  }
 
   const sections = [];
-  if (out.staged) sections.push({ title: t('diffStaged'), html: diffHTML(out.staged, false) });
+  if (out.staged) sections.push({ title: t('diffStaged'), text: out.staged, files: out.stagedFiles });
   if (out.unstaged) {
-    sections.push({ title: t('diffUnstaged'), html: diffHTML(out.unstaged, !!out.untracked) });
+    sections.push({ title: t('diffUnstaged'), text: out.unstaged, files: out.unstagedFiles });
   }
   for (const s of sections) {
-    blocks.push('<section><h2>' + esc(s.title) + '</h2><pre class="diff">' + s.html + '</pre></section>');
+    // 单文件视图与"切不开"的两段都退回整块渲染：那边只有一份内容，分段没有意义
+    const parts = s.files === undefined ? null : diffFileSections(s.text, s.files);
+    if (!parts) {
+      const html = diffHTML(s.text, !!out.untracked);
+      blocks.push('<section><h2>' + esc(s.title) + '</h2><pre class="diff">' + html + '</pre></section>');
+      continue;
+    }
+    const body = parts
+      .map(
+        (p) =>
+          '<section class="diff-file">' +
+          '<h3 class="diff-file-head">' +
+          // 段落名进标题，是因为标题会一直贴在顶部：滚到一个文件的中段时，上方那行
+          // "已暂存/未暂存" 早就滚出视野了，而同一个文件可能两段各出现一次
+          '<span class="diff-file-group">' + esc(s.title) + '</span>' +
+          (p.origPath ? '<span class="diff-file-from">' + esc(p.origPath) + ' →</span>' : '') +
+          '<span class="diff-file-path">' + esc(p.path) + '</span>' +
+          p.stat +
+          '</h3>' +
+          '<pre class="diff">' + p.html + '</pre>' +
+          '</section>',
+      )
+      .join('');
+    blocks.push('<section><h2>' + esc(s.title) + '</h2>' + body + '</section>');
   }
 
   // 只在"既没有分段也没有提示"时才是真的没有改动：二进制未跟踪文件就是这种情形，

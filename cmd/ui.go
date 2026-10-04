@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -286,9 +287,26 @@ type uiDiff struct {
 	// Binary 只用于未跟踪文件：它是二进制时不返回正文（返回了也是乱码），
 	// 页面据此显示提示。已跟踪文件的二进制改动由 git 自己在 diff 里写成
 	// "Binary files ... differ"，页面认那一行，后端不必再判一次
-	Binary    bool   `json:"binary"`
-	Truncated bool   `json:"truncated"`
-	Error     string `json:"error,omitempty"`
+	Binary    bool `json:"binary"`
+	Truncated bool `json:"truncated"`
+	// StagedFiles / UnstagedFiles 是上面两段文本的文件级清单，顺序与文本里各分段的顺序一致，
+	// 整仓视图才有。页面据此把两大段切成"每文件一段"并标出名字与增删行数——
+	// 从 diff 文本里反解路径要重新处理引号、转义与改名，而 git 已经用机器可读的方式给了一份
+	StagedFiles   []uiDiffFile `json:"stagedFiles,omitempty"`
+	UnstagedFiles []uiDiffFile `json:"unstagedFiles,omitempty"`
+	Error         string       `json:"error,omitempty"`
+}
+
+// uiDiffFile 是 diff 里的一份文件：路径、改名前的旧路径，以及增删行数。
+//
+// 二进制文件的增删两列 git 给的是 "-"，这里换算成 Binary 为真、行数留 0，
+// 页面据此显示"二进制"而不是"+0 −0"
+type uiDiffFile struct {
+	Path     string `json:"path"`
+	OrigPath string `json:"origPath,omitempty"`
+	Added    int    `json:"added"`
+	Removed  int    `json:"removed"`
+	Binary   bool   `json:"binary,omitempty"`
 }
 
 // handleDiff 是 /api/diff 的处理函数。
@@ -348,6 +366,9 @@ func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out.Staged, out.Truncated = text, out.Truncated || truncated
+		if file == nil {
+			out.StagedFiles = numstatOrWarn(ctx, repo.Path, true, nil)
+		}
 	}
 	if file == nil || file.Work != "." {
 		text, truncated, err := diffText(ctx, repo.Path, false, paths)
@@ -356,6 +377,9 @@ func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out.Unstaged, out.Truncated = text, out.Truncated || truncated
+		if file == nil {
+			out.UnstagedFiles = numstatOrWarn(ctx, repo.Path, false, nil)
+		}
 	}
 
 	writeUIDiff(w, out)
@@ -386,6 +410,84 @@ func diffText(ctx context.Context, repoPath string, staged bool, paths []string)
 	}
 	text, truncated := truncateAtLine(out, uiDiffLimit)
 	return text, truncated, nil
+}
+
+// diffNumstat 取一份"每个文件增删了多少行"的清单，staged 含义同 diffText。
+//
+// 用 git 自己算而不是在 diff 文本里数加减号：数出来的结果会把 hunk 头与 "---"/"+++"
+// 这些元信息算进去，二进制文件也数不出来；改名的两个路径更是只有 git 说得清
+func diffNumstat(ctx context.Context, repoPath string, staged bool, paths []string) ([]uiDiffFile, error) {
+	args := []string{"diff", "--numstat", "-z", "--no-color", "--no-ext-diff", "--no-textconv"}
+	if staged {
+		args = append(args, "--cached")
+	}
+	if len(paths) > 0 {
+		args = append(args, "--")
+		args = append(args, paths...)
+	}
+
+	out, err := git.RunContext(ctx, repoPath, args...)
+	if err != nil {
+		return nil, err
+	}
+	return parseNumstatZ(out), nil
+}
+
+// numstatOrWarn 取文件级增删清单，失败只记一条日志、不打断请求。
+//
+// 为什么可以容忍失败：这份清单只影响整仓 diff 的分段标题，diff 正文本身已经拿到了。
+// 为它返回 500 等于把一份能读的 diff 扔掉；页面那边会退化成用 git 原文里的
+// "diff --git" 行当标题，仍然是分段的，只是少了增删行数
+func numstatOrWarn(ctx context.Context, repoPath string, staged bool, paths []string) []uiDiffFile {
+	files, err := diffNumstat(ctx, repoPath, staged, paths)
+	if err != nil {
+		logger.Warn("取 diff 的文件级增删行数失败", "repo", repoPath, "staged", staged, "err", err)
+		return nil
+	}
+	return files
+}
+
+// parseNumstatZ 解析 git diff --numstat -z 的输出。
+//
+// 格式（实测得来，见 ui_diff_test.go 里那几条用例）：
+//   - 普通记录是 "增行\t删行\t路径" 加一个 NUL
+//   - 改名记录里路径那一列是空的，紧随其后是两个 NUL 分隔的字段：旧路径、新路径
+//   - 二进制文件的增删两列都是 "-"
+//   - 结尾的 NUL 会切出一个空字段，跳过
+//
+// 认不出的记录直接跳过而不是猜：宁可少一段文件头，也不要编一个错的文件名挂在页面上
+func parseNumstatZ(out string) []uiDiffFile {
+	fields := strings.Split(out, "\x00")
+	files := make([]uiDiffFile, 0, len(fields))
+	for i := 0; i < len(fields); i++ {
+		rec := fields[i]
+		if rec == "" {
+			continue
+		}
+		cols := strings.SplitN(rec, "\t", 3)
+		if len(cols) != 3 {
+			continue
+		}
+
+		f := uiDiffFile{Path: cols[2]}
+		if cols[0] == "-" || cols[1] == "-" {
+			f.Binary = true
+		} else {
+			f.Added, _ = strconv.Atoi(cols[0])
+			f.Removed, _ = strconv.Atoi(cols[1])
+		}
+		// 路径为空说明是改名：旧路径在前、新路径在后
+		if f.Path == "" && i+2 < len(fields) {
+			f.OrigPath = fields[i+1]
+			f.Path = fields[i+2]
+			i += 2
+		}
+		if f.Path == "" {
+			continue
+		}
+		files = append(files, f)
+	}
+	return files
 }
 
 // truncateAtLine 把文本截到 limit 字节以内，并保证截断落在行边界上。
