@@ -811,3 +811,219 @@ pre.diff .meta { color: var(--text-dim); }
 }
 #diff-op:empty { display: none; }
 #diff-op.error { color: var(--git-conflicting); }
+
+/* ——— 分支图 ———
+ *
+ * 与仓库面板同一套骨架（铺满整屏 + 顶栏）：它是"这个仓库的另一页"，不是浮层。
+ * 层级夹在面板（8）与 diff（10）之间，理由见 index.html 的说明
+ */
+#graph {
+  position: fixed;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  background: var(--bg);
+  z-index: 9;
+}
+#graph.open { display: flex; }
+
+#graph header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--card-border);
+}
+#graph-back {
+  flex: none;
+  font: inherit;
+  color: var(--btn-secondary-fg);
+  background: var(--btn-secondary-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+#graph-back:hover { background: var(--btn-secondary-hover-bg, var(--hover-bg)); }
+#graph-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+#graph-title .dir { font-weight: 400; color: var(--text-dim); }
+#graph-count { flex: none; font-size: 11px; color: var(--text-dim); }
+/* 过滤开关推到右端：它作用在整张图上，与标题分开才不会看成一回事 */
+#graph-filter {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+#graph-esc { flex: none; font-size: 11px; color: var(--text-dim); }
+#graph-esc kbd {
+  font: inherit;
+  border: 1px solid var(--card-border);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+/* 取数失败时的原话，角色与 #diff-op 相同 */
+#graph-op {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--cont-fg);
+  border-bottom: 1px solid var(--card-border);
+}
+#graph-op:empty { display: none; }
+#graph-op.error { color: var(--git-conflicting); }
+
+#graph-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+#graph-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 6px 0;
+}
+#graph-splitter {
+  flex: none;
+  width: 6px;
+  cursor: col-resize;
+  background: var(--card-border);
+  /* 只在拖拽或聚焦时给反馈：常亮的色条会和泳道抢注意力 */
+  opacity: 0.35;
+}
+#graph-splitter:hover,
+#graph-splitter:focus,
+#graph-splitter.dragging {
+  opacity: 1;
+  outline: none;
+}
+#graph-detail {
+  flex: none;
+  /* 宽度由页面写进 --detail-w（不是直接写 width）：这样下面的窄窗口断点只要覆盖 width
+     就能接管布局，不需要 !important 去盖内联样式 */
+  width: var(--detail-w, 340px);
+  /* 再压一道上限：窄窗口上"配置里的 340px"会把这半屏挤到放不下泳道，
+     而配置项是用户的偏好，不该因为换了屏幕就被改写 */
+  max-width: 50%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  background: var(--card-bg);
+  border-left: 1px solid var(--card-border);
+  font-size: 12px;
+  line-height: 1.6;
+}
+#graph-detail h2 { margin: 0 0 8px; font-size: 13px; }
+#graph-detail dl {
+  margin: 0 0 10px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+}
+#graph-detail dt { color: var(--text-dim); }
+#graph-detail dd { margin: 0; overflow-wrap: anywhere; }
+#graph-detail .msg {
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#graph-detail .files { margin: 0; padding: 0; list-style: none; }
+#graph-detail .files li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--row-h);
+}
+#graph-detail .files .path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#graph-detail .files .stat { flex: none; font-variant-numeric: tabular-nums; }
+#graph-detail .files .add { color: var(--git-added); }
+#graph-detail .files .del { color: var(--git-deleted); }
+#graph-detail .hint { color: var(--text-dim); }
+
+/*
+ * 提交行。行高必须等于泳道高度（app.js 的 SWIMLANE_HEIGHT = 22，也是 --row-h 的取值）：
+ * 线段是按"上一行底边到这一行底边"画的，行高一变，连线就在行间断开
+ */
+.g-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--row-h);
+  padding: 0 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.g-row:hover,
+.g-row.selected { background: var(--hover-bg); }
+/* 泳道列固定宽度（按已加载行里最宽的泳道算），标题因此左边缘对齐；
+   SVG 在里面左对齐，泳道少的行不会被拉宽 */
+.g-row .lanes { flex: none; height: var(--row-h); }
+.g-row .lanes svg { display: block; }
+.g-row .subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.g-row .hash {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.g-row .meta { flex: none; font-size: 11px; color: var(--text-dim); }
+/* 引用标签（分支 / tag）：几何与徽章一致，颜色用引用自身的配色点出来 */
+.g-row .ref {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 9px;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 15px;
+  background: var(--badge-bg);
+  color: var(--badge-fg, var(--text-dim));
+  max-width: 14em;
+  overflow: hidden;
+}
+.g-row .ref .name { overflow: hidden; text-overflow: ellipsis; }
+.g-row .ref .dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+/*
+ * 窄窗口：左右并排放不下（泳道最少也要几十像素，详情面板再有下限），改成上下排，
+ * 各自占满宽度；分隔条在这时候没有意义，收起来
+ */
+@media (max-width: 720px) {
+  #graph-body { flex-direction: column; }
+  #graph-detail {
+    width: auto;
+    max-width: none;
+    max-height: 45%;
+    border-left: 0;
+    border-top: 1px solid var(--card-border);
+  }
+  #graph-splitter { display: none; }
+}

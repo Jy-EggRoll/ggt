@@ -107,6 +107,10 @@ ggt config validate            # 体检配置文件
 | `size_unit` | string | `decimal` | `size` 命令的 MB 换算口径：`decimal`（1 MB = 1,000,000 字节）或 `binary`（1 MB = 1024×1024 字节，即 MiB） |
 | `language` | string | `en` | 输出语言，可选 `en` 或 `zh-CN`。命令行 `--lang` / `-l` 优先于此项 |
 | `log_level` | string | `warn` | 诊断日志级别，可选 `debug`/`info`/`warn`/`error`。命令行 `-v`/`-vv` 优先于此项；取值非法时不中止命令，改为回退默认级别并提示 |
+| `theme` | string | 空 | 看板选用的主题；空表示跟随系统深浅。取值是主题 id（见看板的主题选择器） |
+| `theme_dark` | string | `builtin:vscode/2026-dark.json` | 跟随系统时，系统为深色用哪套主题（对应 VSCode 的 `workbench.preferredDarkColorTheme`） |
+| `theme_light` | string | `builtin:vscode/2026-light.json` | 跟随系统时，系统为浅色用哪套主题（对应 `workbench.preferredLightColorTheme`） |
+| `graph_detail_width` | int | `340` | 分支图右侧详情面板的宽度（像素，240–800），由页面拖拽分隔条写回 |
 
 示例配置：
 
@@ -216,7 +220,14 @@ task l10n:check    # 只读门禁，已接入 task verify，CI 会跑
   状态字母按各自那侧显示（暂存组看 porcelain 的 X 位、未暂存组看 Y 位）。两组还各铺一层
   半透明底色（已暂存偏绿、未暂存偏黄，由主题里的 git 令牌混出），扫一眼就知道这段属于哪一组
 - **点仓库名进入仓库面板**：面板是这个仓库的主页面，头部是仓库名、当前分支与领先/落后，
-  正文是入口行（目前是「改动 N」）。分支图之后也加在这里
+  正文是入口行：「改动 N」进整仓 diff，「分支图」进提交泳道图
+- **分支图**：提交历史画成泳道图——分叉、合并、tag 与分支标签都在图上。泳道分配与画法逐行
+  照搬 VSCode 源码管理的图（[scmHistory.ts](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/scm/browser/scmHistory.ts)
+  的 `toISCMHistoryItemViewModelArray` 与 `renderSCMHistoryItemGraph`），几何常量也照抄，
+  因此连线、圆点与分叉的样子与它一致。默认**跨全部分支与 tag**（不像 VSCode 那样只挑当前分支），
+  顶栏那个勾选框取消勾选就只看当前分支；首批取 100 条，滚到底自动续取，顶栏显示「已显示 X / 共 N」。
+  点某条提交，右侧显示它的哈希、作者、时间、引用与改动文件（增删行数）。左右两半之间的分隔条
+  可以拖拽调宽，宽度记在配置项 `graph_detail_width` 里
 - **点开看 diff**：从面板里点「改动」看整个仓库的改动，或直接点某个文件行看该文件的 diff。
   分「已暂存的改动」与「未暂存的改动」两段，只按行首的 `+` / `-` 着色（不做语法高亮），
   长行折行显示。未跟踪文件整份按新增展示，二进制只给一行提示，单份输出超过 2 MiB 会截断

@@ -38,6 +38,11 @@
 - ✨ diff 改成近乎全屏的面板（四周留白 + 圆角 + 阴影），背后的看板做模糊；仓库面板保持铺满整屏，只把顶栏的按钮按 VSCode 的次要按钮语义美化
 - 🐛 修掉暂存文件后新行"从页面左上角飞入"的动画：行是绝对定位的，刚建出来时 `transform` 是 `none`（页面左上角），真实坐标要等 `layout()` 写入，带着 `transition` 就会从左上角滑过来。现在新行首次定位时关掉过渡，定位完成的下一帧再打开
 - 补齐颜色注册表默认值：新增 `button.*` / `dropdown.*` / `input.*` / `focusBorder` / `editorWidget.background` / `widget.shadow`，取值逐条照抄上游 `inputColors.ts` 与 `editorColors.ts`。没有它们，`Dark+`/`Light+`/`Visual Studio Dark`/`Visual Studio Light` 这四套（它们本身不写这些令牌）的按钮会退化成没有底色的透明块
+- ✨ 新增分支图：从仓库面板的「分支图」入口进入，提交历史画成泳道图。泳道分配与画法逐行照搬 VSCode 源码管理的图（`scmHistory.ts` 的 `toISCMHistoryItemViewModelArray` 与 `renderSCMHistoryItemGraph`），几何常量（行高 22px、泳道宽 11px、曲线半径 5px）也照抄
+- ✨ 分支图默认跨全部分支与 tag（上游只挑当前分支），顶栏勾选框可收窄到当前分支；首批 100 条、滚到底续取——做法是把 limit 翻倍重取而不是 skip：泳道是逐行递推出来的，只取第二页会让整页的线从最左边重新开始
+- ✨ 点提交在右侧看详情：哈希、作者、时间、引用与改动文件（增删行数）。左右之间的分隔条可拖拽调宽，宽度写进新增配置项 `graph_detail_width`（240–800，拖拽或方向键都能调）
+- 🐛 新增 `config.IntAt`：配置解析用 `json.Number` 保留数字字面量，而调用方按 `float64` 写类型断言时会静默回落到默认值（实测"配置里写着 380、读出来却是 340"，全程不报错），整数的读取现在只在那一处处理各种形态
+- 订正两处与实现不符的注释：`internal/theme/theme.go` 里指向 `vars.go` 的引用、样式表里"徽章默认色值尚未定位"的过时说明
 
 **其他**
 

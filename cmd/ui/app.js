@@ -67,6 +67,23 @@ const MSG = {
     themeLightPref: 'Light',
     themeDarkPrefLabel: 'Preferred dark theme when following the system',
     themeLightPrefLabel: 'Preferred light theme when following the system',
+    graphEntry: 'History graph',
+    graphAllRefs: 'All branches and tags',
+    graphCount: 'showing {{shown}} / {{total}}',
+    graphLoading: 'Loading…',
+    graphEnd: 'All commits loaded',
+    graphLimitReached: 'Reached the {{n}}-commit limit; uncheck "All branches and tags" to see further back',
+    graphDetailHint: 'Pick a commit to see its details',
+    graphNoCommits: 'No commits yet',
+    graphNoSubject: '(no subject)',
+    graphResize: 'Resize the detail panel',
+    graphFiles: 'Changed files',
+    graphFilesSummary: '{{n}} files, +{{adds}} −{{dels}}',
+    graphBinary: 'binary',
+    graphHash: 'Commit',
+    graphAuthor: 'Author',
+    graphDate: 'Date',
+    graphRefs: 'Refs',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -104,6 +121,23 @@ const MSG = {
     themeLightPref: '浅色',
     themeDarkPrefLabel: '跟随系统时的深色主题',
     themeLightPrefLabel: '跟随系统时的浅色主题',
+    graphEntry: '分支图',
+    graphAllRefs: '全部分支与 tag',
+    graphCount: '已显示 {{shown}} / {{total}}',
+    graphLoading: '加载中…',
+    graphEnd: '已加载全部',
+    graphLimitReached: '已到 {{n}} 条上限，可取消勾选「全部分支与 tag」往回看',
+    graphDetailHint: '点一条提交看它的详情',
+    graphNoCommits: '还没有提交',
+    graphNoSubject: '（无提交信息）',
+    graphResize: '调整详情面板宽度',
+    graphFiles: '改动的文件',
+    graphFilesSummary: '{{n}} 个文件，+{{adds}} −{{dels}}',
+    graphBinary: '二进制',
+    graphHash: '提交',
+    graphAuthor: '作者',
+    graphDate: '时间',
+    graphRefs: '引用',
   },
 };
 
@@ -159,6 +193,17 @@ const themeSelectEl = document.getElementById('theme-select');
 // 跟随系统时分别用哪套深色/浅色主题的两个下拉框，只在"跟随系统"下显示
 const themeDarkEl = document.getElementById('theme-dark');
 const themeLightEl = document.getElementById('theme-light');
+// 分支图：容器、列表、详情、分隔条与过滤开关
+const graphEl = document.getElementById('graph');
+const graphListEl = document.getElementById('graph-list');
+const graphDetailEl = document.getElementById('graph-detail');
+const graphTitleEl = document.getElementById('graph-title');
+const graphCountEl = document.getElementById('graph-count');
+const graphOpEl = document.getElementById('graph-op');
+const graphBackEl = document.getElementById('graph-back');
+const graphSplitterEl = document.getElementById('graph-splitter');
+const graphAllRefsEl = document.getElementById('graph-all-refs');
+const graphFilterLabelEl = document.getElementById('graph-filter-label');
 const boardOpEl = document.getElementById('op');
 const repoEl = document.getElementById('repo');
 const repoBackEl = document.getElementById('repo-back');
@@ -909,13 +954,18 @@ function openRepoPanel(spec) {
   repoBackEl.focus();
 }
 
-// renderRepoEntries 画出面板里的入口行。目前只有「改动」一项，分支图之后加在这里
+// renderRepoEntries 画出面板里的入口行：整仓改动与分支图。
+// 分支图那一行没有计数徽标——提交总数要打开之后取（列表接口顺带给出），
+// 为了一个徽标让面板一打开就多跑一次 git log 不划算
 function renderRepoEntries() {
   const r = panelSpec.repo;
   repoBodyEl.innerHTML =
     '<div class="entry" data-entry="changes">' +
     '<span class="entry-name">' + esc(t('changes')) + '</span>' +
     '<span class="badge">' + r.files.length + '</span>' +
+    '</div>' +
+    '<div class="entry" data-entry="graph">' +
+    '<span class="entry-name">' + esc(t('graphEntry')) + '</span>' +
     '</div>';
 }
 
@@ -924,6 +974,8 @@ function renderRepoEntries() {
 function closeRepoPanel() {
   if (!panelOpen) return;
   if (diffOpen) closeDiff();
+  // 分支图是从面板进去的，返回键的语义是"回到上一层"：面板关掉时它必须一起关
+  if (graphOpen) closeGraphState();
   panelOpen = false;
   panelSpec = null;
   repoEl.classList.remove('open');
@@ -939,6 +991,7 @@ repoBodyEl.addEventListener('click', (e) => {
   const entry = e.target.closest('.entry');
   if (!entry) return;
   if (entry.dataset.entry === 'changes') openDiff(panelSpec);
+  if (entry.dataset.entry === 'graph') openGraph(panelSpec);
 });
 
 // ——— 写操作：暂存 / 取消暂存 / 提交 / 推送 ———
@@ -1160,7 +1213,11 @@ document.addEventListener('keydown', (e) => {
     closeDiff();
     return;
   }
-  // diff 没开时 Esc 关面板：两层各自响应自己那一层，先上后下
+  // diff 与分支图都没开时 Esc 关面板：三层各自响应自己那一层，先上后下
+  if (graphOpen) {
+    closeGraph();
+    return;
+  }
   if (panelOpen) closeRepoPanel();
 });
 
@@ -1333,3 +1390,543 @@ loadIconTheme().then(() => {
 });
 refresh();
 startPolling();
+
+// ——— 分支图 ———
+//
+// 泳道分配在 Go 侧（internal/git/graph.go，照搬 VSCode 的 toISCMHistoryItemViewModelArray），
+// 这里只负责画：renderGraphRow 逐行移植 VSCode 的 renderSCMHistoryItemGraph
+// （src/vs/workbench/contrib/scm/browser/scmHistory.ts，MIT），几何常量也照抄它
+
+const SWIMLANE_HEIGHT = 22; // 必须等于 CSS 里的 --row-h：线段按行边界画，行高一变连线就断开
+const SWIMLANE_WIDTH = 11;
+const SWIMLANE_CURVE_RADIUS = 5;
+const CIRCLE_RADIUS = 4;
+const CIRCLE_STROKE_WIDTH = 2;
+
+// SVG 元素必须用 createElementNS：createElement('circle') 造出来的是 HTML 元素，
+// 浏览器不会把它当图形画——表现为"什么都没有"，控制台也不报错
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+let graphOpen = false;
+let graphSpec = null; // 当前仓库（来自看板快照）
+let graphItems = []; // 已加载的"提交 + 泳道"
+let graphTotal = 0;
+let graphLimit = 0; // 已请求的条数；滚到底翻倍
+let graphMaxLimit = 2000;
+let graphAllRefs = true; // 默认跨全部分支与 tag
+let graphSeq = 0; // 作废过期响应
+let graphDetailSeq = 0;
+let graphSelected = '';
+let graphDetailWidth = 340;
+let graphWidthRange = { min: 240, max: 800 };
+let graphWidthWriteTimer = null;
+
+// graphColor 把接口给的变量名包成 var(...)。变量名为空（主题没写那个令牌、也没默认值）时
+// 用兜底色，而不是留一个空的 stroke——那会让线整条消失
+function graphColor(name, fallback) {
+  return name ? 'var(--' + name + ')' : fallback;
+}
+
+function svgNode(name, attrs) {
+  const el = document.createElementNS(SVG_NS, name);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+function graphPath(color, strokeWidth) {
+  const path = svgNode('path', {
+    fill: 'none',
+    'stroke-width': (strokeWidth || 1) + 'px',
+    'stroke-linecap': 'round',
+  });
+  path.style.stroke = color;
+  return path;
+}
+
+function graphCircle(index, radius, strokeWidth, color) {
+  const c = svgNode('circle', {
+    cx: SWIMLANE_WIDTH * (index + 1),
+    cy: SWIMLANE_WIDTH,
+    r: radius,
+  });
+  c.style.strokeWidth = strokeWidth + 'px';
+  if (color) c.style.fill = color;
+  else c.style.fill = 'var(--bg)'; // HEAD 的内圈：上游不设填充（SVG 默认黑），浅色主题上会成黑点
+  return c;
+}
+
+function graphVLine(x, y1, y2, color, strokeWidth) {
+  const p = graphPath(color, strokeWidth);
+  p.setAttribute('d', 'M ' + x + ' ' + y1 + ' V ' + y2);
+  return p;
+}
+
+function findLastNodeIndex(nodes, id) {
+  for (let i = nodes.length - 1; i >= 0; i--) if (nodes[i].id === id) return i;
+  return -1;
+}
+
+// renderGraphRow 画一行的泳道：连线 + 圆点。逐行移植上游 renderSCMHistoryItemGraph，
+// 只把"颜色 id → CSS 变量"这一步换成接口已经翻好的变量名
+function renderGraphRow(vm, laneColumnWidth) {
+  const svg = svgNode('svg', { height: SWIMLANE_HEIGHT, width: laneColumnWidth });
+  const item = vm.item;
+  const input = vm.inputSwimlanes || [];
+  const output = vm.outputSwimlanes || [];
+  const parents = item.parents || [];
+
+  const inputIndex = input.findIndex((n) => n.id === item.hash);
+  const circleIndex = vm.index;
+  const circleColor = graphColor(
+    circleIndex < output.length
+      ? output[circleIndex].color
+      : circleIndex < input.length
+        ? input[circleIndex].color
+        : '',
+    'var(--text-dim)',
+  );
+
+  let outputIndex = 0;
+  for (let index = 0; index < input.length; index++) {
+    const color = graphColor(input[index].color, 'var(--text-dim)');
+
+    if (input[index].id === item.hash) {
+      // 圆点不在自己那条泳道上：从左侧拐一道弧线过去（分叉被压到别的泳道时会出现）
+      if (index !== circleIndex) {
+        const d = [];
+        d.push('M ' + SWIMLANE_WIDTH * (index + 1) + ' 0');
+        d.push(
+          'A ' +
+            SWIMLANE_WIDTH +
+            ' ' +
+            SWIMLANE_WIDTH +
+            ' 0 0 1 ' +
+            SWIMLANE_WIDTH * index +
+            ' ' +
+            SWIMLANE_WIDTH,
+        );
+        d.push('H ' + SWIMLANE_WIDTH * (circleIndex + 1));
+        const path = graphPath(color);
+        path.setAttribute('d', d.join(' '));
+        svg.append(path);
+      } else {
+        outputIndex++;
+      }
+      continue;
+    }
+
+    if (outputIndex < output.length && input[index].id === output[outputIndex].id) {
+      if (index === outputIndex) {
+        svg.append(graphVLine(SWIMLANE_WIDTH * (index + 1), 0, SWIMLANE_HEIGHT, color));
+      } else {
+        const d = [];
+        const path = graphPath(color);
+        d.push('M ' + SWIMLANE_WIDTH * (index + 1) + ' 0');
+        d.push('V 6');
+        d.push(
+          'A ' +
+            SWIMLANE_CURVE_RADIUS +
+            ' ' +
+            SWIMLANE_CURVE_RADIUS +
+            ' 0 0 1 ' +
+            (SWIMLANE_WIDTH * (index + 1) - SWIMLANE_CURVE_RADIUS) +
+            ' ' +
+            SWIMLANE_HEIGHT / 2,
+        );
+        d.push('H ' + (SWIMLANE_WIDTH * (outputIndex + 1) + SWIMLANE_CURVE_RADIUS));
+        d.push(
+          'A ' +
+            SWIMLANE_CURVE_RADIUS +
+            ' ' +
+            SWIMLANE_CURVE_RADIUS +
+            ' 0 0 0 ' +
+            SWIMLANE_WIDTH * (outputIndex + 1) +
+            ' ' +
+            (SWIMLANE_HEIGHT / 2 + SWIMLANE_CURVE_RADIUS),
+        );
+        d.push('V ' + SWIMLANE_HEIGHT);
+        path.setAttribute('d', d.join(' '));
+        svg.append(path);
+      }
+      outputIndex++;
+    }
+  }
+
+  // 其余父提交（合并的第二个及以后）：从圆点向右下方拐出去，接上各自那条泳道
+  for (let i = 1; i < parents.length; i++) {
+    const parentOutputIndex = findLastNodeIndex(output, parents[i]);
+    if (parentOutputIndex === -1) continue;
+
+    const d = [];
+    const path = graphPath(graphColor(output[parentOutputIndex].color, 'var(--text-dim)'));
+    d.push('M ' + SWIMLANE_WIDTH * parentOutputIndex + ' ' + SWIMLANE_HEIGHT / 2);
+    d.push(
+      'A ' +
+        SWIMLANE_WIDTH +
+        ' ' +
+        SWIMLANE_WIDTH +
+        ' 0 0 1 ' +
+        SWIMLANE_WIDTH * (parentOutputIndex + 1) +
+        ' ' +
+        SWIMLANE_HEIGHT,
+    );
+    d.push('M ' + SWIMLANE_WIDTH * parentOutputIndex + ' ' + SWIMLANE_HEIGHT / 2);
+    d.push('H ' + SWIMLANE_WIDTH * (circleIndex + 1));
+    path.setAttribute('d', d.join(' '));
+    svg.append(path);
+  }
+
+  // 圆点上下的两段竖线：把这一行与上下两行接起来
+  if (inputIndex !== -1) {
+    svg.append(
+      graphVLine(
+        SWIMLANE_WIDTH * (circleIndex + 1),
+        0,
+        SWIMLANE_HEIGHT / 2,
+        graphColor(input[inputIndex].color, 'var(--text-dim)'),
+      ),
+    );
+  }
+  if (parents.length > 0) {
+    svg.append(
+      graphVLine(SWIMLANE_WIDTH * (circleIndex + 1), SWIMLANE_HEIGHT / 2, SWIMLANE_HEIGHT, circleColor),
+    );
+  }
+
+  // 圆点本身：HEAD 画成空心圈，多父提交画成同心圈，其余是实心点
+  if (vm.kind === 'HEAD') {
+    svg.append(graphCircle(circleIndex, CIRCLE_RADIUS + 3, CIRCLE_STROKE_WIDTH, circleColor));
+    svg.append(graphCircle(circleIndex, CIRCLE_STROKE_WIDTH, CIRCLE_RADIUS, ''));
+  } else if (parents.length > 1) {
+    svg.append(graphCircle(circleIndex, CIRCLE_RADIUS + 2, CIRCLE_STROKE_WIDTH, circleColor));
+    svg.append(graphCircle(circleIndex, CIRCLE_RADIUS - 1, CIRCLE_STROKE_WIDTH, circleColor));
+  } else {
+    svg.append(graphCircle(circleIndex, CIRCLE_RADIUS + 1, CIRCLE_STROKE_WIDTH, circleColor));
+  }
+  return svg;
+}
+
+// graphLaneColumnWidth 按已加载行里最宽的泳道算一个固定列宽：这样标题的左边缘是对齐的。
+// 上游每行用自己那份宽度，标签会一行一个位置；这里多给一个固定容器，SVG 在里面左对齐
+function graphLaneColumnWidth() {
+  let lanes = 1;
+  for (const vm of graphItems) {
+    lanes = Math.max(lanes, (vm.inputSwimlanes || []).length, (vm.outputSwimlanes || []).length);
+  }
+  return SWIMLANE_WIDTH * (lanes + 1);
+}
+
+function mkEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function formatGraphTime(ts) {
+  const d = new Date(ts * 1000);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+}
+
+// renderGraphRows 整表重建而不是追加：泳道是逐行递推出来的，续取之后前面那些行的列宽也可能变，
+// 只追加会让新旧两段错位。行数上限由 Go 侧的 graphMaxLimit 管着，重建代价可控
+function renderGraphRows() {
+  const colW = graphLaneColumnWidth();
+  const frag = document.createDocumentFragment();
+
+  for (const vm of graphItems) {
+    const row = document.createElement('div');
+    row.className = 'g-row' + (vm.item.hash === graphSelected ? ' selected' : '');
+    row.dataset.hash = vm.item.hash;
+
+    const lanes = mkEl('div', 'lanes');
+    lanes.style.width = colW + 'px';
+    lanes.appendChild(renderGraphRow(vm, colW));
+    row.appendChild(lanes);
+
+    for (const ref of vm.item.refs || []) {
+      const tag = mkEl('span', 'ref');
+      if (ref.color) {
+        const dot = mkEl('span', 'dot');
+        dot.style.background = graphColor(ref.color, 'transparent');
+        tag.appendChild(dot);
+      }
+      tag.appendChild(mkEl('span', 'name', ref.name));
+      row.appendChild(tag);
+    }
+
+    row.appendChild(mkEl('span', 'hash', vm.item.hash.slice(0, 8)));
+    row.appendChild(mkEl('span', 'subject', vm.item.subject || t('graphNoSubject')));
+    row.appendChild(mkEl('span', 'meta', vm.item.author + ' · ' + formatGraphTime(vm.item.timestamp)));
+    frag.appendChild(row);
+  }
+
+  // 尾部一行：还有更多就说"加载中"，到底了就说"已加载全部"。滚动到底的判据就看它
+  if (graphItems.length > 0) {
+    const tail = mkEl('p', 'hint', graphItems.length >= graphTotal ? t('graphEnd') : t('graphLoading'));
+    tail.style.padding = '6px 12px';
+    frag.appendChild(tail);
+  }
+
+  graphListEl.replaceChildren(frag);
+  graphCountEl.textContent = graphTotal > 0 ? t('graphCount', { shown: graphItems.length, total: graphTotal }) : '';
+}
+
+// setGraphOp 写顶栏下面那行提示（取数失败时是 git 的原话）
+function setGraphOp(text, isError) {
+  graphOpEl.textContent = text || '';
+  graphOpEl.classList.toggle('error', !!isError);
+}
+
+// loadGraph 取一批历史。more 为真表示"滚到底了，再取一批"——做法是把 limit 翻倍重取，
+// 而不是 skip：泳道是逐行递推的，只取第二页会让整页的线从最左边重新开始
+async function loadGraph(more) {
+  if (!graphSpec) return;
+  const repoPath = graphSpec.repo.path;
+  const seq = ++graphSeq;
+  const nextLimit = more ? Math.min(graphLimit * 2, graphMaxLimit) : 100;
+
+  try {
+    const params = new URLSearchParams({
+      repo: repoPath,
+      limit: String(nextLimit),
+      all: graphAllRefs ? '1' : '0',
+    });
+    const res = await fetch('/api/log?' + params.toString(), { cache: 'no-store', headers: authHeaders });
+    const data = await res.json();
+    // 用户可能已经关掉分支图或换了仓库：这一份响应就作废
+    if (seq !== graphSeq || !graphOpen) return;
+    if (data.error) {
+      setGraphOp(data.error, true);
+      return;
+    }
+
+    setGraphOp('');
+    graphLimit = nextLimit;
+    graphItems = data.items || [];
+    graphTotal = data.total || 0;
+    graphMaxLimit = data.maxLimit || graphMaxLimit;
+    if (data.detailWidth) graphDetailWidth = data.detailWidth;
+    if (data.minDetailWidth) graphWidthRange.min = data.minDetailWidth;
+    if (data.maxDetailWidth) graphWidthRange.max = data.maxDetailWidth;
+    applyGraphDetailWidth();
+    renderGraphRows();
+  } catch (err) {
+    if (seq === graphSeq) setGraphOp(err.message, true);
+  }
+}
+
+// openGraph 打开某个仓库的分支图。它在仓库面板之上，因此面板保持打开——返回键逐层退回
+function openGraph(spec) {
+  graphSpec = spec;
+  const r = spec.repo;
+
+  graphTitleEl.innerHTML =
+    '<span>' + esc(r.name) + '</span>' +
+    (r.branch && !r.noCommits ? '<span class="dir"> ' + esc(r.branch) + '</span>' : '');
+  graphFilterLabelEl.textContent = t('graphAllRefs');
+  graphAllRefsEl.checked = graphAllRefs;
+  graphSplitterEl.setAttribute('aria-label', t('graphResize'));
+
+  graphSelected = '';
+  graphItems = [];
+  graphTotal = 0;
+  graphLimit = 0;
+  graphCountEl.textContent = '';
+  setGraphOp('');
+  graphDetailEl.replaceChildren(mkEl('p', 'hint', t('graphDetailHint')));
+  graphListEl.replaceChildren();
+
+  graphOpen = true;
+  graphEl.classList.add('open');
+  graphEl.setAttribute('aria-hidden', 'false');
+  syncScrollLock();
+  stopPolling();
+  graphBackEl.focus();
+
+  loadGraph(false);
+}
+
+// closeGraphState 只收起分支图这一层，不碰焦点与轮询。
+// 面板与分支图一起关掉时用它——否则焦点会被丢给一个马上要隐藏的返回键
+function closeGraphState() {
+  if (!graphOpen) return;
+  graphOpen = false;
+  graphSeq++; // 作废在路上的那次响应
+  graphDetailSeq++;
+  graphEl.classList.remove('open');
+  graphEl.setAttribute('aria-hidden', 'true');
+  // 一张图可能上千行，关掉就释放这些元素
+  graphListEl.replaceChildren();
+  graphDetailEl.replaceChildren();
+  graphItems = [];
+}
+
+// closeGraph 关闭分支图，回到下面的仓库面板（面板本身不关）
+function closeGraph() {
+  if (!graphOpen) return;
+  closeGraphState();
+  syncScrollLock();
+  if (panelOpen) repoBackEl.focus();
+  else resume();
+}
+
+graphBackEl.addEventListener('click', closeGraph);
+
+// 滚到底续取：判据是"已经滚到最后 120px 以内"，不用 IntersectionObserver——
+// 这里只有一个哨兵，滚动事件本身很便宜
+graphListEl.addEventListener('scroll', () => {
+  if (!graphOpen) return;
+  const el = graphListEl;
+  if (el.scrollTop + el.clientHeight < el.scrollHeight - 120) return;
+  if (graphItems.length >= graphTotal) return;
+  if (graphLimit >= graphMaxLimit) {
+    setGraphOp(t('graphLimitReached', { n: graphMaxLimit }), false);
+    return;
+  }
+  loadGraph(true);
+});
+
+// 过滤开关：默认全部分支与 tag，勾掉只看当前分支
+graphAllRefsEl.addEventListener('change', () => {
+  graphAllRefs = graphAllRefsEl.checked;
+  graphSelected = '';
+  graphDetailEl.replaceChildren(mkEl('p', 'hint', t('graphDetailHint')));
+  loadGraph(false);
+});
+
+// selectGraphCommit 选中一条提交：列表上的选中态 + 右侧详情。详情里的元信息来自列表那一行
+// （已经取回来的），文件列表单独一次请求——它只在选中时才需要
+async function selectGraphCommit(hash) {
+  graphSelected = hash;
+  for (const row of graphListEl.children) {
+    if (row.classList) row.classList.toggle('selected', row.dataset.hash === hash);
+  }
+
+  const vm = graphItems.find((v) => v.item.hash === hash);
+  if (!vm) return;
+
+  graphDetailEl.replaceChildren(renderGraphDetail(vm, null));
+
+  const seq = ++graphDetailSeq;
+  try {
+    const params = new URLSearchParams({ repo: graphSpec.repo.path, hash });
+    const res = await fetch('/api/commit-files?' + params.toString(), {
+      cache: 'no-store',
+      headers: authHeaders,
+    });
+    const data = await res.json();
+    if (seq !== graphDetailSeq || graphSelected !== hash) return;
+    graphDetailEl.replaceChildren(renderGraphDetail(vm, data.error ? null : data));
+  } catch {
+    // 文件列表取不到不影响详情本身：那一半照常显示，少了文件清单而已
+  }
+}
+
+// renderGraphDetail 画右侧详情。files 为 null 时只画元信息与提交信息（文件列表随后补上）
+function renderGraphDetail(vm, files) {
+  const item = vm.item;
+  const box = document.createDocumentFragment();
+
+  box.appendChild(mkEl('h2', '', item.subject || t('graphNoSubject')));
+
+  const dl = mkEl('dl');
+  const addRow = (label, value) => {
+    dl.appendChild(mkEl('dt', '', label));
+    dl.appendChild(mkEl('dd', '', value));
+  };
+  addRow(t('graphHash'), item.hash);
+  addRow(t('graphAuthor'), item.authorEmail ? item.author + ' <' + item.authorEmail + '>' : item.author);
+  addRow(t('graphDate'), formatGraphTime(item.timestamp));
+  if ((item.refs || []).length > 0) {
+    addRow(t('graphRefs'), item.refs.map((r) => r.name).join('、'));
+  }
+  box.appendChild(dl);
+
+  if (item.message && item.message !== item.subject) {
+    box.appendChild(mkEl('p', 'msg', item.message));
+  }
+
+  if (files) {
+    const summary = t('graphFilesSummary', {
+      n: files.files.length,
+      adds: files.insertions,
+      dels: files.deletions,
+    });
+    box.appendChild(mkEl('h2', '', t('graphFiles')));
+    box.appendChild(mkEl('p', 'hint', summary));
+    const list = mkEl('ul', 'files');
+    for (const f of files.files) {
+      const li = mkEl('li');
+      li.appendChild(mkEl('span', 'path', f.origPath ? f.origPath + ' → ' + f.path : f.path));
+      if (f.binary) {
+        li.appendChild(mkEl('span', 'stat', t('graphBinary')));
+      } else {
+        li.appendChild(mkEl('span', 'stat add', '+' + f.adds));
+        li.appendChild(mkEl('span', 'stat del', '−' + f.dels));
+      }
+      list.appendChild(li);
+    }
+    box.appendChild(list);
+  }
+
+  return box;
+}
+
+graphListEl.addEventListener('click', (e) => {
+  const row = e.target.closest('.g-row');
+  if (row) selectGraphCommit(row.dataset.hash);
+});
+
+// ——— 详情面板的宽度：拖拽分隔条，松手才写配置 ———
+//
+// 拖动过程中每一帧都写一次配置会让配置文件被反复重写（还可能撞上其它写操作），
+// 因此移动只改页面上的宽度，pointerup 才写回一次
+function applyGraphDetailWidth() {
+  const w = Math.min(Math.max(graphDetailWidth, graphWidthRange.min), graphWidthRange.max);
+  graphDetailWidth = w;
+  // 写的是自定义属性而不是 width：窄窗口的断点用 CSS 接管布局时不需要 !important
+  graphDetailEl.style.setProperty('--detail-w', w + 'px');
+}
+
+async function saveGraphDetailWidth() {
+  try {
+    await postJSON('/api/graph-pref', { width: graphDetailWidth });
+  } catch {
+    // 宽度写不进配置不影响这一次的使用：面板已经按新宽度显示了，下次打开退回旧值而已
+  }
+}
+
+graphSplitterEl.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startWidth = graphDetailWidth;
+  graphSplitterEl.classList.add('dragging');
+  graphSplitterEl.setPointerCapture(e.pointerId);
+
+  const onMove = (ev) => {
+    graphDetailWidth = startWidth - (ev.clientX - startX);
+    applyGraphDetailWidth();
+  };
+  const onUp = () => {
+    graphSplitterEl.classList.remove('dragging');
+    graphSplitterEl.removeEventListener('pointermove', onMove);
+    graphSplitterEl.removeEventListener('pointerup', onUp);
+    graphSplitterEl.removeEventListener('pointercancel', onUp);
+    saveGraphDetailWidth();
+  };
+  graphSplitterEl.addEventListener('pointermove', onMove);
+  graphSplitterEl.addEventListener('pointerup', onUp);
+  graphSplitterEl.addEventListener('pointercancel', onUp);
+});
+
+// 键盘也能调：左右箭头各 10px，停手 400ms 后写回配置（连按不会连写）
+graphSplitterEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  e.preventDefault();
+  graphDetailWidth += e.key === 'ArrowLeft' ? 10 : -10;
+  applyGraphDetailWidth();
+  if (graphWidthWriteTimer) clearTimeout(graphWidthWriteTimer);
+  graphWidthWriteTimer = setTimeout(saveGraphDetailWidth, 400);
+});

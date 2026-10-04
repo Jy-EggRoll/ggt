@@ -112,6 +112,35 @@
   </header>
   <div id="repo-body"></div>
 </div>
+<!--
+  分支图：从仓库面板的入口行进入，画这个仓库的提交历史与泳道（照搬 VSCode 源码管理图那套算法）。
+
+  层级夹在面板（8）与 diff（10）之间：从面板进来、从详情里的文件还能再进 diff
+
+  左半是提交列表（每行一条泳道 SVG + 引用标签 + 标题），右半是选中提交的详情，中间那条分隔条
+  可以拖拽调宽，宽度写回配置（graph_detail_width）。列表里只有加载到的那些行，滚到底再续取
+-->
+<div id="graph" aria-hidden="true">
+  <header>
+    <button id="graph-back" type="button"></button>
+    <span id="graph-title"></span>
+    <span id="graph-count"></span>
+    <!-- 默认跨全部分支与 tag；勾掉就只看当前分支（大仓库的泳道会少很多） -->
+    <label id="graph-filter">
+      <input id="graph-all-refs" type="checkbox" checked>
+      <span id="graph-filter-label"></span>
+    </label>
+    <span id="graph-esc"><kbd>Esc</kbd></span>
+  </header>
+  <!-- 取数失败时的原话（git 的报错、或"仓库不在配置里"这类）。与 #diff-op 同样的角色，
+       单独一行是因为列表每次续取都会重建，塞进列表里会被冲掉 -->
+  <p id="graph-op"></p>
+  <div id="graph-body">
+    <div id="graph-list" tabindex="0"></div>
+    <div id="graph-splitter" role="separator" aria-orientation="vertical" tabindex="0"></div>
+    <aside id="graph-detail"></aside>
+  </div>
+</div>
 <script src="app.js"></script>
 </body>
 </html>
