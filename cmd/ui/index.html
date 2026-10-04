@@ -65,6 +65,45 @@
        选项同样由 app.js 按注入的清单搭出来（与被隐藏的初值一起，见 buildThemeSelect） -->
   <select id="theme-dark" disabled hidden></select>
   <select id="theme-light" disabled hidden></select>
+  <!--
+    通知中心入口，摆在底栏最右端（VSCode 的铃铛也在状态栏右端）。
+    未读数写进里面的 .badge，由 app.js 维护：徽标那套几何与配色已有现成样式，不再另写一份。
+    铃铛用内联 SVG 而不是 emoji 或字符：图标要跟着主题的前景色走，而 emoji 是彩色的、上不了色，
+    字形还会随系统字体变形；fill 用 currentColor，颜色仍然只有一个来源（按钮的前景令牌）
+  -->
+  <button id="bell" class="btn btn--secondary" type="button">
+    <svg class="bell-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M4 7a4 4 0 0 1 8 0v3h1v1H3v-1h1z"/>
+      <circle fill="currentColor" cx="8" cy="13" r="1.4"/>
+    </svg>
+    <span id="bell-count" class="badge" hidden></span>
+  </button>
+</div>
+<!--
+  右下角的通知堆叠区。为什么挂在 body 上而不是卡片或浮层内部：通知是页面级的东西，
+  触发它的动作可能来自看板、仓库卡片或 diff 浮层，挂进任何一层都会跟着那层一起被盖住或随关闭消失。
+  层级由样式表给（--z-toast），高于卡片与 diff，也高于提交详情卡——
+  用户刚做完一次写操作，结果不该被任何一层浮层压住看不见。
+
+  容器本身不接收指针事件（见样式表），只有单条通知可点：否则这块空白区域会拦住看板的点击。
+  内容全部由 app.js 生成，这里只留一个空壳——单条的数目是运行期才知道的
+-->
+<div id="notifications" aria-live="polite"></div>
+<!--
+  通知中心浮层：底栏铃铛点开，按时间倒序列出历史通知。
+  与 .overlay 那两张卡片不同，它不铺满整页、不要遮罩——它只是个从底栏弹出来的面板，
+  盖住右下一角即可，背后该看的还能看（这也是 VSCode 通知中心的形态）。
+  结构写死在 HTML 里：面板骨架与数据无关，写在这里能让"页面上有哪几个可聚焦元素"一眼看全
+-->
+<div id="notif-center" hidden>
+  <header>
+    <span id="notif-title"></span>
+    <button id="notif-clear-all" class="btn btn--secondary" type="button"></button>
+  </header>
+  <!-- 历史列表：倒序由 app.js 排好后再插进来 -->
+  <div id="notif-list"></div>
+  <!-- 一条都没有时显示的占位：面板空着会像一个坏掉的控件 -->
+  <p id="notif-empty"></p>
 </div>
 <!--
   diff 视图的容器：覆盖整页替换看板（用户明确要求"点开后整页看 diff，Esc 或返回键回看板"）。

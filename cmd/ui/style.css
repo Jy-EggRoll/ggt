@@ -85,6 +85,10 @@
   --z-card: 9;
   --z-diff: 10;
   --z-hover: 20;
+  /* 通知压在所有浮层之上：刚做完一次写操作，结果不该被任何一层挡住。
+     分两档是因为通知中心是"用户主动点开、要停在上面看"的面板，而单条通知是它自己的内容 */
+  --z-toast: 21;
+  --z-notif-center: 22;
 
   --fs-xs: 11px;
   --fs-sm: 12px;
@@ -653,11 +657,167 @@ body {
 #op:empty { display: none; }
 #op.error { color: var(--status-error, var(--git-conflicting)); }
 
+/* ——— 通知 ———
+ *
+ * 形态照 VSCode 的通知那套：右下角浮出一叠通知，点关闭才收；底栏右端一个铃铛，
+ * 点开是能翻历史、能逐条清除的通知中心。
+ *
+ * 为什么不做成"原位一行字"：那一行会被下一次写操作直接覆盖，用户的原话是"一闪而过"。
+ * 通知不走这条路——它有自己的容器，不与看板、卡片上的任何元素抢位置，
+ * 因此也不会被任何一次重绘冲掉。这也是这一块不设自动消失的理由：
+ * 抱怨的根源就是"还没看清就没了"，再加一个定时器只会把同一个问题换个地方重现
+ *
+ * 三类颜色的出处：严重度只有 editorInfo/editorWarning/editorError 三种语义色可抄
+ * （status-info/warn/error，见 cmd/ui_theme.go），底色用 editorWidget.background
+ * （panel-bg）、阴影用 widget.shadow、文字用 foreground，全部是令牌，本文件里没有颜色字面量
+ */
+#bell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+/* 未读数为 0 时徽标靠 hidden 属性收起，但 .badge 自己声明了 display: inline-flex，
+   作者样式一定压过浏览器默认表里的 [hidden]，不写这条的话铃铛上会一直挂着一个空徽标
+   （实测就是这样：徽标里没有数字，却有一圈底色） */
+#bell-count[hidden] { display: none; }
+.bell-icon {
+  flex: none;
+  display: block;
+}
+
+#notifications {
+  position: fixed;
+  right: var(--page-pad);
+  /* 抬到底栏之上：底栏是整宽的固定条，贴到 bottom: 0 会把拉取按钮与主题选择器盖住 */
+  bottom: calc(var(--statusbar-h) + var(--sp-4));
+  z-index: var(--z-toast);
+  display: flex;
+  /* 纵向堆叠，新的一条由 app.js 追加在末尾，因此新的排在下面 */
+  flex-direction: column;
+  gap: var(--sp-3);
+  width: min(92vw, 360px);
+  /* 容器自身不接收指针事件：它是一块贴在右下角的空白区域，接收了就会拦住看板的点击。
+     单条通知再把指针事件收回来（见下一条） */
+  pointer-events: none;
+}
+.notif {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--editor-widget-border, var(--card-border));
+  border-radius: var(--radius-md);
+  background: var(--panel-bg, var(--bg));
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--line-tight);
+  box-shadow: 0 2px var(--sp-3) var(--widget-shadow, transparent);
+  animation: notif-in var(--dur-move) var(--ease-decel);
+}
+.notif-icon {
+  flex: none;
+  display: block;
+  /* 与第一行文字的光学对齐：图标比行盒高，不抬一点会显得偏下 */
+  margin-top: 1px;
+}
+.notif--info .notif-icon { color: var(--status-info, var(--text)); }
+.notif--warn .notif-icon { color: var(--status-warn, var(--text)); }
+.notif--error .notif-icon { color: var(--status-error, var(--git-conflicting)); }
+.notif-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 内容是 git 的原话，可能多行、也可能是很长的不换行串 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* 限高：一条超长的报错不该把整屏盖住，超出部分自己滚 */
+  max-height: 40vh;
+  overflow: auto;
+}
+@keyframes notif-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--sp-2));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 通知中心：从底栏右端弹出来的浮层。不铺满整页、也不要遮罩——它只是右下一块面板，
+   背后该看的还能看（VSCode 的通知中心也是这个形态，用户明确要求照它的做法来） */
+#notif-center {
+  position: fixed;
+  right: var(--page-pad);
+  bottom: calc(var(--statusbar-h) + var(--sp-2));
+  z-index: var(--z-notif-center);
+  display: flex;
+  flex-direction: column;
+  width: min(92vw, 380px);
+  max-height: min(60vh, 480px);
+  background: var(--panel-bg, var(--bg));
+  border: 1px solid var(--editor-widget-border, var(--card-border));
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px var(--widget-shadow, transparent);
+  font-size: var(--fs-sm);
+  line-height: var(--line-tight);
+}
+/* 必须显式写：上面的 id 选择器比浏览器默认表里的 [hidden] 更具体，不写这条面板收不起来 */
+#notif-center[hidden] { display: none; }
+#notif-center > header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--card-border);
+}
+#notif-title {
+  flex: 1 1 auto;
+  font-weight: 700;
+}
+#notif-list {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.notif-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-2) var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--card-border);
+}
+.notif-row:last-child { border-bottom: 0; }
+.notif-row-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.notif-row-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 8em;
+  overflow: auto;
+}
+.notif-row-time {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  /* 等宽数字：一列时间戳左对齐时不会因为数字宽度不同而参差 */
+  font-variant-numeric: tabular-nums;
+}
+#notif-empty {
+  margin: 0;
+  padding: var(--sp-4);
+  color: var(--text-dim);
+}
+#notif-empty[hidden] { display: none; }
+
 /* 尊重「减少动态效果」的系统设置：这类用户对位移动画敏感，动画会让界面难以使用。
    滚轮那条平滑在这里管不到（它已改由 app.js 驱动），app.js 会用同一个媒体查询
    把动画时长降为 0，两处必须保持一致 */
 @media (prefers-reduced-motion: reduce) {
   .row, .cont { transition: none; }
+  /* 通知的入场位移也在这里关掉：这类用户对位移动画敏感，通知又是"随时可能冒出来"的东西 */
+  .notif { animation: none; }
 }
 
 /*
@@ -964,7 +1124,13 @@ pre.diff .meta { color: var(--text-dim); }
   justify-content: flex-end;
   background: var(--panel-bg, var(--bg));
 }
-.hovercard-close {
+/*
+ * 小图标按钮：钉住态提交详情卡的关闭、通知单条的关闭共用这一份。
+ * 之所以提出来：两处的尺寸、留白、hover 底色与前景完全相同，各写一份迟早会漂移，
+ * 而"关闭"这种控件一旦尺寸不一致，并排看就很明显
+ */
+.icon-btn {
+  flex: none;
   width: var(--control-h);
   height: var(--control-h);
   padding: 0;
@@ -977,7 +1143,7 @@ pre.diff .meta { color: var(--text-dim); }
   line-height: 1;
   cursor: pointer;
 }
-.hovercard-close:hover {
+.icon-btn:hover {
   background: var(--toolbar-hover-bg, var(--hover-bg));
   color: var(--text);
 }

@@ -90,6 +90,12 @@ const MSG = {
     graphDate: 'Date',
     graphRefs: 'Refs',
     graphClose: 'Close details',
+    notifTitle: 'Notifications',
+    notifClearAll: 'Clear all',
+    notifClear: 'Clear this notification',
+    notifClose: 'Dismiss this notification',
+    notifEmpty: 'No notifications',
+    notifBell: 'Notifications',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -150,6 +156,12 @@ const MSG = {
     graphDate: '时间',
     graphRefs: '引用',
     graphClose: '关闭详情',
+    notifTitle: '通知',
+    notifClearAll: '全部清除',
+    notifClear: '清除这条通知',
+    notifClose: '关闭这条通知',
+    notifEmpty: '没有通知',
+    notifBell: '通知中心',
   },
 };
 
@@ -224,6 +236,15 @@ const graphDiffEl = document.getElementById('graph-diff');
 // 提交详情卡（悬浮即显，点一下钉住）
 const graphPopupEl = document.getElementById('graph-popup');
 const boardOpEl = document.getElementById('op');
+// 通知：右下角的堆叠区、底栏的铃铛与未读徽标、以及铃铛点开的历史面板
+const notificationsEl = document.getElementById('notifications');
+const bellEl = document.getElementById('bell');
+const bellCountEl = document.getElementById('bell-count');
+const notifCenterEl = document.getElementById('notif-center');
+const notifTitleEl = document.getElementById('notif-title');
+const notifClearAllEl = document.getElementById('notif-clear-all');
+const notifListEl = document.getElementById('notif-list');
+const notifEmptyEl = document.getElementById('notif-empty');
 
 // 返回按钮的文字在 JS 里填：它要跟随语言，而 index.html 是静态骨架、不参与翻译
 diffBackEl.textContent = '← ' + t('back');
@@ -969,6 +990,291 @@ function closeDiff() {
   resume();
 }
 
+// ——— 通知 ———
+//
+// 为什么要有这套东西：写操作的结果原来写在 #op、#graph-op、#diff-op 三行文字里，而这三行是
+// "最近一次结果的占位"——下一次写操作、下一次重绘都会把它覆盖掉。用户点完推送，成功信息出现
+// 不到一秒就被别的东西冲掉，原话是"一个成功的信息一闪而过，这肯定是不合适的"。
+//
+// 因此通知不走三行文字那条路：它有独立的容器与独立的列表，不与任何会重绘的元素抢位置，
+// 也就不会被冲掉；并且刻意不设定时器，只有用户点关闭才消失——抱怨的根源就是"还没看清就没了"，
+// 再挂一个自动消失只是把同一个问题换个地方重现。
+//
+// 三行文字因此只留给"需要一直可见的持续状态"：取数失败（要一直看着才知道仓库读不出来）、
+// 续取上限提示（要一直提醒为什么滚不到更早的提交）、拉取进行中的"正在拉取…"
+// （网络操作期间的状态，结束时由结果通知接手）。一次性动作的结果一律走通知
+
+// 通知在内存里的上限。为什么要上限：页面开着不动也会一直攒，上限保证内存与面板高度都是常数级。
+// 超限丢最旧的——用户要找的是刚发生的那几条
+const NOTIF_MAX = 50;
+
+// notifItems 是通知的唯一数据源，按发生顺序（旧 -> 新）存放，右下角的堆叠与面板里的历史
+// 都从它渲染，不各自维护一份。每项含：
+//   text / level / at  正文、严重度（info|warn|error）、发生时间
+//   el                 右下角那一条的元素（收起或清除后置空），挂在数据上是为了让
+//                      "追加一条"不必重建已有元素，也不会让屏幕上的通知重放入场动画
+//   dismissed          是否已经被用户收起过：收起只是关掉提示，条目仍留在历史里
+const notifItems = [];
+
+// 未读数：右下角堆叠上出现一条不等于用户在面板里看过，因此单独记一个数，
+// 打开面板时清零
+let notifUnread = 0;
+
+// notifCenterOpen 记录面板开着没有：开着时新通知直接算已读（用户正看着面板），
+// 也用于"点面板外面就收起"这条判断
+let notifCenterOpen = false;
+
+// 三种严重度的图标。用内联 SVG 而不是字符：图标要跟着主题的严重度前景色走，
+// 而现成的方块字字形在各系统上粗细不一。fill/stroke 一律 currentColor，颜色仍只有一个来源
+const NOTIF_ICONS = {
+  info:
+    '<circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+    '<circle cx="8" cy="4.9" r="1" fill="currentColor"/>' +
+    '<rect x="7.2" y="6.9" width="1.6" height="4.6" fill="currentColor"/>',
+  warn:
+    '<path d="M8 2.2 14.6 13.4H1.4z" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+    '<circle cx="8" cy="7" r="1" fill="currentColor"/>' +
+    '<rect x="7.2" y="9" width="1.6" height="2.8" fill="currentColor"/>',
+  error:
+    '<circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+    '<path d="M5.6 5.6 10.4 10.4M10.4 5.6 5.6 10.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+};
+
+// notifIconSvg 给出某个严重度的图标标记。
+// 全是写死的字面量、不含任何外部数据，因此拼接后可以直接交给 innerHTML——
+// 而正文来自 git 的原话，那条路必须走 textContent，否则仓库里一个 < 就能把页面结构破了
+function notifIconSvg(level) {
+  return (
+    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">' +
+    NOTIF_ICONS[level] +
+    '</svg>'
+  );
+}
+
+// notifTime 把时间戳格式化成时分秒。
+// 不走 toLocaleTimeString：它的输出随语言与系统设置变化，同一份数据在两台机器上显示不同，
+// 断言与截图也就没法比对。通知都是本次会话里发生的，日期没有信息量
+function notifTime(at) {
+  const d = new Date(at);
+  const pad = (n) => (n < 10 ? '0' + n : String(n));
+  return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
+// notifCloseButton 造一个关闭小按钮。两处（单条通知与面板里的每一行）共用，
+// 因此按钮的样式类、字形与无障碍标签只在这里写一次；点下去做什么由调用方给，
+// 因为这两处的语义并不一样（收起提示 vs 从历史里清除）
+function notifCloseButton(labelKey, onClick) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'icon-btn';
+  btn.textContent = '×';
+  btn.setAttribute('aria-label', t(labelKey));
+  btn.addEventListener('click', (e) => {
+    // 挡掉冒泡：清除会把这个按钮自己（或它所在的那一行）从 DOM 里摘掉，而页面级的
+    // "点别处就收起面板"是靠 notifCenterEl.contains(e.target) 判断的——按钮已脱离文档时
+    // 那个判断必然为假，于是"清除一条"会顺带把面板也关掉
+    e.stopPropagation();
+    onClick();
+  });
+  return btn;
+}
+
+// buildToast 造右下角那一条。结构与面板里的一行刻意不同：堆叠上不需要时间戳
+// （刚发生的事，时间没有信息量），面板里才需要
+function buildToast(item) {
+  const el = document.createElement('div');
+  el.className = 'notif notif--' + item.level;
+  const icon = document.createElement('span');
+  icon.className = 'notif-icon';
+  icon.innerHTML = notifIconSvg(item.level);
+  const text = document.createElement('span');
+  text.className = 'notif-text';
+  text.textContent = item.text;
+  el.append(icon, text, notifCloseButton('notifClose', () => dismissToast(item)));
+  return el;
+}
+
+// renderToasts 让右下角的堆叠与 notifItems 对齐。
+//
+// 为什么不每次整块重建：重建会让已经在屏幕上的通知重放入场动画，看起来像一起抖了一下。
+// 元素挂在 item.el 上，因此"同一条"跨渲染还认得出来；已在容器里的元素重新 append 只是移动位置，
+// 不会重放动画
+function renderToasts() {
+  for (const item of notifItems) {
+    // 收起过的条目不再回到屏幕上，但它还在历史里（见 dismissToast）
+    if (item.dismissed) continue;
+    if (!item.el) item.el = buildToast(item);
+    notificationsEl.appendChild(item.el);
+  }
+  // 清场：超限丢掉的那些、以及被清除掉的，元素都该离开容器
+  const keep = new Set(notifItems.filter((it) => !it.dismissed).map((it) => it.el));
+  for (const el of Array.from(notificationsEl.children)) {
+    if (!keep.has(el)) el.remove();
+  }
+}
+
+// notify 记一条通知并摆到右下角，返回这条通知（调用方一般不需要）。
+//
+// severity 只认 info/warn/error 三档，落在这三档之外的按 info 处理：
+// 三档对应 VSCode 的 editorInfo/editorWarning/editorError 三个语义色，
+// 见 cmd/ui_theme.go 的 status-info / status-warn / status-error
+function notify(text, severity) {
+  const s = text === undefined || text === null ? '' : String(text);
+  // 空结果不入列：git 成功时可能什么都不输出，此时摆一条空通知只会是一个看不懂的框
+  if (!s) return null;
+  const level = NOTIF_ICONS[severity] ? severity : 'info';
+  const item = { text: s, level, at: Date.now() };
+  notifItems.push(item);
+  while (notifItems.length > NOTIF_MAX) {
+    const dropped = notifItems.shift();
+    if (dropped.el) {
+      dropped.el.remove();
+      dropped.el = null;
+    }
+  }
+  renderToasts();
+  // 面板开着的时候用户正看着，直接算已读；否则累加未读并在铃铛上显示
+  if (notifCenterOpen) renderNotifCenter();
+  else {
+    notifUnread++;
+    renderBell();
+  }
+  return item;
+}
+
+// notifFromResult 是 runWrite 那个"显示结果"回调的适配层：
+// 把它的 (文本, 是否出错) 翻成一条通知
+function notifFromResult(text, isError) {
+  notify(text, isError ? 'error' : 'info');
+}
+
+// dismissToast 只收起右下角那一条，条目本身留在历史里。
+// 与"清除"分开是有意的（VSCode 也是这么分的）：收起弹出来的提示，往往只表示"我看过了、别挡着"，
+// 不等于要把这条记录从历史里抹掉——事后回到通知中心还要能翻到它。
+// 这也是本文件里 dismissed 与 removeNotif 两套动作并存的原因
+function dismissToast(item) {
+  if (item.el) {
+    item.el.remove();
+    item.el = null;
+  }
+  item.dismissed = true;
+}
+
+// removeNotif 从历史里彻底清掉一条：面板里那一行的 × 与"全部清除"走这条。
+// 还在屏幕上的那条提示也要一起收掉——同一个通知不该在历史里没了、提示还挂着
+//
+// 为什么按对象而不是按下标：面板里每一行的按钮闭包拿着的是点击那一刻的那条通知，
+// 而列表在此期间可能已经因为新通知或别处清除而移位，用下标会删错行
+function removeNotif(item) {
+  const i = notifItems.indexOf(item);
+  if (i === -1) return;
+  notifItems.splice(i, 1);
+  if (item.el) {
+    item.el.remove();
+    item.el = null;
+  }
+  renderToasts();
+  renderBell();
+  renderNotifCenter();
+}
+
+// renderBell 刷新铃铛上的未读数与无障碍标签。
+// 标签里带上条数：只靠一个数字，屏幕阅读器用户不知道那是什么的计数
+function renderBell() {
+  bellCountEl.textContent = String(notifUnread);
+  bellCountEl.hidden = notifUnread === 0;
+  bellEl.setAttribute('aria-label', notifUnread > 0 ? t('notifBell') + ' (' + notifUnread + ')' : t('notifBell'));
+}
+
+// buildNotifRow 造面板里的一行：图标、正文、时间、清除按钮。
+// 正文与时间分两行而不是并排：git 的原话可能很长，并排会把时间挤出可视区
+function buildNotifRow(item) {
+  const row = document.createElement('div');
+  row.className = 'notif-row';
+  const icon = document.createElement('span');
+  icon.className = 'notif-icon';
+  icon.innerHTML = notifIconSvg(item.level);
+  const body = document.createElement('div');
+  body.className = 'notif-row-body';
+  const text = document.createElement('div');
+  text.className = 'notif-row-text';
+  text.textContent = item.text;
+  const time = document.createElement('div');
+  time.className = 'notif-row-time';
+  time.textContent = notifTime(item.at);
+  body.append(text, time);
+  row.append(icon, body, notifCloseButton('notifClear', () => removeNotif(item)));
+  return row;
+}
+
+// renderNotifCenter 重建面板内容。
+// 面板只在打开与增删时重建（不像看板那样每 5 秒一轮），因此不必复用元素
+function renderNotifCenter() {
+  notifTitleEl.textContent = t('notifTitle');
+  notifClearAllEl.textContent = t('notifClearAll');
+  // 一条都没有时"全部清除"没有意义，置灰而不是藏起来——位置固定，不会让标题行跳动
+  notifClearAllEl.disabled = notifItems.length === 0;
+  notifEmptyEl.textContent = t('notifEmpty');
+  notifEmptyEl.hidden = notifItems.length > 0;
+
+  const frag = document.createDocumentFragment();
+  // 时间倒序：最近发生的排最前
+  for (let i = notifItems.length - 1; i >= 0; i--) frag.appendChild(buildNotifRow(notifItems[i]));
+  notifListEl.replaceChildren(frag);
+}
+
+// openNotifCenter / closeNotifCenter 管面板的开合。
+// 焦点在两处要做交接：打开时进面板（否则键盘用户点开铃铛后 Tab 还得从头走一遍），
+// 收起时回铃铛（否则焦点掉在 body 上，下一次 Tab 从页首开始）
+function openNotifCenter() {
+  notifCenterOpen = true;
+  notifCenterEl.hidden = false;
+  // 打开即视为已读：面板里已经能看到全部内容，铃铛上再挂个数字只会让人以为还有没看的
+  notifUnread = 0;
+  renderBell();
+  renderNotifCenter();
+  const first = notifListEl.querySelector('.icon-btn');
+  if (first) first.focus();
+  else if (!notifClearAllEl.disabled) notifClearAllEl.focus();
+}
+
+function closeNotifCenter(returnFocus) {
+  if (!notifCenterOpen) return;
+  notifCenterOpen = false;
+  notifCenterEl.hidden = true;
+  if (returnFocus) bellEl.focus();
+}
+
+bellEl.addEventListener('click', () => {
+  if (notifCenterOpen) closeNotifCenter(false);
+  else openNotifCenter();
+});
+
+notifClearAllEl.addEventListener('click', () => {
+  for (const item of notifItems) {
+    if (item.el) {
+      item.el.remove();
+      item.el = null;
+    }
+  }
+  notifItems.length = 0;
+  notifUnread = 0;
+  renderBell();
+  renderNotifCenter();
+});
+
+// 点面板与铃铛之外的地方就收起：它是个浮层，不收的话会一直压着右下角的内容。
+// 判据用 closest 而不是 target 相等，因为面板里还有子元素
+document.addEventListener('click', (e) => {
+  if (!notifCenterOpen) return;
+  if (notifCenterEl.contains(e.target) || bellEl.contains(e.target)) return;
+  closeNotifCenter(false);
+});
+
+// 首屏先把铃铛摆正：未读为 0（徽标隐藏），无障碍标签也要有——按钮里只有一个图形，
+// 不设标签的话屏幕阅读器只会念出"按钮"
+renderBell();
+
 // ——— 写操作：暂存 / 取消暂存 / 提交 / 推送 ———
 
 // writeBusy 为真时拒绝新的写操作：一次只让一个请求在飞。
@@ -976,8 +1282,12 @@ function closeDiff() {
 // 弹出一条让人摸不着头脑的错误
 let writeBusy = false;
 
-// setOp / setBoardOp 各写一处操作结果行：覆盖层标题栏下的 #diff-op，与看板左下角的 #op。
+// setOp / setBoardOp 各写一处持续状态行：覆盖层标题栏下的 #diff-op，与看板底栏里的 #op。
 // 分两处而不是共用一处，是因为两者可能同时存在，共用一个元素会互相覆盖
+//
+// 注意它们现在只管"需要一直可见的状态"，不再管一次性动作的结果——那些改走右上角通知，
+// 理由见上面通知那一段的说明。判断标准：这条信息在动作结束之后还有没有用？
+// 有（取数失败、续取到上限、拉取还在进行中）就留在这里，没有就发一条通知
 function setOp(text, isError) {
   diffOpEl.textContent = text || '';
   diffOpEl.classList.toggle('error', !!isError);
@@ -1032,30 +1342,34 @@ async function runWrite(path, body, show) {
   return out;
 }
 
-// applyFileAction 执行行内的暂存 / 取消暂存。
-// applyFileAction 执行行内动作：单个文件的暂存 / 取消暂存，以及分组行头上的整组动作
+// applyFileAction 执行行内动作：单个文件的暂存 / 取消暂存，以及分组行头上的整组动作。
+// 结果走通知：这类动作一行里可能连着点好几次，写在原位的话上一条必然被下一条冲掉
 function applyFileAction(spec, action) {
   if (action === 'stage-all' || action === 'unstage-all') {
     return runWrite(
       action === 'stage-all' ? '/api/stage-all' : '/api/unstage-all',
       { repo: spec.repo.path },
-      setBoardOp,
+      notifFromResult,
     );
   }
   return runWrite(
     action === 'stage' ? '/api/stage' : '/api/unstage',
     { repo: spec.repo.path, file: spec.file.path },
-    setBoardOp,
+    notifFromResult,
   );
 }
 
 // fetchAll 拉取全部仓库的远程数据。
-// 先写一行"正在拉取"：拉取是网络操作，几十个仓库可能要等好几秒，没有提示会让人
-// 以为按钮没反应（这行文字随后会被结果覆盖）
+// 拉取是网络操作，几十个仓库可能要等好几秒：期间在底栏留一行"正在拉取…"，否则会让人以为
+// 按钮没反应。这一行是持续状态——操作没结束就一直在，结束时无论成败都由下面的回调清掉，
+// 因此留在底栏而不发通知：发成通知的话，操作结束后它会变成一条永远停在"正在拉取"的假消息
 function fetchAll() {
   if (writeBusy) return;
   setBoardOp(t('fetching'), false);
-  return runWrite('/api/fetch', {}, setBoardOp);
+  return runWrite('/api/fetch', {}, (text, isError) => {
+    setBoardOp('', false);
+    notifFromResult(text, isError);
+  });
 }
 
 // fillThemeOptions 把一份主题清单填进某个下拉框。followLabel 非空时在最前面加一项空值选项——
@@ -1114,8 +1428,13 @@ function buildThemeSelect() {
 // 为什么重载而不是就地改 CSS 变量：配色是服务端渲染 index.html 时注入的，就地改就等于让
 // 客户端再实现一遍主题解析（重新取颜色、自己拼变量），同一件事两处实现迟早漂移。
 // 重载的代价只是一次本地请求，而换主题本来就是低频动作
+//
+// 结果走通知与其他写操作一致，但要知道一处局限：成功之后紧跟着就是重载，那条通知会随页面
+// 一起消失，因此"换主题成功"这件事在界面上仍然看不到（失败时不会重载，通知会一直留着，
+// 这是本次真正的改善）。要让成功也看得见，只能把通知存到内存之外再在重载后取回，
+// 而那与"通知只存在内存里"这条约束直接冲突，故本轮不做，见提交说明里的取舍
 themeSelectEl.addEventListener('change', async () => {
-  const out = await runWrite('/api/theme', { key: 'theme', value: themeSelectEl.value }, setBoardOp);
+  const out = await runWrite('/api/theme', { key: 'theme', value: themeSelectEl.value }, notifFromResult);
   if (!out || out.error) {
     buildThemeSelect(); // 没写成就把选择器拨回当前生效的那套，别让它显示一个没生效的值
     return;
@@ -1129,7 +1448,7 @@ for (const [sel, key] of [
   [themeLightEl, 'theme_light'],
 ]) {
   sel.addEventListener('change', async () => {
-    const out = await runWrite('/api/theme', { key, value: sel.value }, setBoardOp);
+    const out = await runWrite('/api/theme', { key, value: sel.value }, notifFromResult);
     if (!out || out.error) {
       buildThemeSelect();
       return;
@@ -1143,7 +1462,7 @@ for (const [sel, key] of [
 // 提交之后分支图上要多出一条新提交，因此图与看板都刷新一次
 async function commitFromUI() {
   const repo = currentRepo();
-  const out = await runWrite('/api/commit', { repo: repo.path, message: commitMsgEl.value.trim() }, setGraphOp);
+  const out = await runWrite('/api/commit', { repo: repo.path, message: commitMsgEl.value.trim() }, notifFromResult);
   if (!out || out.error) return;
   commitMsgEl.value = '';
   draftMsg.delete(repo.path);
@@ -1153,7 +1472,7 @@ async function commitFromUI() {
 // pushFromUI 推送当前分支。推送不改动图的内容，但会把"领先 N"这类状态清掉，
 // 因此看板的快照在 runWrite 里已重取，这里只把卡片头部与图也刷新一次
 async function pushFromUI() {
-  const out = await runWrite('/api/push', { repo: currentRepo().path }, setGraphOp);
+  const out = await runWrite('/api/push', { repo: currentRepo().path }, notifFromResult);
   if (out && !out.error) await loadGraph(false);
 }
 
@@ -1189,6 +1508,12 @@ commitMsgEl.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  // 通知中心浮在最上面，先收它：一层一层退，顺序与打开时相反。
+  // 焦点同时交还铃铛，否则焦点会掉在已经隐藏的面板里
+  if (notifCenterOpen) {
+    closeNotifCenter(true);
+    return;
+  }
   // 焦点在提交输入框里时，Esc 先退出输入而不是关掉卡片——否则"想退出输入框"这个动作会把
   // 刚写好的提交信息一起丢掉（它会留在草稿里，但用户并不知道）。再按一次才关
   if (document.activeElement === commitMsgEl) {
@@ -1938,7 +2263,7 @@ function renderCommitCard(vm, files, pinned) {
 
   if (pinned) {
     const bar = mkEl('div', 'hovercard-top');
-    const close = mkEl('button', 'hovercard-close', '×');
+    const close = mkEl('button', 'icon-btn', '×');
     close.type = 'button';
     close.title = t('graphClose');
     close.setAttribute('aria-label', t('graphClose'));
@@ -2073,7 +2398,7 @@ function currentRepo() {
 // cardWrite 发一次仓库操作。成功后先刷新看板快照、再刷新分支图：切分支、提交、拉取都会改变
 // 图的内容，而头部那行状态来自看板快照（顺序反了会读到上一轮的分支与领先/落后）
 async function cardWrite(path, body) {
-  const out = await runWrite(path, body, setGraphOp);
+  const out = await runWrite(path, body, notifFromResult);
   if (out && !out.error) {
     await refresh();
     await loadGraph(false);
