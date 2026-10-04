@@ -28,7 +28,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -268,46 +267,48 @@ const uiBinarySniffLen = 8000
 
 // uiDiff 是 /api/diff 的响应体。
 //
-// 为什么分两段而不是给一份"与 HEAD 相比"的合并 diff：已暂存（index vs HEAD）与未暂存
-// （工作区 vs index）是两种不同性质的改动，VSCode 也把它们分成两个组各自查看。
-// 合成一段会让人分不清"我暂存了什么、又改了哪些还没暂存"
+// 正文是一串"段"而不是固定的两三个字段：段是这类视图唯一的组织方式，而视图只会越加越多
+// （已暂存、未暂存、某条提交……）。每加一种视图就多一对字段、页面多一个 if，迟早没人清得干净
 type uiDiff struct {
 	Repo string `json:"repo"`
 	// File 为空表示"整个仓库"，即用户点的是仓库标题行
 	File     string `json:"file,omitempty"`
 	OrigPath string `json:"origPath,omitempty"`
-	// Untracked 为真时 Unstaged 是文件正文而不是 diff：未跟踪文件不在 index 里，
+	// Commit 非空表示这是"某条提交改了什么"，值是那条提交的哈希。此时正文只有一段，
+	// 内容是相对第一个父提交的改动（理由见 commitDiffText）
+	Commit string `json:"commit,omitempty"`
+	// Untracked 为真时正文是文件正文而不是 diff：未跟踪文件不在 index 里，
 	// git 对它不产生 diff（替代写法 git diff --no-index /dev/null 在 Windows 上不成立，
 	// 那边没有 /dev/null）。页面把它整体按"新增"渲染
 	Untracked bool `json:"untracked"`
 	Unmerged  bool `json:"unmerged"`
-	// Staged 是 index vs HEAD，Unstaged 是工作区 vs index，均为不带颜色的统一 diff
-	Staged   string `json:"staged"`
-	Unstaged string `json:"unstaged"`
 	// Binary 只用于未跟踪文件：它是二进制时不返回正文（返回了也是乱码），
 	// 页面据此显示提示。已跟踪文件的二进制改动由 git 自己在 diff 里写成
 	// "Binary files ... differ"，页面认那一行，后端不必再判一次
-	Binary    bool `json:"binary"`
-	Truncated bool `json:"truncated"`
-	// StagedFiles / UnstagedFiles 是上面两段文本的文件级清单，顺序与文本里各分段的顺序一致，
-	// 整仓视图才有。页面据此把两大段切成"每文件一段"并标出名字与增删行数——
-	// 从 diff 文本里反解路径要重新处理引号、转义与改名，而 git 已经用机器可读的方式给了一份
-	StagedFiles   []uiDiffFile `json:"stagedFiles,omitempty"`
-	UnstagedFiles []uiDiffFile `json:"unstagedFiles,omitempty"`
-	Error         string       `json:"error,omitempty"`
+	Binary    bool            `json:"binary"`
+	Truncated bool            `json:"truncated"`
+	Sections  []uiDiffSection `json:"sections"`
+	Error     string          `json:"error,omitempty"`
 }
 
-// uiDiffFile 是 diff 里的一份文件：路径、改名前的旧路径，以及增删行数。
-//
-// 二进制文件的增删两列 git 给的是 "-"，这里换算成 Binary 为真、行数留 0，
-// 页面据此显示"二进制"而不是"+0 −0"
-type uiDiffFile struct {
-	Path     string `json:"path"`
-	OrigPath string `json:"origPath,omitempty"`
-	Added    int    `json:"added"`
-	Removed  int    `json:"removed"`
-	Binary   bool   `json:"binary,omitempty"`
+// uiDiffSection 是 diff 视图里的一段正文。
+type uiDiffSection struct {
+	// Kind 决定页面用哪条文案当段标题
+	Kind string `json:"kind"`
+	// Text 是不带颜色的统一 diff（未跟踪文件则是文件正文，整份按新增渲染）
+	Text string `json:"text"`
+	// Files 与 Text 里各分段的顺序一致，整仓视图才有。页面据此把正文切成"每文件一段"
+	// 并标出名字与增删行数——从文本里反解路径要重新处理引号、转义与改名，
+	// 而 git 已经用机器可读的方式给了一份（形状沿用 git.CommitFile，提交卡的文件行也是它）
+	Files []git.CommitFile `json:"files,omitempty"`
 }
+
+// 段的种类。字符串而不是数字：它要进 JSON，出问题时一眼看得出是哪一段
+const (
+	diffKindStaged   = "staged"
+	diffKindUnstaged = "unstaged"
+	diffKindCommit   = "commit"
+)
 
 // handleDiff 是 /api/diff 的处理函数。
 //
@@ -322,6 +323,13 @@ func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
 	repo, ok := findUIRepo(c.repos(), repoPath)
 	if !ok {
 		writeUIDiffError(w, http.StatusNotFound, l10n.T("Unknown repository", nil))
+		return
+	}
+
+	// 提交视图问的是"这条提交改了什么"，与当前工作区快照无关，因此单独走一条路径：
+	// 它的合法输入来自这条提交自己的改动清单，而不是上一次快照
+	if hash := strings.TrimSpace(r.URL.Query().Get("commit")); hash != "" {
+		handleCommitDiff(w, r, repo, hash, filePath)
 		return
 	}
 
@@ -342,7 +350,7 @@ func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
 		out.Untracked = f.Untracked
 		out.Unmerged = f.Unmerged
 		// 重命名要同时给新旧两个路径，理由见 uiAffectedPaths
-		paths = uiAffectedPaths(f)
+		paths = uiAffectedPaths(f.Path, f.OrigPath)
 	}
 
 	ctx := r.Context()
@@ -352,7 +360,12 @@ func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
 			writeUIDiffError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		out.Unstaged, out.Binary, out.Truncated = text, binary, truncated
+		// 未跟踪文件放在"未暂存"那一段的位置上：它确实是还没进 index 的改动，
+		// 这也是它一直以来的归属，页面因此不必为它单开一种段
+		out.Binary, out.Truncated = binary, truncated
+		if text != "" {
+			out.Sections = []uiDiffSection{{Kind: diffKindUnstaged, Text: text}}
+		}
 		writeUIDiff(w, out)
 		return
 	}
@@ -365,9 +378,14 @@ func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
 			writeUIDiffError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		out.Staged, out.Truncated = text, out.Truncated || truncated
-		if file == nil {
-			out.StagedFiles = numstatOrWarn(ctx, repo.Path, true, nil)
+		out.Truncated = out.Truncated || truncated
+		// 正文为空就不占一段：页面上会多出一个只有标题的空段
+		if text != "" {
+			section := uiDiffSection{Kind: diffKindStaged, Text: text}
+			if file == nil {
+				section.Files = numstatOrWarn(ctx, repo.Path, true, nil)
+			}
+			out.Sections = append(out.Sections, section)
 		}
 	}
 	if file == nil || file.Work != "." {
@@ -376,13 +394,97 @@ func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
 			writeUIDiffError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		out.Unstaged, out.Truncated = text, out.Truncated || truncated
-		if file == nil {
-			out.UnstagedFiles = numstatOrWarn(ctx, repo.Path, false, nil)
+		out.Truncated = out.Truncated || truncated
+		if text != "" {
+			section := uiDiffSection{Kind: diffKindUnstaged, Text: text}
+			if file == nil {
+				section.Files = numstatOrWarn(ctx, repo.Path, false, nil)
+			}
+			out.Sections = append(out.Sections, section)
 		}
 	}
 
 	writeUIDiff(w, out)
+}
+
+// handleCommitDiff 处理"某条提交改了什么"。
+//
+// 单独一条路径而不是挤进工作区那条：两者的"什么才算合法输入"根本不同——工作区看的是上一次
+// 快照（文件此刻在不在、暂没暂存），提交看的是这条提交自己的改动清单（文件可能早就删了，
+// 更谈不上暂存状态）。硬凑成一条会让两边的校验互相打架
+func handleCommitDiff(w http.ResponseWriter, r *http.Request, repo *uiRepo, hash, filePath string) {
+	// 哈希会直接进 git 的命令行，必须先确认它只是一串十六进制（同 handleCommitFiles）
+	if !validHash(hash) {
+		writeUIDiffError(w, http.StatusBadRequest, l10n.T("Invalid commit hash", nil))
+		return
+	}
+
+	ctx := r.Context()
+	files, err := git.CommitFiles(ctx, repo.Path, hash)
+	if err != nil {
+		writeUIDiffError(w, statusOf(err, http.StatusInternalServerError), err.Error())
+		return
+	}
+
+	out := uiDiff{Repo: repo.Path, Commit: hash, File: filePath}
+	var paths []string
+	if filePath != "" {
+		f, ok := findCommitFile(files, filePath)
+		if !ok {
+			// 不在这条提交的改动清单里就是没有这个文件：既挡住了路径穿越，
+			// 也挡住了"拿别的提交的文件名来问"
+			writeUIDiffError(w, http.StatusNotFound, l10n.T("Unknown file", nil))
+			return
+		}
+		out.File, out.OrigPath, out.Binary = f.Path, f.OrigPath, f.Binary
+		paths = uiAffectedPaths(f.Path, f.OrigPath)
+	}
+
+	text, truncated, err := commitDiffText(ctx, repo.Path, hash, paths)
+	if err != nil {
+		writeUIDiffError(w, statusOf(err, http.StatusInternalServerError), err.Error())
+		return
+	}
+	out.Truncated = truncated
+	out.Sections = []uiDiffSection{{Kind: diffKindCommit, Text: text, Files: files}}
+	writeUIDiff(w, out)
+}
+
+// findCommitFile 在一条提交的改动清单里按路径找文件，重命名时新旧两个路径都算命中
+func findCommitFile(files []git.CommitFile, path string) (git.CommitFile, bool) {
+	for _, f := range files {
+		if f.Path == path || (f.OrigPath != "" && f.OrigPath == path) {
+			return f, true
+		}
+	}
+	return git.CommitFile{}, false
+}
+
+// commitDiffText 取一条提交的改动文本。
+//
+//   - --format= 去掉提交头：元信息由卡片显示，这里只要改动
+//   - --diff-merges=first-parent 是为了合并提交：git 默认对合并提交用组合格式，那种格式
+//     一列里同时写"与父提交甲、父提交乙分别差什么"，页面认不出（它按行首单个 +/- 着色），
+//     读的人也分不清哪一行属于哪一次比较。统一成"相对第一个父提交"，页面上再注明这一点
+//   - --find-renames 与 --unified=3 是钉住取值：别让用户配置里的 diff.renames / diff.context
+//     改变页面上的显示（改名会被当成"删一个加一个"，上下文行数也会变得五花八门）
+func commitDiffText(ctx context.Context, repoPath, hash string, paths []string) (string, bool, error) {
+	args := []string{
+		"show", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
+		"--find-renames", "--diff-merges=first-parent", "--unified=3", hash,
+	}
+	if len(paths) > 0 {
+		// "--" 之前是选项之后是路径：少了它，以 - 开头的文件名会被当成选项
+		args = append(args, "--")
+		args = append(args, paths...)
+	}
+
+	out, err := git.RunContext(ctx, repoPath, args...)
+	if err != nil {
+		return "", false, err
+	}
+	text, truncated := truncateAtLine(out, uiDiffLimit)
+	return text, truncated, nil
 }
 
 // diffText 取一份不带颜色的统一 diff，staged 为真取 index vs HEAD，否则取工作区 vs index。
@@ -412,80 +514,16 @@ func diffText(ctx context.Context, repoPath string, staged bool, paths []string)
 	return text, truncated, nil
 }
 
-// diffNumstat 取一份"每个文件增删了多少行"的清单，staged 含义同 diffText。
-//
-// 用 git 自己算而不是在 diff 文本里数加减号：数出来的结果会把 hunk 头与 "---"/"+++"
-// 这些元信息算进去，二进制文件也数不出来；改名的两个路径更是只有 git 说得清
-func diffNumstat(ctx context.Context, repoPath string, staged bool, paths []string) ([]uiDiffFile, error) {
-	args := []string{"diff", "--numstat", "-z", "--no-color", "--no-ext-diff", "--no-textconv"}
-	if staged {
-		args = append(args, "--cached")
-	}
-	if len(paths) > 0 {
-		args = append(args, "--")
-		args = append(args, paths...)
-	}
-
-	out, err := git.RunContext(ctx, repoPath, args...)
-	if err != nil {
-		return nil, err
-	}
-	return parseNumstatZ(out), nil
-}
-
 // numstatOrWarn 取文件级增删清单，失败只记一条日志、不打断请求。
 //
 // 为什么可以容忍失败：这份清单只影响整仓 diff 的分段标题，diff 正文本身已经拿到了。
 // 为它返回 500 等于把一份能读的 diff 扔掉；页面那边会退化成用 git 原文里的
 // "diff --git" 行当标题，仍然是分段的，只是少了增删行数
-func numstatOrWarn(ctx context.Context, repoPath string, staged bool, paths []string) []uiDiffFile {
-	files, err := diffNumstat(ctx, repoPath, staged, paths)
+func numstatOrWarn(ctx context.Context, repoPath string, staged bool, paths []string) []git.CommitFile {
+	files, err := git.DiffNumstat(ctx, repoPath, staged, paths)
 	if err != nil {
 		logger.Warn("取 diff 的文件级增删行数失败", "repo", repoPath, "staged", staged, "err", err)
 		return nil
-	}
-	return files
-}
-
-// parseNumstatZ 解析 git diff --numstat -z 的输出。
-//
-// 格式（实测得来，见 ui_diff_test.go 里那几条用例）：
-//   - 普通记录是 "增行\t删行\t路径" 加一个 NUL
-//   - 改名记录里路径那一列是空的，紧随其后是两个 NUL 分隔的字段：旧路径、新路径
-//   - 二进制文件的增删两列都是 "-"
-//   - 结尾的 NUL 会切出一个空字段，跳过
-//
-// 认不出的记录直接跳过而不是猜：宁可少一段文件头，也不要编一个错的文件名挂在页面上
-func parseNumstatZ(out string) []uiDiffFile {
-	fields := strings.Split(out, "\x00")
-	files := make([]uiDiffFile, 0, len(fields))
-	for i := 0; i < len(fields); i++ {
-		rec := fields[i]
-		if rec == "" {
-			continue
-		}
-		cols := strings.SplitN(rec, "\t", 3)
-		if len(cols) != 3 {
-			continue
-		}
-
-		f := uiDiffFile{Path: cols[2]}
-		if cols[0] == "-" || cols[1] == "-" {
-			f.Binary = true
-		} else {
-			f.Added, _ = strconv.Atoi(cols[0])
-			f.Removed, _ = strconv.Atoi(cols[1])
-		}
-		// 路径为空说明是改名：旧路径在前、新路径在后
-		if f.Path == "" && i+2 < len(fields) {
-			f.OrigPath = fields[i+1]
-			f.Path = fields[i+2]
-			i += 2
-		}
-		if f.Path == "" {
-			continue
-		}
-		files = append(files, f)
 	}
 	return files
 }
@@ -623,11 +661,12 @@ func lookupUIFile(repo *uiRepo, path string) (uiFile, error) {
 //
 // 重命名必须同时给新旧两个路径：这一点在 diff 上是"看不出是重命名"，在暂存操作上更严重——
 // 实测只给新路径取消暂存，旧路径那份删除会留在暂存区（状态变成 "D old + ?? new"），
-// 看起来像没撤干净
-func uiAffectedPaths(f uiFile) []string {
-	paths := []string{f.Path}
-	if f.OrigPath != "" {
-		paths = append(paths, f.OrigPath)
+// 看起来像没撤干净。
+// 收两个字符串而不是 uiFile：提交视图里拿到的是 git.CommitFile，两个类型都能用
+func uiAffectedPaths(path, origPath string) []string {
+	paths := []string{path}
+	if origPath != "" {
+		paths = append(paths, origPath)
 	}
 	return paths
 }
@@ -750,7 +789,7 @@ func (c *uiCache) handleStage(w http.ResponseWriter, r *http.Request) {
 		}
 		// add -A 而不是 add：工作区删除的文件也要能暂存，plain add 不记录删除
 		// （实测 " D g.txt" 经 add 后变成 "D  g.txt"）
-		return git.RunCombinedContext(ctx, repo.Path, append([]string{"add", "-A", "--"}, uiAffectedPaths(file)...)...)
+		return git.RunCombinedContext(ctx, repo.Path, append([]string{"add", "-A", "--"}, uiAffectedPaths(file.Path, file.OrigPath)...)...)
 	})
 }
 
@@ -765,7 +804,7 @@ func (c *uiCache) handleUnstage(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return "", err
 		}
-		return git.RunCombinedContext(ctx, repo.Path, append([]string{"reset", "-q", "HEAD", "--"}, uiAffectedPaths(file)...)...)
+		return git.RunCombinedContext(ctx, repo.Path, append([]string{"reset", "-q", "HEAD", "--"}, uiAffectedPaths(file.Path, file.OrigPath)...)...)
 	})
 }
 

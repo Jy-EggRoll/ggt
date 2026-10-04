@@ -50,8 +50,10 @@ const MSG = {
     diffBinary: 'Binary file — contents not shown',
     diffUnmerged: 'Unmerged — conflict markers shown below',
     diffTruncated: 'Output truncated — the change is too large to show in full',
-    diffFileBinary: 'Binary',
     diffUntrackedOmitted: '{{n}} untracked files are not part of the whole-repo diff — open a file row to see its contents',
+    diffMergeFirstParent: 'Merge commit — shown as the change against its first parent',
+    diffOpenCommit: 'Show the whole commit',
+    diffOpenFile: 'Show how this file changed in this commit',
     groupUnmerged: 'Unmerged Changes',
     changes: 'Changes',
     fetchRepo: 'Fetch',
@@ -121,8 +123,10 @@ const MSG = {
     diffBinary: '二进制文件 —— 不显示内容',
     diffUnmerged: '未合并 —— 下面显示冲突标记',
     diffTruncated: '输出过大，已截断，仅显示前面一部分',
-    diffFileBinary: '二进制',
     diffUntrackedOmitted: '另有 {{n}} 个未跟踪文件不在整仓 diff 里，点它的文件行可以看内容',
+    diffMergeFirstParent: '合并提交 —— 下面是相对第一个父提交的改动',
+    diffOpenCommit: '看这次提交的完整改动',
+    diffOpenFile: '看这个文件在那次提交里改了什么',
     groupUnmerged: '未合并的改动',
     changes: '改动',
     fetchRepo: '拉取',
@@ -918,20 +922,31 @@ function diffHTML(text, allAdded) {
     .join('');
 }
 
+// diffSectionTitle 给一段正文挑标题。
+//
+// 段的种类由服务端给（staged / unstaged / commit），文案在页面这一侧取——
+// 后端不认识页面上的翻译表（那份表只服务页面自己），前端文案也不该走 Go 的提取管线
+function diffSectionTitle(kind, spec) {
+  if (kind === 'commit') return (spec.commit && spec.commit.subject) || t('graphNoSubject');
+  if (kind === 'unstaged') return t('diffUnstaged');
+  return t('diffStaged');
+}
+
 // diffFileStat 造一段文件头右侧的增删行数。
-// 二进制显示"二进制"而不是 +0 −0：那两个 0 是"git 数不出来"，不是"没改"
+// 二进制显示"二进制"而不是 +0 −0：那两个 0 是"git 数不出来"，不是"没改"。
+// 字段名与提交卡的文件行一致（都来自 git 的 --numstat），两处不必各记一套
 function diffFileStat(f) {
   if (!f) return '';
   if (f.binary) {
-    return '<span class="diff-stats"><span class="diff-stat">' + esc(t('diffFileBinary')) + '</span></span>';
+    return '<span class="diff-stats"><span class="diff-stat">' + esc(t('graphBinary')) + '</span></span>';
   }
   // 纯改名、只改权限这类改动增删都是 0：右侧再挂一个"+0 −0"只是噪声，
   // 新旧路径那一段已经把事情说清了
-  if (f.added === 0 && f.removed === 0) return '';
+  if (f.adds === 0 && f.dels === 0) return '';
   return (
     '<span class="diff-stats">' +
-    '<span class="diff-stat add">+' + esc(String(f.added)) + '</span>' +
-    '<span class="diff-stat del">−' + esc(String(f.removed)) + '</span>' +
+    '<span class="diff-stat add">+' + esc(String(f.adds)) + '</span>' +
+    '<span class="diff-stat del">−' + esc(String(f.dels)) + '</span>' +
     '</span>'
   );
 }
@@ -973,9 +988,11 @@ function diffFileSections(text, files) {
 }
 
 // renderDiff 把 /api/diff 的响应画进覆盖层。
-// repo 与 file 只用于标题，内容一律来自响应——页面不猜"应该有哪些改动"
-function renderDiff(repo, file, out) {
+// spec 是这次请求的那一行（仓库 + 可选文件 + 可选提交），只用于标题与"要不要提示未跟踪文件"，
+// 正文一律来自响应——页面不猜"应该有哪些改动"
+function renderDiff(repo, spec, out) {
   const blocks = [];
+  const file = spec.file || null;
 
   if (out.error) {
     blocks.push('<p class="diff-note">' + esc(t('diffFailed', { err: out.error })) + '</p>');
@@ -989,20 +1006,25 @@ function renderDiff(repo, file, out) {
   if (out.unmerged) blocks.push('<p class="diff-note">' + esc(t('diffUnmerged')) + '</p>');
   if (out.binary) blocks.push('<p class="diff-note">' + esc(t('diffBinary')) + '</p>');
   if (out.truncated) blocks.push('<p class="diff-note">' + esc(t('diffTruncated')) + '</p>');
+  // 合并提交只跟第一个父提交比（后端把 git 的组合格式挡掉了）：不说明的话，
+  // "这次提交就改了这些"会被理解成相对两个父提交的合计
+  if (spec.commit && spec.commit.merge) {
+    blocks.push('<p class="diff-note">' + esc(t('diffMergeFirstParent')) + '</p>');
+  }
   // 整仓视图看不到未跟踪文件（git diff 不含它们）。与其让人以为"这个仓库只有这些改动"，
-  // 不如说清它们在哪儿看
-  if (!file) {
+  // 不如说清它们在哪儿看。提交视图与它无关：那看的是历史，不是当前工作区
+  if (!file && !spec.commit) {
     const untracked = (repo.files || []).filter((it) => it.untracked).length;
     if (untracked > 0) {
       blocks.push('<p class="diff-note">' + esc(t('diffUntrackedOmitted', { n: untracked })) + '</p>');
     }
   }
 
-  const sections = [];
-  if (out.staged) sections.push({ title: t('diffStaged'), text: out.staged, files: out.stagedFiles });
-  if (out.unstaged) {
-    sections.push({ title: t('diffUnstaged'), text: out.unstaged, files: out.unstagedFiles });
-  }
+  const sections = (out.sections || []).map((s) => ({
+    title: diffSectionTitle(s.kind, spec),
+    text: s.text,
+    files: s.files,
+  }));
   for (const s of sections) {
     // 单文件视图与"切不开"的两段都退回整块渲染：那边只有一份内容，分段没有意义
     const parts = s.files === undefined ? null : diffFileSections(s.text, s.files);
@@ -1058,6 +1080,7 @@ async function loadDiff() {
 
   const params = new URLSearchParams({ repo: spec.repo.path });
   if (spec.file) params.set('file', spec.file.path);
+  if (spec.commit) params.set('commit', spec.commit.hash);
 
   let out;
   try {
@@ -1071,7 +1094,7 @@ async function loadDiff() {
   // 用户在响应到达之前按了 Esc（或又点开了别的）就把这次结果丢掉，
   // 否则会出现"已经回到看板却又被旧结果写了一次"
   if (seq !== diffSeq || !diffOpen || spec !== diffSpec) return;
-  renderDiff(spec.repo, spec.file || null, out);
+  renderDiff(spec.repo, spec, out);
 }
 
 // openDiff 打开某个仓库（file 为空 → 整个仓库）或某个文件的 diff。
@@ -1081,10 +1104,13 @@ async function openDiff(spec) {
   const file = spec.file || null;
   diffSpec = spec;
 
-  // 标题只用我们已经知道的信息（仓库名、文件路径），不必等接口回来才显示
+  // 标题只用我们已经知道的信息（仓库名、文件路径、提交短号），不必等接口回来才显示
   const shown = file ? (file.origPath ? file.origPath + ' → ' + file.path : file.path) : '';
+  const scope = spec.commit ? shortHash(spec.commit.hash) : '';
   diffTitleEl.innerHTML =
-    '<span>' + esc(repo.name) + '</span>' + (shown ? '<span class="dir"> ' + esc(shown) + '</span>' : '');
+    '<span>' + esc(repo.name) + '</span>' +
+    (scope ? '<span class="dir"> ' + esc(scope) + '</span>' : '') +
+    (shown ? '<span class="dir"> ' + esc(shown) + '</span>' : '');
   // 上一次的写操作结果属于上一个仓库，不该带到这次来
   setOp('');
   commitMsgEl.value = draftMsg.get(repo.path) || '';
@@ -2404,6 +2430,31 @@ function formatGraphTime(ts) {
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
 }
 
+// 展示用的提交短号长度。取 7 是因为 git 默认的缩写就在这个长度上下。
+// 它只用来显示：所有请求传的都是完整哈希，页面不拿短号去认提交（短号在仓库变大后可能不再唯一）
+const HASH_SHORT_LEN = 7;
+
+function shortHash(hash) {
+  return String(hash || '').slice(0, HASH_SHORT_LEN);
+}
+
+// openCommitDiff 看某条提交改了什么：file 为空表示整条提交。
+//
+// 与工作区的 diff 走同一个覆盖层，因为要解决的问题完全一样（按文件分段、列表、着色）；
+// 差别只在请求里带的是 commit 而不是工作区快照
+function openCommitDiff(item, file) {
+  if (!cardSpec) return;
+  // 先收起提示卡：它停在所有浮层之上（提示类的东西不能盖在别的浮层底下），
+  // 不收起就会正好压住 diff 正文。被钉住的那条提交仍是选中态，退回图上看得见
+  hideCommitCard(true);
+  openDiff({
+    repo: cardSpec.repo,
+    file: file ? { path: file.path, origPath: file.origPath } : null,
+    // merge 由页面自己算：父提交就在这条提交的元信息里，不必再问服务端
+    commit: { hash: item.hash, subject: item.subject, merge: (item.parents || []).length > 1 },
+  });
+}
+
 // renderGraphRows 整表重建而不是追加：泳道是逐行递推出来的，续取之后前面那些行的列宽也可能变，
 // 只追加会让新旧两段错位。行数上限由 Go 侧的 graphMaxLimit 管着，重建代价可控
 function renderGraphRows() {
@@ -2765,9 +2816,21 @@ function renderCommitCard(vm, files, pinned) {
       adds: files.insertions,
       dels: files.deletions,
     })));
+
+    // 整条提交的改动：这张卡片是个预览框，改动明细放不进来
+    const openAll = mkEl('button', 'btn btn--secondary open-diff', t('diffOpenCommit'));
+    openAll.type = 'button';
+    openAll.addEventListener('click', () => openCommitDiff(vm.item, null));
+    box.appendChild(openAll);
+
     const list = mkEl('ul', 'files');
     for (const f of files.files) {
       const li = mkEl('li');
+      // 点一行看这个文件在那次提交里改了什么：卡片只说"改了哪些文件"，
+      // 看不到改了什么，这正是它此前最缺的一环
+      li.classList.add('clickable');
+      li.title = t('diffOpenFile');
+      li.addEventListener('click', () => openCommitDiff(vm.item, f));
       li.appendChild(mkEl('span', 'path', f.origPath ? f.origPath + ' → ' + f.path : f.path));
       if (f.binary) {
         li.appendChild(mkEl('span', 'stat', t('graphBinary')));

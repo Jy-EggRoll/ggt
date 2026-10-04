@@ -1,8 +1,8 @@
-// ui_diff_test.go 覆盖整仓 diff 的两件事：文件级增删清单的解析，以及
-// "清单顺序与 diff 文本里的分段顺序一致"这个假设。
+// ui_diff_test.go 验一件事：整仓 diff 的文件级清单与文本里的分段按序对齐。
 //
-// 后半件必须用真实的 git 来验：它的正确性来自 git 内部按同一个 diff 队列输出这两样东西，
-// 手工构造的文本无论怎么写都证明不了它
+// 必须用真实的 git 来验：它的正确性来自 git 内部按同一个 diff 队列输出这两样东西，
+// 手工构造的文本无论怎么写都证明不了它。清单本身的解析（普通、二进制、改名三种记录形态）
+// 在 internal/git/numstat_test.go 里，这里不重复
 package cmd
 
 import (
@@ -12,76 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jy-eggroll/ggt/internal/git"
 )
-
-// TestParseNumstatZ 用实际观测到的记录形态钉住解析规则。
-//
-// 这些用例是从 git 的真实输出里抄下来的（git diff --numstat -z），因为它有几处反直觉：
-// 改名记录的路径那一列是空的、旧路径与新路径作为随后两个字段出现，二进制文件的增删两列是 "-"
-func TestParseNumstatZ(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want []uiDiffFile
-	}{
-		{
-			name: "普通改动",
-			in:   "3\t1\tinternal/config/view.go\x00",
-			want: []uiDiffFile{{Path: "internal/config/view.go", Added: 3, Removed: 1}},
-		},
-		{
-			name: "含空格与非 ASCII 的路径原样输出，不带引号也不转义",
-			in:   "1\t0\t带空格 的文件.txt\x00",
-			want: []uiDiffFile{{Path: "带空格 的文件.txt", Added: 1}},
-		},
-		{
-			name: "改名：路径列为空，随后是旧路径与新路径",
-			in:   "0\t0\t\x00带空格 原名.txt\x00plain.txt\x00",
-			want: []uiDiffFile{{Path: "plain.txt", OrigPath: "带空格 原名.txt"}},
-		},
-		{
-			name: "二进制：增删两列都是 -",
-			in:   "-\t-\tblob.bin\x00",
-			want: []uiDiffFile{{Path: "blob.bin", Binary: true}},
-		},
-		{
-			name: "多条混在一起，顺序保持不变",
-			in: "0\t3\ta.txt\x001\t0\tbin.dat\x00" +
-				"0\t0\t\x00带空格 原名.txt\x00plain.txt\x00" +
-				"7\t0\t改名 之后.txt\x00",
-			want: []uiDiffFile{
-				{Path: "a.txt", Removed: 3},
-				{Path: "bin.dat", Added: 1},
-				{Path: "plain.txt", OrigPath: "带空格 原名.txt"},
-				{Path: "改名 之后.txt", Added: 7},
-			},
-		},
-		{
-			name: "没有改动时得到空清单",
-			in:   "",
-			want: []uiDiffFile{},
-		},
-		{
-			name: "认不出的记录被跳过，而不是猜一个文件名出来",
-			in:   "not-a-record\x001\t2\tok.txt\x00",
-			want: []uiDiffFile{{Path: "ok.txt", Added: 1, Removed: 2}},
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := parseNumstatZ(c.in)
-			if len(got) != len(c.want) {
-				t.Fatalf("条数：期望 %d 条，实得 %d 条（%+v）", len(c.want), len(got), got)
-			}
-			for i := range got {
-				if got[i] != c.want[i] {
-					t.Errorf("第 %d 条：期望 %+v，实得 %+v", i+1, c.want[i], got[i])
-				}
-			}
-		})
-	}
-}
 
 // TestDiffSectionsAlignWithNumstat 用真实仓库验"清单与分段按序对齐"这个假设。
 //
@@ -96,7 +29,7 @@ func TestDiffSectionsAlignWithNumstat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("取暂存区 diff 失败：%v", err)
 	}
-	files, err := diffNumstat(ctx, repo, true, nil)
+	files, err := git.DiffNumstat(ctx, repo, true, nil)
 	if err != nil {
 		t.Fatalf("取暂存区增删行数失败：%v", err)
 	}
@@ -119,13 +52,19 @@ func TestDiffSectionsAlignWithNumstat(t *testing.T) {
 		}
 	}
 
-	// 顺带核一下行数：把该文件那一行的增删改成已知值，数量应当对得上
+	// 顺带核一下行数：纯改名之外的条目都该有增删行数，二进制那条由 git 标出来
+	sawBinary := false
 	for _, f := range files {
-		if f.Path == "plain.txt" || f.Path == "带空格 的文件.txt" {
-			if f.Added == 0 && f.Removed == 0 && f.OrigPath == "" {
-				t.Errorf("%q 应当有增删行数或旧路径，实得 %+v", f.Path, f)
-			}
+		if f.Binary {
+			sawBinary = true
+			continue
 		}
+		if f.Adds == 0 && f.Dels == 0 && f.OrigPath == "" {
+			t.Errorf("%q 应当有增删行数或旧路径，实得 %+v", f.Path, f)
+		}
+	}
+	if !sawBinary {
+		t.Error("夹具里的二进制文件没有出现在清单里")
 	}
 }
 

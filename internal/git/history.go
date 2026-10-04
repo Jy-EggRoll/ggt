@@ -159,7 +159,34 @@ type CommitFile struct {
 //	二进制 -\t-\tbin.dat\0
 //	重命名 1\t0\t\0big.txt\0moved.txt\0   （第三个字段为空，紧跟旧、新两个路径）
 func CommitFiles(ctx context.Context, repoPath, hash string) ([]CommitFile, error) {
-	out, err := RunContext(ctx, repoPath, "show", "--numstat", "-z", "--format=", hash)
+	// 三个"为了让输出可解析"的选项与 diffText 同源：--no-color 去转义、--no-ext-diff 挡住
+	// 用户配置的外部 diff 工具、--no-textconv 挡住 textconv 过滤器（它会把这个文件当文本，
+	// git 于是不再报 "-"，二进制文件会被算出行数）
+	out, err := RunContext(ctx, repoPath, "show", "--numstat", "-z", "--format=",
+		"--no-color", "--no-ext-diff", "--no-textconv", hash)
+	if err != nil {
+		return nil, err
+	}
+	return parseNumstat(out), nil
+}
+
+// DiffNumstat 与 CommitFiles 同义，只是问的是工作区或暂存区（staged 为真取 index vs HEAD，
+// 否则取工作区 vs index），paths 非空时只看这几条路径。
+//
+// 与 CommitFiles 共用解析：两者的输出格式完全一样（都是 --numstat -z），差别只在前面
+// 跑的是 diff 还是 show——解析写成两份，正是日后分叉的起点
+func DiffNumstat(ctx context.Context, repoPath string, staged bool, paths []string) ([]CommitFile, error) {
+	args := []string{"diff", "--numstat", "-z", "--no-color", "--no-ext-diff", "--no-textconv"}
+	if staged {
+		args = append(args, "--cached")
+	}
+	if len(paths) > 0 {
+		// "--" 之前是选项、之后是路径：少了它，以 - 开头的文件名会被当成选项
+		args = append(args, "--")
+		args = append(args, paths...)
+	}
+
+	out, err := RunContext(ctx, repoPath, args...)
 	if err != nil {
 		return nil, err
 	}

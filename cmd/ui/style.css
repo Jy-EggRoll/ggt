@@ -1344,6 +1344,12 @@ pre.diff .meta { color: var(--text-dim); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 文件行可点：点开"这个文件在那次提交里改了什么"。hover 底色沿用行选中的令牌，
+   与看板上那些可点的行保持同一套观感 */
+.hovercard .files li.clickable { cursor: pointer; }
+/* 用 --hover-bg（list.hoverBackground，与看板行、按钮次要态同一个令牌） */
+.hovercard .files li.clickable:hover { background: var(--hover-bg); }
+.hovercard .open-diff { margin: 0 0 var(--sp-4); }
 .hovercard .files .stat { flex: none; font-variant-numeric: tabular-nums; }
 .hovercard .files .add { color: var(--git-added); }
 .hovercard .files .del { color: var(--git-deleted); }
