@@ -80,7 +80,9 @@
 
   /* 浮层留白与层级刻度：一次排开，避免以后再出现"两层用同一个 z-index" */
   --overlay-inset: 18px;
-  --z-statusbar: 5;
+  /* 底栏排在两层浮层之上、浮动之物（详情卡与通知）之下：底栏上的铃铛要在卡片或 diff 开着时
+     也能点到，而详情卡与通知本来就该压在最上面 */
+  --z-statusbar: 11;
   --z-scrim: 7;
   --z-card: 9;
   --z-diff: 10;
@@ -205,8 +207,10 @@
 .overlay {
   position: fixed;
   /* 近乎全屏而不是铺满整屏：四周留白取 18px 而不是与 --page-pad 相等的 16px——
-     两者相等时卡片边线与看板卡片边线会糊成一条，反而看不出层次 */
-  inset: var(--overlay-inset);
+     两者相等时卡片边线与看板卡片边线会糊成一条，反而看不出层次。
+     底边再额外让出一条底栏的高度：底栏现在压在浮层之上（见 #tools 的层级），不让的话
+     卡片最下面一行会被它盖住 */
+  inset: var(--overlay-inset) var(--overlay-inset) calc(var(--overlay-inset) + var(--statusbar-h));
   display: none;
   flex-direction: column;
   /* 浮层底色取 editorWidget.background：VSCode 的浮层用它，比 editor.background 略亮，
@@ -611,7 +615,9 @@ body {
   right: 0;
   bottom: 0;
   height: var(--statusbar-h);
-  /* 低于浮层（--z-card / --z-diff）：浮层打开时整条被盖住，这些动作作用于整个看板而不是当前那层 */
+  /* 高于两层浮层（--z-card / --z-diff）：底栏上的铃铛要在卡片或 diff 开着时也能点开通知中心，
+     这也是它不再被浮层整条盖住的原因。通知与通知中心仍在它之上（--z-toast / --z-notif-center）；
+     抬高之后浮层要让出这条高度，见 .overlay 的 inset */
   z-index: var(--z-statusbar);
   display: flex;
   align-items: center;
