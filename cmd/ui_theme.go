@@ -102,6 +102,12 @@ var cssVarNames = map[string]string{
 	"keybindingLabel.foreground":     "kbd-fg",
 	"keybindingLabel.border":         "kbd-border",
 	"input.placeholderForeground":    "input-placeholder",
+	// 滚动条滑块三件套：不映射的话页面用的是浏览器默认滚动条，深色主题下会横着一条浅色的，
+	// 是与 VSCode 观感差得最明显的一处。上游这三个都是半透明色（取值与来源见 defaults.json），
+	// 正好能叠在任意底色上，不必按主题另调
+	"scrollbarSlider.background":       "scrollbar",
+	"scrollbarSlider.hoverBackground":  "scrollbar-hover",
+	"scrollbarSlider.activeBackground": "scrollbar-active",
 	// 浮层边框：上游默认是 null（深/浅两档都没值），因此它只做映射、不进 defaults.json——
 	// 样式表里写成 var(--editor-widget-border, var(--card-border))，缺值时自然回落到卡片边框
 	"editorWidget.border": "editor-widget-border",
@@ -112,16 +118,17 @@ var cssVarNames = map[string]string{
 // 为什么只能由本项目的代码给：VSCode 的侧栏默认不画边框（sideBar.border 的默认值是 null），
 // 而看板的卡片是 ggt 自己的设计；"（续 2）"那块续段标识更是只有 ggt 才有。
 // 它们同样不写死在样式表里——样式表只用变量，取值仍然由这里（数据）提供
+//
+// 卡片边框（card-border）原来也在这张表里，但它的取值不需要按明暗分两套，现在改由当前主题
+// 已有的令牌混出来（见 themeBlock），于是从这张表移走——少维护两组没有出处的十六进制
 var themeOwnVars = map[theme.Type]map[string]string{
 	theme.Dark: {
-		"card-border": "#34343a",
-		"cont-bg":     "#2d2d30",
-		"cont-fg":     "#d7ba7d",
+		"cont-bg": "#2d2d30",
+		"cont-fg": "#d7ba7d",
 	},
 	theme.Light: {
-		"card-border": "#dcdcdc",
-		"cont-bg":     "#efefef",
-		"cont-fg":     "#8a6d1f",
+		"cont-bg": "#efefef",
+		"cont-fg": "#8a6d1f",
 	},
 }
 
@@ -327,6 +334,15 @@ func themeBlock(r *theme.Resolved) string {
 	for name, v := range themeOwnVars[r.Type] {
 		vars[name] = v
 	}
+	// 卡片边框由该主题自己的前景色与卡片底色混出来，而不是写死两个十六进制：
+	// VSCode 的侧栏默认不画边框（sideBar.border 的默认值是 null），"给卡片一条边"是 ggt
+	// 自己的决定，因此没有上游值可抄；混色让它在任何主题下都与该主题同族同调，也不必逐套主题校色。
+	//
+	// 12% 这个比例是按原来那两档硬编码值反推的：深色下 --text #cccccc 压 --card-bg #252526
+	// 得 #393a3a（原值 #34343a），浅色下 --text #616161 压 --card-bg #f3f3f3 得 #e1e1e1
+	// （原值 #dcdcdc），两档都只差 5 个灰阶上下，观感等价而少了两份要维护的字面值。
+	// 另外它只用在边框上、从不当前景，所以不进 contrastPairs，对比度兜底不会碰它
+	vars["card-border"] = "color-mix(in srgb, var(--text) 12%, var(--card-bg))"
 
 	// 配色被我们动过就必须留痕：不留的话，用户看到"按钮文字比 VSCode 里深一点"会以为是主题
 	// 自己的问题，而这条日志正是"为什么和你看到的 VSCode 不一样"的唯一线索

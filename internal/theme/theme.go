@@ -104,6 +104,10 @@ var builtinFS embed.FS
 //	                                                     最终落在 editorInfo.foreground（baseColors.ts）与
 //	                                                     charts.purple（chartsColors.ts）两个字面值上
 //	gitDecoration.*                                      extensions/git/package.json 的 contributes.colors[].defaults
+//	scrollbarSlider.*                                    src/vs/platform/theme/common/colors/miscColors.ts
+//	                                                     上游写作 fromHex(...).transparent(0.4/0.7/0.4)，是
+//	                                                     "字面色 + 固定透明度"，换算成 8 位十六进制后仍可逐位核对
+//	                                                     （与 keybindingLabel.* 同一情形，不属于下面那条排除）
 //	ggt.*                                               本项目自有，VSCode 无对应物（见 cmd/ui_theme.go 的 themeOwnVars）
 //
 // 主题文件里写了同名令牌时以主题为准，这份只负责"主题没写的那些"——而 VSCode 的官方主题

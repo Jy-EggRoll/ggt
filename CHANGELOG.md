@@ -49,6 +49,8 @@
 - 🐛 修掉几处语义错位：错误文本原先借 `git-conflicting`（"文件有合并冲突"的语义）改用 `editorError.foreground`；禁用态原先用 `opacity: 0.5`（浅色主题下蓝底主按钮会糊）改用 `disabledForeground`；图标按钮的 hover 改用 `toolbar.hoverBackground`；选中态与 hover 分开（`list.activeSelectionBackground`）；文件行 hover 改成叠色，不再抹掉它自己那层状态底色
 - 🐛 说明行（"采集失败: …"这类长文本）之前会被硬裁且没有省略号：flex 容器里的匿名文本项不响应 `text-overflow`，现在正文包进一个盒子
 - 顺带把列间距 `GAP` 从 app.js 收回样式表（`--col-gap`），与 `--col-w` 一样只留一处定义
+- ✨ 滚动条改用 VSCode 那套滑块令牌（`scrollbarSlider.background` / `.hoverBackground` / `.activeBackground`）：此前全文 0 处滚动条规则，深色主题下浏览器给的是浅色滚动条，是整页最一眼看出"不像 VSCode"的地方。Chromium 与 Firefox 两套写法用 `@supports selector(::-webkit-scrollbar)` 分成互斥分支——Chromium 121 起一旦认了标准属性 `scrollbar-color` 就会忽略全部 `::-webkit-scrollbar` 规则，并列写会让 hover/active 两态一起失效
+- ⚠️ 卡片边框不再按明暗写死两个十六进制（深 `#34343a` / 浅 `#dcdcdc`），改由当前主题的 `--text` 与 `--card-bg` 混出（`color-mix(in srgb, var(--text) 12%, var(--card-bg))`）：这两个值本就没有出处，还得逐套主题各校一次；混色后任何主题下边框都与该主题同调。比例 12% 是按原两档取值反推的，深浅两侧各差 5 个灰阶上下
 
 **其他**
 

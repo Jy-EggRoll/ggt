@@ -118,6 +118,46 @@
 }
 
 /*
+ * 滚动条：VSCode 在深色主题下是半透明的灰滑块，浏览器默认滚动条则是浅色的——不映射的话
+ * 深色主题里会横着一条亮色，是整页最一眼看出"不像 VSCode"的地方
+ *
+ * 两套写法必须拆成互斥的两个分支，不能并列写在全局：Chromium 121 起认标准属性
+ * scrollbar-color，而它一旦被设成非 auto，同一个引擎就会忽略全部 ::-webkit-scrollbar 规则
+ * （hover/active 两态的区分随之丢失）。所以标准属性只给不认 webkit 伪元素的引擎（Firefox），
+ * 三态那套才保留得下来。用 selector() 做特性检测而不是 UA 判断：后者在压缩与代理场景下不可靠
+ *
+ * 宽度 10px 是自拟值——VSCode 编辑器内的滚动条是 14px，但那是给编辑器区的，网页列表里偏粗
+ */
+@supports selector(::-webkit-scrollbar) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar, var(--card-border));
+    border-radius: var(--radius-pill);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-hover, var(--card-border));
+  }
+  ::-webkit-scrollbar-thumb:active {
+    background: var(--scrollbar-active, var(--card-border));
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  /* Firefox 只能给"滑块一个颜色 + 轨道透明"，没有 hover/active 两态可用 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar, var(--card-border)) transparent;
+  }
+}
+
+/*
  * 按钮三级：主（button.*）、次（button.secondary*）、图标（toolbar.hoverBackground）。
  * 几何自拟（上游没有按钮几何令牌），语义照抄：底色与前景永远成对取自同一组令牌，
  * 这样换主题时不会出现"前景与底色各自漂移"
