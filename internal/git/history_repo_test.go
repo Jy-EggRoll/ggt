@@ -3,9 +3,11 @@ package git
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // gitOut 执行 git 并返回去掉首尾空白的输出。runGit（status_test.go）只负责在失败时终止，
@@ -26,6 +28,25 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 	}
 }
 
+// runGitDated 与 runGit 相同，但把作者时间与提交时间固定为给定值。
+//
+// 存在的理由：--topo-order 在多个提交时间戳相同时的先后次序属于 git 的实现细节——实测
+// 几个提交落在同一秒里时，`go test -race` 的负载一重就会变成侧分支的提交排在最前，
+// 于是"最新提交排第一"这类断言偶发失败。把时间显式钉住，次序才是确定的
+func runGitDated(t *testing.T, dir, when string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test",
+		"GIT_AUTHOR_DATE="+when, "GIT_COMMITTER_DATE="+when,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v 失败: %v\n%s", args, err, out)
+	}
+}
+
 func hasRef(refs []HistoryRef, name string) bool {
 	for _, r := range refs {
 		if r.Name == name {
@@ -38,32 +59,39 @@ func hasRef(refs []HistoryRef, name string) bool {
 // TestLogHistory_RealRepo 在真仓库上走一遍：拓扑序、父提交、引用挂载、作者与时间、计数。
 //
 // 场景是一个标准的"分叉后合并"：主线上一个提交、feature 上一个提交、一个 --no-ff 合并提交，
-// 外加一个 tag 与一个没有被合并的游离分支（用来验证"只看当前分支"这个范围确实起作用）
+// 外加一个 tag 与一个没有被合并的游离分支（用来验证"只看当前分支"这个范围确实起作用）。
+// 各提交的时间戳由用例显式钉住且严格递增，不依赖真实时钟——理由见 runGitDated
 func TestLogHistory_RealRepo(t *testing.T) {
 	dir := newTestRepo(t)
 	base := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD")
 
+	// 时间戳取当前时刻之后，保证比 newTestRepo 那个用真实时钟创建的 init 提交更新
+	clock := time.Now().Add(2 * time.Second)
+	at := func(step int) string {
+		return clock.Add(time.Duration(step) * time.Second).Format(time.RFC3339)
+	}
+
 	runGit(t, dir, "checkout", "-q", "-b", "feature")
 	writeTestFile(t, dir, "feature.txt", "f")
 	runGit(t, dir, "add", ".")
-	runGit(t, dir, "commit", "-q", "-m", "feature work")
+	runGitDated(t, dir, at(1), "commit", "-q", "-m", "feature work")
 	featureHash := gitOut(t, dir, "rev-parse", "HEAD")
+
+	// 侧分支上那个没有被合并回来的提交。它的时间排在合并提交之前，
+	// 因此在拓扑序里不会跑到合并提交前面（这正是本用例要断言的次序）
+	runGit(t, dir, "checkout", "-q", "-b", "side", featureHash)
+	writeTestFile(t, dir, "side.txt", "s")
+	runGit(t, dir, "add", ".")
+	runGitDated(t, dir, at(2), "commit", "-q", "-m", "side work")
+	sideHash := gitOut(t, dir, "rev-parse", "HEAD")
 
 	runGit(t, dir, "checkout", "-q", base)
 	writeTestFile(t, dir, "base.txt", "b")
 	runGit(t, dir, "add", ".")
-	runGit(t, dir, "commit", "-q", "-m", "base work")
-	runGit(t, dir, "merge", "-q", "--no-ff", "feature", "-m", "merge feature")
+	runGitDated(t, dir, at(3), "commit", "-q", "-m", "base work")
+	runGitDated(t, dir, at(4), "merge", "-q", "--no-ff", "feature", "-m", "merge feature")
 	runGit(t, dir, "tag", "v1")
 	mergeHash := gitOut(t, dir, "rev-parse", "HEAD")
-
-	// 一个只存在于侧分支、没有被合并回来的提交
-	runGit(t, dir, "checkout", "-q", "-b", "side", featureHash)
-	writeTestFile(t, dir, "side.txt", "s")
-	runGit(t, dir, "add", ".")
-	runGit(t, dir, "commit", "-q", "-m", "side work")
-	sideHash := gitOut(t, dir, "rev-parse", "HEAD")
-	runGit(t, dir, "checkout", "-q", base)
 
 	ctx := context.Background()
 
