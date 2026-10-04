@@ -91,15 +91,23 @@ var builtinFS embed.FS
 //
 //	editor.background                                    src/vs/platform/theme/common/colors/baseColors.ts
 //	foreground / descriptionForeground                   src/vs/platform/theme/common/colors/baseColors.ts
+//	focusBorder                                          src/vs/platform/theme/common/colors/baseColors.ts
 //	list.hoverBackground                                 src/vs/platform/theme/common/colors/listColors.ts
 //	badge.background / badge.foreground                  src/vs/platform/theme/common/colors/miscColors.ts
+//	button.* / dropdown.* / input.*                      src/vs/platform/theme/common/colors/inputColors.ts
+//	editorWidget.background                              src/vs/platform/theme/common/colors/editorColors.ts
+//	widget.shadow                                        src/vs/platform/theme/common/colors/editorColors.ts
 //	diffEditor.{inserted,removed}LineBackground          src/vs/platform/theme/common/colors/editorColors.ts
 //	sideBar.background                                   src/vs/workbench/common/theme.ts
 //	gitDecoration.*                                      extensions/git/package.json 的 contributes.colors[].defaults
-//	ggt.*                                               本项目自有，VSCode 无对应物（见 vars.go 的说明）
+//	ggt.*                                               本项目自有，VSCode 无对应物（见 cmd/ui_theme.go 的 themeOwnVars）
 //
 // 主题文件里写了同名令牌时以主题为准，这份只负责"主题没写的那些"——而 VSCode 的官方主题
 // 恰好就没写 gitDecoration.* 与 diffEditor.*，它们一直用的就是这里的默认值
+//
+// 只收"上游给得出字面值"的令牌：button.hoverBackground 这类在上游是 lighten()/darken()
+// 算出来的，这里不收（收了就得把换算结果固化成字面量，日后与上游脱钩且无法逐条核对）。
+// 这类令牌在样式表里用 CSS 变量兜底，见 style.css 里 var(--btn-hover-bg, var(--hover-bg))
 //
 //go:embed defaults.json
 var defaultsJSON []byte

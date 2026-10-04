@@ -34,6 +34,36 @@ var cssVarNames = map[string]string{
 	"badge.background": "badge-bg",
 	"badge.foreground": "badge-fg",
 
+	// 按钮、下拉框、输入框在 VSCode 里是各自独立的三组令牌（inputColors.ts），彼此取值
+	// 可以毫无关系——实测 Catppuccin Latte 的 badge.background 是 #bcc0cc 而
+	// button.background 是 #df8e1d。早期版本把 badge.background 当按钮底色的唯一样子、
+	// 文字又沿用 --text，于是"深灰字压重蓝底"只在个别主题上出现（2026 Light 的
+	// badge.background 恰好是重蓝 #0069CC，而它的 --text 是 #202020），排查时很难联想到
+	// 是令牌职责混用。拆开之后按钮的底色与前景来自同一组令牌，不会再各自漂移
+	"button.background":               "btn-bg",
+	"button.foreground":               "btn-fg",
+	"button.hoverBackground":          "btn-hover-bg",
+	"button.secondaryBackground":      "btn-secondary-bg",
+	"button.secondaryForeground":      "btn-secondary-fg",
+	"button.secondaryHoverBackground": "btn-secondary-hover-bg",
+
+	"dropdown.background": "dropdown-bg",
+	"dropdown.foreground": "dropdown-fg",
+	"dropdown.border":     "dropdown-border",
+
+	"input.background": "input-bg",
+	"input.foreground": "input-fg",
+
+	// 焦点边框：样式表原来拿 git-modified（未暂存修改色）当输入框的聚焦色，
+	// 那是"文件被改过"的语义，与"这个控件拿到了焦点"无关
+	"focusBorder": "focus-border",
+
+	// diff 面板改成浮层之后，需要"浮层底色"与"浮层阴影"两个语义：VSCode 给的是
+	// editorWidget.background 与 widget.shadow（都在 editorColors.ts），
+	// 不再拿 editor.background 与卡片边框硬凑
+	"editorWidget.background": "panel-bg",
+	"widget.shadow":           "widget-shadow",
+
 	"gitDecoration.modifiedResourceForeground":      "git-modified",
 	"gitDecoration.stageModifiedResourceForeground": "git-stage-modified",
 	"gitDecoration.addedResourceForeground":         "git-added",
