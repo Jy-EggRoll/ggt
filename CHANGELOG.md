@@ -51,6 +51,7 @@
 - 顺带把列间距 `GAP` 从 app.js 收回样式表（`--col-gap`），与 `--col-w` 一样只留一处定义
 - ✨ 滚动条改用 VSCode 那套滑块令牌（`scrollbarSlider.background` / `.hoverBackground` / `.activeBackground`）：此前全文 0 处滚动条规则，深色主题下浏览器给的是浅色滚动条，是整页最一眼看出"不像 VSCode"的地方。Chromium 与 Firefox 两套写法用 `@supports selector(::-webkit-scrollbar)` 分成互斥分支——Chromium 121 起一旦认了标准属性 `scrollbar-color` 就会忽略全部 `::-webkit-scrollbar` 规则，并列写会让 hover/active 两态一起失效
 - ⚠️ 卡片边框不再按明暗写死两个十六进制（深 `#34343a` / 浅 `#dcdcdc`），改由当前主题的 `--text` 与 `--card-bg` 混出（`color-mix(in srgb, var(--text) 12%, var(--card-bg))`）：这两个值本就没有出处，还得逐套主题各校一次；混色后任何主题下边框都与该主题同调。比例 12% 是按原两档取值反推的，深浅两侧各差 5 个灰阶上下
+- ✨ 钉住的提交详情卡右上角加关闭按钮：钉住之后卡片不再随鼠标移开而消失，此前只有 Esc 与"去点别的提交"两条路，都得知情才用得上。按钮只在钉住态出现（悬浮预览跟着鼠标走，挂一个 × 只是噪音），且由画卡片的函数自己生成——文件清单是异步补的，补上时会整卡重画一次
 
 **其他**
 

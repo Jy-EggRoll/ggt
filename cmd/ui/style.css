@@ -947,6 +947,40 @@ pre.diff .meta { color: var(--text-dim); }
   border-color: var(--focus-ring);
   animation: none;
 }
+/*
+ * 钉住态的关闭按钮：钉住之后卡片不再随鼠标移开而消失，它是这张卡唯一的可见出口
+ * （另外两条路——Esc、去点别的提交——都得靠猜）
+ *
+ * 用 sticky 而不是 absolute：卡片自己就是个滚动容器（max-height: 60vh），absolute 的按钮
+ * 会跟着内容一起滚走，而用户往下翻文件清单时恰恰需要它还看得见。给它铺一层卡片底色，
+ * 是为了内容滚过它时不叠出一片糊字。
+ * 只在钉住态画：悬浮预览本来就跟着鼠标走，再挂一个 × 只是噪音（见 app.js 的 renderCommitCard）
+ */
+.hovercard-top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  background: var(--panel-bg, var(--bg));
+}
+.hovercard-close {
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-md);
+  line-height: 1;
+  cursor: pointer;
+}
+.hovercard-close:hover {
+  background: var(--toolbar-hover-bg, var(--hover-bg));
+  color: var(--text);
+}
 @keyframes hovercard-in {
   from { opacity: 0; }
   to { opacity: 1; }

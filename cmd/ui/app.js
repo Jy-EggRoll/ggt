@@ -89,6 +89,7 @@ const MSG = {
     graphAuthor: 'Author',
     graphDate: 'Date',
     graphRefs: 'Refs',
+    graphClose: 'Close details',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -148,6 +149,7 @@ const MSG = {
     graphAuthor: '作者',
     graphDate: '时间',
     graphRefs: '引用',
+    graphClose: '关闭详情',
   },
 };
 
@@ -1812,6 +1814,15 @@ const commitCardCache = new Map(); // 提交哈希 -> 文件清单：同一个�
 let hoverSeq = 0;
 let cardPinned = false;
 let hoverCardTimer = null;
+// lastPointer 记录指针最后一次移动到的位置；hoverSuppressAt 是"刚收起卡片时指针所在的位置"。
+//
+// 为什么需要后者：收起卡片会让指针下方的元素从卡片换成泳道图的行，浏览器随后就地补派一次
+// mouseover 给那个新元素——鼠标其实一动没动。不认这一次的话，点右上角那个 × 收起之后，卡片
+// 会立刻被同一个位置重新弹开，用户看到的是"关了又弹"。
+// 判据是"坐标与收起时几乎相同"：不用时间窗（慢机器与合成事件有延迟时都不可靠），
+// 也不用"等指针移动"（mouseover 可能先于 mousemove 派发，会连带吃掉用户在别的行上的正常悬停）
+let lastPointer = { x: -1, y: -1 };
+let hoverSuppressAt = null;
 
 // commitCardPosition 把卡片摆在光标右下 14px；靠近右/下边缘时翻到另一侧，别被窗口切掉
 function commitCardPosition(x, y) {
@@ -1831,6 +1842,9 @@ function hideCommitCard(force) {
   hoverCardTimer = null;
   graphPopupEl.hidden = true;
   graphPopupEl.classList.remove('pinned');
+  // 收起时记住指针位置：卡片一消失，指针下方的元素就换成泳道图的行，浏览器会就地补派一次
+  // mouseover 给新元素——那一处坐标与这里几乎相同，据此把它挡掉（见 hoverSuppressAt 的说明）
+  hoverSuppressAt = { x: lastPointer.x, y: lastPointer.y };
 }
 
 // showCommitCard 立刻画出能拿到的那一半（元信息在内存里，要什么有什么），
@@ -1841,7 +1855,7 @@ function showCommitCard(vm, x, y, pinned) {
   graphPopupEl.hidden = false;
 
   const cached = commitCardCache.get(vm.item.hash);
-  graphPopupEl.replaceChildren(renderCommitCard(vm, cached || null));
+  graphPopupEl.replaceChildren(renderCommitCard(vm, cached || null, cardPinned));
   commitCardPosition(x, y);
   if (cached) return;
 
@@ -1855,7 +1869,7 @@ function showCommitCard(vm, x, y, pinned) {
       const files = data && !data.error ? data : null;
       if (!files) return;
       commitCardCache.set(vm.item.hash, files);
-      graphPopupEl.replaceChildren(renderCommitCard(vm, files));
+      graphPopupEl.replaceChildren(renderCommitCard(vm, files, cardPinned));
       commitCardPosition(x, y);
     })
     .catch(() => {
@@ -1874,9 +1888,27 @@ function pinCommitCard(vm, row) {
 }
 
 // renderCommitCard 画详情卡。files 为 null 时只画元信息与提交信息（文件清单随后补）
-function renderCommitCard(vm, files) {
+//
+// pinned 为真时在顶部画一个关闭按钮：钉住之后卡片不再随鼠标移开而消失，若没有可见的出口，
+// 用户只能靠猜（Esc，或去点别的提交）才能把它收起来。按钮因此只在钉住态出现——悬浮预览态
+// 本来就跟着鼠标走，再放一个 × 反而是噪音。
+// 之所以放在这个函数里而不是 showCommitCard 里 append：文件清单是异步补上的，补上时会整卡
+// 重画一次（replaceChildren），按钮若在函数外挂就得在两处各挂一次，迟早漏掉一处
+function renderCommitCard(vm, files, pinned) {
   const item = vm.item;
   const box = document.createDocumentFragment();
+
+  if (pinned) {
+    const bar = mkEl('div', 'hovercard-top');
+    const close = mkEl('button', 'hovercard-close', '×');
+    close.type = 'button';
+    close.title = t('graphClose');
+    close.setAttribute('aria-label', t('graphClose'));
+    // 必须带 force：此时 cardPinned 为真，hideCommitCard 不加 force 会直接 return，按钮成摆设
+    close.addEventListener('click', () => hideCommitCard(true));
+    bar.appendChild(close);
+    box.appendChild(bar);
+  }
 
   box.appendChild(mkEl('h2', '', item.subject || t('graphNoSubject')));
 
@@ -1922,10 +1954,27 @@ function renderCommitCard(vm, files) {
   return box;
 }
 
+// 指针位置要随时记着：hideCommitCard 收起卡片时拿它当"哪一次 mouseover 该被吃掉"的基准
+document.addEventListener('mousemove', (e) => {
+  lastPointer = { x: e.clientX, y: e.clientY };
+});
+
 // 鼠标移过某一行就弹卡；移开时给 120ms 宽限再收——不留宽限的话，从行移向卡片的那段空隙
 // 会把它闪掉，而"贴着光标"的卡片本来就常常需要把鼠标移进去看更多内容
 graphListEl.addEventListener('mouseover', (e) => {
   if (!cardOpen || cardPinned) return;
+  // 卡片刚收起时，指针下方的元素由卡片换成了泳道图的行，浏览器会就地补派一次 mouseover，
+  // 坐标与收起时几乎相同——认了它就是"点 × 关了又弹"。只吃掉这一次。
+  // 判据用坐标而不是"等指针移动"：mouseover 可能先于 mousemove 派发，那种顺序下"等移动解除"
+  // 会把用户在别的行上的第一次悬停一起吃掉（实测踩过：卡片再也弹不出来）
+  if (
+    hoverSuppressAt &&
+    Math.abs(e.clientX - hoverSuppressAt.x) <= 2 &&
+    Math.abs(e.clientY - hoverSuppressAt.y) <= 2
+  ) {
+    return;
+  }
+  hoverSuppressAt = null;
   const row = e.target.closest('.g-row');
   if (!row) return;
   const vm = graphItems.find((v) => v.item.hash === row.dataset.hash);
