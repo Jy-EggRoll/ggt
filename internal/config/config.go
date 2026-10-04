@@ -52,9 +52,6 @@ type Config struct {
 	// 对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme
 	ThemeDark  string `mapstructure:"theme_dark" json:"theme_dark"`
 	ThemeLight string `mapstructure:"theme_light" json:"theme_light"`
-	// GraphDetailWidth 是分支图右侧详情面板的宽度（像素），由页面拖拽分隔条写回。
-	// 0 表示"没配过"，由 applyConfigDefaults 补成默认值
-	GraphDetailWidth int `mapstructure:"graph_detail_width" json:"graph_detail_width"`
 }
 
 // getConfigPath 计算配置文件的默认路径，失败时返回 error 而不终止进程。
@@ -215,11 +212,6 @@ func applyConfigDefaults(cfg *Config) {
 	}
 	if strings.TrimSpace(cfg.ThemeLight) == "" {
 		cfg.ThemeLight = defaultStringOf("theme_light")
-	}
-	// 宽度用 <= 0 判"没配过"：配置文件里手写成 0 或负数都当作没配，
-	// 而不是把一个放不下内容的宽度交给页面
-	if cfg.GraphDetailWidth <= 0 {
-		cfg.GraphDetailWidth = defaultIntOf("graph_detail_width")
 	}
 	if cfg.RepoPaths == nil {
 		cfg.RepoPaths = []string{}

@@ -48,13 +48,6 @@ const (
 	maxBucketMB    = 1_000_000
 )
 
-// 分支图详情面板的宽度区间（像素）。区间是导出给页面用的：拖拽调宽时页面按同一对上下限夹住，
-// 否则两边各写一份数字，拖到头就会出现"页面上还能再拖、写进配置却被判非法"
-const (
-	MinGraphDetailWidth = 240
-	MaxGraphDetailWidth = 800
-)
-
 // Setting 描述一个配置项。
 type Setting struct {
 	// Key 与配置文件里的 JSON 键完全一致（snake_case），不引入第二套命名。
@@ -148,16 +141,6 @@ var settings = []Setting{
 		Default:  theme.DefaultLightID,
 		Expected: "a theme id used when following the system and the system is light",
 		Parse:    parseTheme,
-	},
-	{
-		// 分支图右侧详情面板的宽度，由页面拖拽分隔条写回。它是像素值而不是比例：
-		// 图那一侧的可用宽度取决于窗口，比例会让"宽窗口下详情面板特别宽"，
-		// 而详情面板的内容（哈希、作者、文件列表）宽度需求是固定的
-		Key:      "graph_detail_width",
-		Kind:     KindInt,
-		Default:  340,
-		Expected: "an integer between 240 and 800 (pixels)",
-		Parse:    parseGraphDetailWidth,
 	},
 	{
 		Key:       "repo_paths",
@@ -266,18 +249,6 @@ func parseLanguage(s string) (any, error) {
 // 也可以是外部主题文件的绝对路径
 func parseTheme(s string) (any, error) {
 	return strings.TrimSpace(s), nil
-}
-
-// parseGraphDetailWidth 解析分支图详情面板的宽度。
-//
-// 与其它整数项不同，它连下限一起管住（那些只用一个 parsePositiveInt 的上界）：面板太窄放不下
-// 哈希与文件路径，太宽就把它左边的图挤没了，两个方向的越界都是明确的输入错误
-func parseGraphDetailWidth(s string) (any, error) {
-	n, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil || n < MinGraphDetailWidth || n > MaxGraphDetailWidth {
-		return nil, ErrInvalidValue
-	}
-	return n, nil
 }
 
 // parseLogLevel 解析诊断日志级别。

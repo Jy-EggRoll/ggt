@@ -13,7 +13,6 @@ import (
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
-	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/jy-eggroll/ggt/internal/git"
 )
 
@@ -35,11 +34,9 @@ type uiLogResponse struct {
 	Head     string `json:"head"`
 	Branch   string `json:"branch"`
 	Upstream string `json:"upstream"`
-	// DetailWidth 与它的上下限：页面据此摆好详情面板，并把拖拽夹在同一个区间里——
-	// 区间只有 config 那一处定义，避免"页面上还能拖、写进配置却被判非法"
-	DetailWidth    int `json:"detailWidth"`
-	MinDetailWidth int `json:"minDetailWidth"`
-	MaxDetailWidth int `json:"maxDetailWidth"`
+	// Branches 是本地分支名（升序），供卡片顶栏的分支选择器用。顺带在这一次请求里给出，
+	// 而不是让页面再打一个接口：两者本来就要一起用，多一次往返只会多一次闪烁
+	Branches []string `json:"branches"`
 	// MaxLimit 是单次采集的上限，页面据此知道"继续加载"什么时候该停（上限只有一处定义）
 	MaxLimit int `json:"maxLimit"`
 }
@@ -135,16 +132,21 @@ func (c *uiCache) handleLog(w http.ResponseWriter, r *http.Request) {
 	branch, upstream, head := git.CurrentRefs(ctx, repo.Path)
 	viewModels := git.LayoutHistory(items, branch, upstream, head)
 
+	// 分支列表读不出来时不影响图：选择器退化成"只有当前分支"这一个选项
+	branches, err := git.LocalBranches(ctx, repo.Path)
+	if err != nil {
+		logger.Warn(l10n.T("Failed to list the branches", nil), "path", repo.Path, "error", err)
+		branches = []string{}
+	}
+
 	resp := uiLogResponse{
-		Items:          make([]uiLogItem, 0, len(viewModels)),
-		Total:          total,
-		Head:           head,
-		Branch:         branch,
-		Upstream:       upstream,
-		DetailWidth:    graphDetailWidth(),
-		MinDetailWidth: config.MinGraphDetailWidth,
-		MaxDetailWidth: config.MaxGraphDetailWidth,
-		MaxLimit:       graphMaxLimit,
+		Items:    make([]uiLogItem, 0, len(viewModels)),
+		Total:    total,
+		Head:     head,
+		Branch:   branch,
+		Upstream: upstream,
+		Branches: branches,
+		MaxLimit: graphMaxLimit,
 	}
 	for _, vm := range viewModels {
 		resp.Items = append(resp.Items, uiLogItem{
@@ -186,42 +188,6 @@ func (c *uiCache) handleCommitFiles(w http.ResponseWriter, r *http.Request) {
 		resp.Deletions += f.Dels
 	}
 	writeUIGraphJSON(w, http.StatusOK, resp)
-}
-
-// handleGraphPref 写分支图的偏好：目前只有详情面板的宽度（拖拽分隔条后写回）
-func (c *uiCache) handleGraphPref(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeUIGraphJSON(w, http.StatusMethodNotAllowed, uiGraphError{Error: l10n.T("Only POST is allowed", nil)})
-		return
-	}
-	var req struct {
-		Width int `json:"width"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeUIGraphJSON(w, http.StatusBadRequest, uiGraphError{Error: l10n.T("Invalid request body", nil)})
-		return
-	}
-	// 区间只有一处定义（config 里那对常量），页面上拖拽时夹的是同一对值
-	if req.Width < config.MinGraphDetailWidth || req.Width > config.MaxGraphDetailWidth {
-		writeUIGraphJSON(w, http.StatusBadRequest, uiGraphError{Error: l10n.T("Panel width out of range", nil)})
-		return
-	}
-	if err := config.SetKey("graph_detail_width", req.Width); err != nil {
-		writeUIGraphJSON(w, http.StatusInternalServerError, uiGraphError{Error: err.Error()})
-		return
-	}
-	writeUIGraphJSON(w, http.StatusOK, uiGraphError{})
-}
-
-// graphDetailWidth 读详情面板宽度。配置文件里没有该键时 IntAt 会给注册表里的默认值；
-// 真读不出来（键没登记、值类型不对）时返回 0，页面只在大于 0 时采用这个值，
-// 于是它会用自己的默认宽度——这里不再抄一份默认值
-func graphDetailWidth() int {
-	n, err := config.IntAt(config.GetDefaultConfigPath(), "graph_detail_width")
-	if err != nil {
-		return 0
-	}
-	return n
 }
 
 // validHash 判断一个提交哈希是否可信：只允许十六进制、长度 4..64

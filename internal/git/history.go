@@ -120,6 +120,24 @@ func parseHistoryLog(out string, refs map[string][]HistoryRef) []HistoryItem {
 	return items
 }
 
+// LocalBranches 列出现在本地全部分支名，按名字升序（git 的 for-each-ref 默认就按 refname 排）。
+//
+// 分支选择器用它：只列本地分支——切到远程分支得先建跟踪分支，那是另一件事，
+// 替用户决定"要不要顺手建一个"代价很高（建错对象要手动收拾）
+func LocalBranches(ctx context.Context, repoPath string) ([]string, error) {
+	out, err := RunContext(ctx, repoPath, "for-each-ref", "--format=%(refname:short)", "refs/heads")
+	if err != nil {
+		return nil, err
+	}
+	names := []string{}
+	for _, line := range strings.Split(out, "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
 // CommitFile 是一个提交里某个文件的改动量
 type CommitFile struct {
 	// Path 是改动后的路径；重命名时 OrigPath 是旧路径

@@ -88,6 +88,23 @@ var cssVarNames = map[string]string{
 	"scmGraph.foreground5":               "scm-graph-fg5",
 	"scmGraph.historyItemRefColor":       "scm-graph-ref",
 	"scmGraph.historyItemRemoteRefColor": "scm-graph-remote-ref",
+
+	// 状态与控件层级：禁用前景、错误/警告/信息三种语义色、工具栏按钮的 hover、
+	// 列表选中底色、键帽三件套、输入框占位符。取值逐条照抄上游注册表（见 defaults.json 的注释），
+	// 它们都是"别处借不到"的语义——例如错误文本原先借的是 git-conflicting（"文件有合并冲突"）
+	"disabledForeground":             "disabled-fg-token",
+	"editorError.foreground":         "status-error",
+	"editorWarning.foreground":       "status-warn",
+	"editorInfo.foreground":          "status-info",
+	"toolbar.hoverBackground":        "toolbar-hover-bg",
+	"list.activeSelectionBackground": "list-selected-bg",
+	"keybindingLabel.background":     "kbd-bg",
+	"keybindingLabel.foreground":     "kbd-fg",
+	"keybindingLabel.border":         "kbd-border",
+	"input.placeholderForeground":    "input-placeholder",
+	// 浮层边框：上游默认是 null（深/浅两档都没值），因此它只做映射、不进 defaults.json——
+	// 样式表里写成 var(--editor-widget-border, var(--card-border))，缺值时自然回落到卡片边框
+	"editorWidget.border": "editor-widget-border",
 }
 
 // themeOwnVars 是 VSCode 里没有对应物的自有令牌，按明暗两套给出取值。
@@ -266,6 +283,9 @@ var contrastPairs = map[string][]string{
 	"dropdown-fg":      {"dropdown-bg"},
 	"input-fg":         {"input-bg"},
 	"badge-fg":         {"badge-bg"},
+	// 键入提示的键帽与输入框占位符也要能读出来：它们同样是"前景压在底色上"
+	"kbd-fg":            {"kbd-bg"},
+	"input-placeholder": {"input-bg"},
 }
 
 // applyContrastFixes 在对比度实在不够时只调前景色的明度，返回调整过的项数。

@@ -576,6 +576,8 @@ type uiWriteRequest struct {
 	File string `json:"file"`
 	// Message 是提交信息，仅提交使用
 	Message string `json:"message"`
+	// Branch 是分支名，仅切换分支使用
+	Branch string `json:"branch"`
 }
 
 // uiWriteResult 是四个写端点的统一响应。
@@ -692,22 +694,108 @@ func (c *uiCache) handlePush(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleFetch 手动拉取全部仓库的远程数据（每个仓库一次 git fetch --all --prune）。
+// handleStageAll 暂存整个仓库的改动（看板上「未暂存的改动」那一行右边的 + 按钮）。
 //
-// 为什么是"全部仓库"一个动作而不是每个仓库一个按钮：这个按钮是 autofetch 的替代，
-// 要解决的问题是"把远程的新情况一次性拿回来"；逐仓库排一排按钮只会让看板变吵，
-// 而拉取某一个仓库在终端里更顺手
+// 与单个文件的按钮保持一致：存在未合并文件时拒绝。git add -A 会把还带着冲突标记的文件一起
+// 暂存进去，而"点一下全部暂存"正是最容易在没注意时把冲突标记提交进去的操作
+func (c *uiCache) handleStageAll(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
+		for _, f := range repo.Files {
+			if f.Unmerged {
+				return "", &uiParamError{
+					http.StatusConflict,
+					l10n.T("There are unmerged files; resolve them before staging everything", nil),
+				}
+			}
+		}
+		// add -A 而不是 add：工作区删除的文件也要能暂存（与单文件那条同样的理由）
+		return git.RunCombinedContext(ctx, repo.Path, "add", "-A")
+	})
+}
+
+// handleUnstageAll 取消暂存整个仓库（看板上「已暂存的改动」那一行右边的 − 按钮）。
+//
+// 用不带 HEAD、不带路径的 git reset：实测在"尚无提交"的仓库上 reset HEAD 会失败
+// （fatal: ambiguous argument 'HEAD'），而那种仓库恰恰最需要这个按钮——刚 add 完、还没第一次提交
+func (c *uiCache) handleUnstageAll(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
+		return git.RunCombinedContext(ctx, repo.Path, "reset", "-q")
+	})
+}
+
+// handleCheckout 切换分支。
+//
+// 工作区有未提交改动时直接拒绝：git checkout 在这种状态下常常"成功"——它把改动原样带到另一个
+// 分支上，用户以为切干净了，其实改动跟了过来，之后切回去又是一堆意外。拒绝之后由用户决定
+// 是提交、暂存还是丢弃
+func (c *uiCache) handleCheckout(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error) {
+		branch := strings.TrimSpace(req.Branch)
+		if branch == "" {
+			return "", &uiParamError{http.StatusBadRequest, l10n.T("A branch name is required", nil)}
+		}
+		// 分支名会进 git 的命令行：以 - 开头的会被当成选项（例如 -f 是强制切走、丢弃改动）
+		if strings.HasPrefix(branch, "-") || strings.ContainsAny(branch, " \t\n") {
+			return "", &uiParamError{http.StatusBadRequest, l10n.T("Invalid branch name", nil)}
+		}
+		if len(repo.Files) > 0 {
+			return "", &uiParamError{
+				http.StatusConflict,
+				l10n.T("The working tree has uncommitted changes; commit or stash them before switching branches", nil),
+			}
+		}
+		return git.RunCombinedContext(ctx, repo.Path, "checkout", branch)
+	})
+}
+
+// handlePull 拉取当前分支（--ff-only，与 ggt sync 的语义一致）。
+//
+// 不替用户合并或变基：--ff-only 在历史分叉时会失败并把 git 的原话交出来，
+// 而那正是用户需要看到的信息（要不要 rebase 还是 merge，由他决定）
+func (c *uiCache) handlePull(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
+		return git.RunCombinedContext(ctx, repo.Path, "pull", "--ff-only")
+	})
+}
+
+// handleSync 对应 VSCode 的"同步"：先 pull --ff-only，成功之后再 push。
+//
+// 两步串行而不是并行：pull 失败（本地分叉、没配 upstream）时不该再推一次——
+// 那会把"同步失败"变成"推了一半"，用户更难判断当前处在什么状态
+func (c *uiCache) handleSync(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
+		pullOut, err := git.RunCombinedContext(ctx, repo.Path, "pull", "--ff-only")
+		if err != nil {
+			return pullOut, err
+		}
+		pushOut, err := git.RunCombinedContext(ctx, repo.Path, "push")
+		if err != nil {
+			return pullOut + pushOut, err
+		}
+		return pullOut + pushOut, nil
+	})
+}
+
+// handleFetch 手动拉取远程数据：带 repo 就只拉那一个仓库（仓库卡片顶栏的按钮），
+// 不带就拉快照里的全部仓库（看板底栏的按钮）。每个仓库跑一次 git fetch --all --prune。
+//
+// 一个端点两种范围，而不是两个端点：命令、并发方式与响应形状完全一样，差别只在"对哪些仓库跑"，
+// 拆成两个端点等于把这段逻辑抄两遍
 //
 // 并发跑：与 ggt sync 共用 worker.Map 与同一个并发度设置。串行做几十个远程仓库要等到
 // 地老天荒，并发下总耗时约等于最慢的那一个
 //
-// 不复用 handleWrite 那套骨架：那个是"针对某一个仓库"的（要从请求里取 repo、校验文件），
-// 这里对快照里的全部仓库各跑一次，硬套会让它多出一个"仓库为空即全部"的隐式约定
+// 不复用 handleWrite 那套骨架：那个是"针对某一个仓库、且仓库必填"的（要从请求里取 repo、
+// 校验文件），而这里允许对全部仓库跑，硬套会让它多出一个"仓库为空即全部"的隐式约定
 func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeUIWrite(w, http.StatusMethodNotAllowed, uiWriteResult{Error: l10n.T("Only POST is allowed", nil)})
 		return
 	}
+
+	// body 是可选的：看板底栏那个按钮发的是空 body，解析失败（EOF）即当作"全部仓库"
+	var req uiWriteRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	// 只需要仓库名与错误文本，不需要更多字段；outcome 保持按仓库顺序返回（worker.Map 保序）
 	type outcome struct {
@@ -715,6 +803,14 @@ func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
 		err  string
 	}
 	repos := c.repos().Repos
+	if strings.TrimSpace(req.Repo) != "" {
+		repo, ok := findUIRepo(c.repos(), req.Repo)
+		if !ok {
+			writeUIWrite(w, http.StatusNotFound, uiWriteResult{Error: l10n.T("Unknown repository", nil)})
+			return
+		}
+		repos = []uiRepo{*repo}
+	}
 	outcomes := worker.Map(r.Context(), repos, Concurrency(), func(ctx context.Context, repo uiRepo) outcome {
 		// 用 RunCombinedContext：失败原因在 git 的 stderr 里，err 本身只是 "exit status N"
 		out, err := git.RunCombinedContext(ctx, repo.Path, "fetch", "--all", "--prune")
@@ -833,17 +929,23 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	// Origin/Referer 同源校验，再限 body 大小，写请求的 CSRF 面由那一层负责
 	mux.HandleFunc("/api/stage", cache.handleStage)
 	mux.HandleFunc("/api/unstage", cache.handleUnstage)
+	// 整仓的暂存 / 取消暂存：看板上两个分组标题行右边的按钮
+	mux.HandleFunc("/api/stage-all", cache.handleStageAll)
+	mux.HandleFunc("/api/unstage-all", cache.handleUnstageAll)
 	mux.HandleFunc("/api/commit", cache.handleCommit)
 	mux.HandleFunc("/api/push", cache.handlePush)
+	// 仓库卡片顶栏上的三个仓库级动作：切换分支、拉取当前分支、同步（pull --ff-only + push）
+	mux.HandleFunc("/api/checkout", cache.handleCheckout)
+	mux.HandleFunc("/api/pull", cache.handlePull)
+	mux.HandleFunc("/api/sync", cache.handleSync)
 	// 拉取是"对全部仓库"的一次行动，因此单独一个端点，不挂在某个仓库上
 	mux.HandleFunc("/api/fetch", cache.handleFetch)
 	// 换主题是把选择写进配置文件，同样只在 POST 上
 	mux.HandleFunc("/api/theme", cache.handleTheme)
-	// 分支图：只读的提交历史 + 一个提交的文件列表；/api/graph-pref 是它唯一的写端点
-	// （拖拽详情面板宽度后写回配置），同样只认 POST
+	// 分支图：提交历史与一个提交的文件列表，都是只读的。仓库操作（切分支、拉取、同步等）
+	// 另有各自的端点，见上面那几行
 	mux.HandleFunc("/api/log", cache.handleLog)
 	mux.HandleFunc("/api/commit-files", cache.handleCommitFiles)
-	mux.HandleFunc("/api/graph-pref", cache.handleGraphPref)
 
 	// 页面自己不会说"当前语言是哪个"，由 Go 端把语言写进两个占位符：
 	//   - __GGT_LANG_VALUE__ 供页面内翻译表选语言
