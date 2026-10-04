@@ -7,12 +7,17 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/jy-eggroll/ggt/internal/git"
 )
 
@@ -122,4 +127,113 @@ func initDiffTestRepo(t *testing.T) string {
 	git("add", "-A")
 
 	return dir
+}
+
+// TestHandleDiffCommitMode 断言提交视图的四条路：整条提交、单个文件、不在该提交改动清单里的
+// 路径（404）、非法哈希（400）。
+//
+// 后两条不只是"输入校验"：哈希会直接进 git 的命令行，路径决定能读到仓库里的哪个文件。
+// 浏览器验收走的是正常路径，拒绝路径用单测钉住更省事，也才敢改这段代码
+func TestHandleDiffCommitMode(t *testing.T) {
+	// 隔离配置：快照采集读的是包级 cfg，这里直接换成只含临时仓库的那一份（同 withConfig），
+	// HOME 也一并隔离，免得采集过程中顺带读了开发者自己的配置文件
+	t.Setenv("HOME", t.TempDir())
+	repo := initDiffTestRepo(t)
+	withConfig(t, &config.Config{RepoPaths: []string{repo}})
+	hash := gitOut(t, repo, "rev-parse", "HEAD")
+
+	cache := &uiCache{ctx: context.Background()}
+	cases := []struct {
+		name   string
+		query  url.Values
+		status int
+		check  func(t *testing.T, out uiDiff)
+	}{
+		{
+			name:   "整条提交",
+			query:  url.Values{"commit": {hash}},
+			status: http.StatusOK,
+			check: func(t *testing.T, out uiDiff) {
+				if out.Commit != hash {
+					t.Errorf("响应里的提交是 %q，期望 %q", out.Commit, hash)
+				}
+				if len(out.Sections) != 1 || out.Sections[0].Kind != diffKindCommit {
+					t.Fatalf("提交视图应当只有一段 kind=%s：%+v", diffKindCommit, out.Sections)
+				}
+				// 路径与行数来自 git.CommitFiles，页面靠它与正文按下标对齐
+				if len(out.Sections[0].Files) == 0 || out.Sections[0].Text == "" {
+					t.Errorf("正文或文件清单为空：%+v", out.Sections[0])
+				}
+			},
+		},
+		{
+			name:   "单个文件",
+			query:  url.Values{"commit": {hash}, "file": {"keep.txt"}},
+			status: http.StatusOK,
+			check: func(t *testing.T, out uiDiff) {
+				if out.File != "keep.txt" {
+					t.Errorf("文件应当是 keep.txt，实得 %q", out.File)
+				}
+				if len(out.Sections) != 1 || !strings.Contains(out.Sections[0].Text, "keep.txt") {
+					t.Errorf("正文里没有这个文件：%+v", out.Sections)
+				}
+			},
+		},
+		{
+			// 这条提交里没有这个文件：既挡住路径穿越，也挡住"拿别的提交的文件名来问"
+			name:   "不在该提交里的路径",
+			query:  url.Values{"commit": {hash}, "file": {"不存在的文件.txt"}},
+			status: http.StatusNotFound,
+		},
+		{
+			// 带前导 - 的字符串直接进 git 命令行就是一次参数注入
+			name:   "非法哈希",
+			query:  url.Values{"commit": {"--upload-pack=touch /tmp/pwned"}},
+			status: http.StatusBadRequest,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := url.Values{"repo": {repo}}
+			for k, v := range c.query {
+				q[k] = v
+			}
+			req := httptest.NewRequest(http.MethodGet, "/api/diff?"+q.Encode(), nil)
+			rec := httptest.NewRecorder()
+			cache.handleDiff(rec, req)
+
+			if rec.Code != c.status {
+				t.Fatalf("状态码应为 %d，实得 %d（%s）", c.status, rec.Code, rec.Body.String())
+			}
+			var out uiDiff
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatalf("响应不是合法 JSON：%v（%s）", err, rec.Body.String())
+			}
+			if c.status != http.StatusOK && out.Error == "" {
+				t.Errorf("失败响应应当带上原因：%s", rec.Body.String())
+			}
+			if c.check != nil {
+				c.check(t, out)
+			}
+		})
+	}
+}
+
+// gitOut 在指定仓库里跑一条 git 命令并返回标准输出。
+// 夹具仓库由 initDiffTestRepo 造好，环境变量与它保持一致（不读全局配置）
+func gitOut(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=ggt", "GIT_AUTHOR_EMAIL=ggt@example.com",
+		"GIT_COMMITTER_NAME=ggt", "GIT_COMMITTER_EMAIL=ggt@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v 失败：%v", args, err)
+	}
+	return strings.TrimSpace(string(out))
 }
