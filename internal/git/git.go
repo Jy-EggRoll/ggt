@@ -4,6 +4,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -95,6 +96,87 @@ func runWithOutputEnv(ctx context.Context, repoPath string, extraEnv []string, a
 		return "", err
 	}
 	return string(output), nil
+}
+
+// runWithRecordLimit 执行 git 命令，边读边数输出里的 NUL 记录，一旦记录数超过 limit 就
+// 立刻杀掉子进程，只返回已经读到的那部分内容（截到完整记录为止），并报告本次是否因为
+// 超限而提前终止。
+//
+// 为什么需要它：git status 遇到海量未跟踪文件时（典型是忘了写 .gitignore 的 node_modules）
+// 输出可达几十 MB，而 runWithOutputEnv 走的是 cmd.Output()，会把整份输出一次性读进内存，
+// 没有任何上限。上游 VSCode 对同一问题采用的做法就是流式解析加超限杀进程（git.ts:2784-2793，
+// 默认 10000 条，limit 取 0 表示不限制），并把已经解析到的部分照常返回、把 didHitLimit
+// 一路报到界面。本函数对齐的就是这套语义。
+//
+// 计数口径有一处刻意的简化：这里数的是 NUL 记录数，而不是像上游那样数解析之后的条目数。
+// 重命名与复制（porcelain v2 的 "2" 记录）在 -z 下会多带一条旧路径记录，于是这类仓库的
+// 条目数略少于记录数，截断点会比上游稍早一点。对"防止内存被撑爆"这个目的而言可以接受；
+// 真要精确到条目，就得在这里内联一份解析逻辑，那等于把 ParseStatus 抄成两份。
+//
+// 与上游的另一处差别：上游按 limit 条做切片，这里按 limit 条记录裁掉多余的读取块——
+// 一个 32KB 的读取块可能一次装进上千条短记录，不裁的话返回的条目数会明显多于上限，
+// 界面上显示的数量就和"上限"这个说法对不上了。
+func runWithRecordLimit(ctx context.Context, repoPath string, extraEnv []string, limit int, args ...string) (string, bool, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoPath
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), extraEnv...)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", false, err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", false, err
+	}
+
+	var buf []byte
+	records := 0
+	hitLimit := false
+	chunk := make([]byte, 32*1024)
+	for {
+		n, readErr := stdout.Read(chunk)
+		if n > 0 {
+			buf = append(buf, chunk[:n]...)
+			records += bytes.Count(chunk[:n], []byte{0})
+			// 超限即杀：继续读完只会把正要防的那份内存吃进来
+			if limit > 0 && records > limit {
+				hitLimit = true
+				_ = cmd.Process.Kill()
+				break
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
+
+	// 杀进程之后 Wait 返回的是信号错误，那正是本函数想要的路径，不能当失败上报；
+	// 只有"没超限却退出异常"才是真的失败（含 ctx 取消导致的终止）
+	waitErr := cmd.Wait()
+	if hitLimit {
+		return string(trimNulRecords(buf, limit)), true, nil
+	}
+	if waitErr != nil {
+		return "", false, waitErr
+	}
+	return string(buf), false, nil
+}
+
+// trimNulRecords 把缓冲区裁到前 limit 条 NUL 记录（含每条记录结尾的那个 NUL）。
+// 截断处若落在半条记录上，ParseStatus 会把它当成一条新记录解析，因此必须按 NUL 边界裁。
+func trimNulRecords(buf []byte, limit int) []byte {
+	if limit <= 0 {
+		return buf
+	}
+	off := 0
+	for i := 0; i < limit; i++ {
+		j := bytes.IndexByte(buf[off:], 0)
+		if j < 0 {
+			return buf
+		}
+		off += j + 1
+	}
+	return buf[:off]
 }
 
 // runWithCombinedOutput 执行 git 命令并捕获 stdout + stderr。

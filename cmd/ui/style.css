@@ -1211,6 +1211,32 @@ pre.diff .meta { color: var(--text-dim); }
   outline: 1px solid var(--focus-ring);
   outline-offset: -1px;
 }
+
+/*
+ * 圆点的描边与 HEAD 内圈的填充。这两件事为什么不在 app.js 里画：
+ * 它们的颜色必须等于"这一行当前坐在什么底色上"——描边是给圆点镶一圈底色、把穿过它的连线
+ * 压住；HEAD 内圈是拿底色在实心点上"挖"一个洞，洞的颜色当然也得是行底色。而行底色会随
+ * hover（--hover-bg）与选中（--list-selected-bg）变化，写在 JS 里只会拿到初始值，鼠标一
+ * 经过就露出一圈不跟着变的色边。上游同样交给样式表，且四组状态各写一遍（scm.css 的
+ * .graph > circle、circle:first-of-type、circle:nth-of-type(2)、circle:last-child）
+ *
+ * 底色取 panel-bg（editorWidget.background）而不是 card-bg（sideBar.background）：上游的图
+ * 长在侧边栏里，所以它用 sideBar.background；ggt 的图长在浮层卡片里，卡片正文的底色是
+ * --panel-bg（见 .overlay 的 background），照搬令牌名反而会镶错色
+ *
+ * hover 时首个圆点的描边转为透明、由第二个圆点接管：第一个是带泳道色的外圈，行底色一变，
+ * 它那圈旧底色就会显成一道亮边；上游的做法是让它在 hover 态干脆不描边，把描边交给里圈
+ */
+.g-row .lanes svg circle { stroke: var(--panel-bg, var(--bg)); }
+.g-row .lanes svg circle:last-child { fill: var(--panel-bg, var(--bg)); }
+.g-row:hover .lanes svg circle:first-of-type { stroke: transparent; }
+.g-row:hover .lanes svg circle:nth-of-type(2) { stroke: var(--hover-bg); }
+.g-row:hover .lanes svg circle:last-child { fill: var(--hover-bg); }
+.g-row.selected .lanes svg circle:first-of-type { stroke: transparent; }
+.g-row.selected .lanes svg circle:nth-of-type(2) {
+  stroke: var(--list-selected-bg, var(--hover-bg));
+}
+.g-row.selected .lanes svg circle:last-child { fill: var(--list-selected-bg, var(--hover-bg)); }
 /* 泳道列固定宽度（按已加载行里最宽的泳道算），标题因此左边缘对齐；
    SVG 在里面左对齐，泳道少的行不会被拉宽 */
 .g-row .lanes { flex: none; height: var(--row-h); }
