@@ -76,6 +76,18 @@ var cssVarNames = map[string]string{
 
 	"diffEditor.insertedLineBackground": "diff-add-bg",
 	"diffEditor.removedLineBackground":  "diff-del-bg",
+
+	// 分支图：泳道配色与引用配色用的是 VSCode 源码管理图那一套令牌（scmHistory.ts 的
+	// colorRegistry 与三个 historyItem*RefColor）。五个前景色是上游写死的字面值，
+	// 两个引用色一路引用到 charts.blue/purple → editorInfo.foreground，最终值同样照抄，
+	// 见 internal/theme/defaults.json
+	"scmGraph.foreground1":               "scm-graph-fg1",
+	"scmGraph.foreground2":               "scm-graph-fg2",
+	"scmGraph.foreground3":               "scm-graph-fg3",
+	"scmGraph.foreground4":               "scm-graph-fg4",
+	"scmGraph.foreground5":               "scm-graph-fg5",
+	"scmGraph.historyItemRefColor":       "scm-graph-ref",
+	"scmGraph.historyItemRemoteRefColor": "scm-graph-remote-ref",
 }
 
 // themeOwnVars 是 VSCode 里没有对应物的自有令牌，按明暗两套给出取值。

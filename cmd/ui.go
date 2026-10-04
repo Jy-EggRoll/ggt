@@ -839,6 +839,11 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	mux.HandleFunc("/api/fetch", cache.handleFetch)
 	// 换主题是把选择写进配置文件，同样只在 POST 上
 	mux.HandleFunc("/api/theme", cache.handleTheme)
+	// 分支图：只读的提交历史 + 一个提交的文件列表；/api/graph-pref 是它唯一的写端点
+	// （拖拽详情面板宽度后写回配置），同样只认 POST
+	mux.HandleFunc("/api/log", cache.handleLog)
+	mux.HandleFunc("/api/commit-files", cache.handleCommitFiles)
+	mux.HandleFunc("/api/graph-pref", cache.handleGraphPref)
 
 	// 页面自己不会说"当前语言是哪个"，由 Go 端把语言写进两个占位符：
 	//   - __GGT_LANG_VALUE__ 供页面内翻译表选语言

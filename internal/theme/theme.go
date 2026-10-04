@@ -99,6 +99,10 @@ var builtinFS embed.FS
 //	widget.shadow                                        src/vs/platform/theme/common/colors/editorColors.ts
 //	diffEditor.{inserted,removed}LineBackground          src/vs/platform/theme/common/colors/editorColors.ts
 //	sideBar.background                                   src/vs/workbench/common/theme.ts
+//	scmGraph.foreground1..5                              src/vs/workbench/contrib/scm/browser/scmHistory.ts 的 colorRegistry
+//	scmGraph.historyItemRefColor / RemoteRefColor        scmHistory.ts 里引用 charts.blue / charts.purple，
+//	                                                     最终落在 editorInfo.foreground（baseColors.ts）与
+//	                                                     charts.purple（chartsColors.ts）两个字面值上
 //	gitDecoration.*                                      extensions/git/package.json 的 contributes.colors[].defaults
 //	ggt.*                                               本项目自有，VSCode 无对应物（见 cmd/ui_theme.go 的 themeOwnVars）
 //

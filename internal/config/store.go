@@ -247,6 +247,34 @@ func EffectiveAt(path, key string) (any, error) {
 	return v, nil
 }
 
+// IntAt 读一个整数配置项（配置文件里没有该键时给注册表登记的默认值）。
+//
+// 为什么需要一个专门的函数：parseRaw 用 json.Number 保留数字字面量（避免大整数被 float64
+// 静默改写），于是从 EffectiveAt 拿到的是 json.Number 而不是 int。各处自己写类型断言的写法
+// 迟早会漏掉某一种形态——实测就漏过 json.Number，表现为"配置里明明写着 380，读出来却是默认值"，
+// 而这种漏法不会报错，只会静默回退
+func IntAt(path, key string) (int, error) {
+	v, err := EffectiveAt(path, key)
+	if err != nil {
+		return 0, err
+	}
+	switch n := v.(type) {
+	case int:
+		return n, nil
+	case int64:
+		return int(n), nil
+	case float64:
+		return int(n), nil
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0, err
+		}
+		return int(i), nil
+	}
+	return 0, ErrInvalidValue
+}
+
 // SetKey / UnsetKey / ResetAll 是使用默认配置路径的便捷封装，供命令层调用。
 // 核心逻辑一律接受显式路径（上面的 At 变体），测试才能用临时目录而不碰 HOME。
 func SetKey(key string, value any) error {
