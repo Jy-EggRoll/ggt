@@ -139,7 +139,7 @@ func validateKeys(raw map[string]any) []Issue {
 			issues = append(issues, Issue{
 				Level: LevelError,
 				Message: l10n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
-					map[string]any{"Key": s.Key, "Value": text, "Expected": s.Expected}),
+					map[string]any{"Key": s.Key, "Value": text, "Expected": l10n.Retranslate(s.Expected, nil)}),
 			})
 		}
 	}

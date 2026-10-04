@@ -165,24 +165,18 @@ Examples:
 			if !ok {
 				return errUnknownKey(key)
 			}
-			if s.ManagedBy != "" {
-				return errors.New(l10n.T("{{.Key}} is managed by \"{{.Command}}\" and cannot be set here",
-					map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
-			}
 
-			parsed, err := s.Parse(value)
+			// 校验与写入走 config.SetFromTextAt，与网页设置面板是同一份实现。
+			// 最后一个参数为假 = 宽松模式：命令行允许写候选之外的取值，
+			// 例如自定义主题文件的路径，候选只是"能直接点的那几个"
+			written, err := config.SetFromTextAt(config.GetDefaultConfigPath(), s.Key, value, false)
 			if err != nil {
-				return errInvalidValue(s.Key, value, s.Expected)
-			}
-			if err := config.SetKey(s.Key, parsed); err != nil {
 				return err
 			}
 
-			SuccessMsg(l10n.T("{{.Key}} = {{.Value}}", map[string]any{"Key": s.Key, "Value": config.ValueText(parsed)}))
-			if s.Key == "language" {
-				// 语言在进程启动时就由 l10n.Init 定下了，改配置不会影响当前这次输出。
-				// 刻意不在这里重新 Init：那会违反 i18n 包"Init 之后状态只读"的契约
-				InfoMsg(l10n.T("The new language takes effect on the next run", nil))
+			SuccessMsg(l10n.T("{{.Key}} = {{.Value}}", map[string]any{"Key": s.Key, "Value": written}))
+			if note := settingNote(s.Key); note != "" {
+				InfoMsg(note)
 			}
 			return nil
 		},
@@ -369,18 +363,24 @@ Examples:
 // Execute 会识别它并跳过 "Execution failed:" 前缀，避免同一件事提示两遍。
 var errSilent = errors.New("error already reported")
 
+// settingNote 返回某一项写入之后要额外告诉用户的一句话，没有就返回空串。
+//
+// 放在这里而不是各调用方自己写：命令行的 set 与网页设置面板都要说这句话，
+// 各写一份就会出现"命令行提示了、页面却没提示"这种不对称，
+// 而缺了这句话的用户会反复刷新页面等一个永远不会自己生效的改动
+func settingNote(key string) string {
+	if key == "language" {
+		// 语言在进程启动时就由 l10n.Init 定下了，改配置不会影响当前这次输出。
+		// 刻意不在这里重新 Init：那会违反 i18n 包"Init 之后状态只读"的契约
+		return l10n.T("The new language takes effect on the next run", nil)
+	}
+	return ""
+}
+
 // errUnknownKey 生成"未知键"的统一提示，顺带告诉用户怎么列出全部键。
 func errUnknownKey(key string) error {
 	return errors.New(l10n.T("Unknown config key: {{.Key}} (run \"ggt config --help\" to see the available keys)",
 		map[string]any{"Key": key}))
-}
-
-// errInvalidValue 生成"值非法"的统一提示。
-// 所有键的值错误都收敛到这一条模板，中英双语各只需一条文案，
-// 否则文案数量会随校验规则数线性增长。
-func errInvalidValue(key, value, expected string) error {
-	return errors.New(l10n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
-		map[string]any{"Key": key, "Value": value, "Expected": expected}))
 }
 
 // levelTag 返回体检条目的级别标记。

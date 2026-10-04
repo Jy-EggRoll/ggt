@@ -25,8 +25,6 @@
   遇上"只替换第一处"的语义时，先被替换的是注释，真正的注入点反而原样留了下来）
 -->
 <style id="theme">__GGT_THEME_CSS__</style>
-<!-- 主题清单与当前选择：由服务端注入，页面据此搭出主题选择器 -->
-<script>window.__GGT_THEME__ = __GGT_THEME_DATA__;</script>
 <!-- 显式声明一个空图标：不写这一行，浏览器会自动请求 /favicon.ico，而资产里没有这个文件，
      控制台就会留下一条 404。它不影响功能，但会掩盖真正的报错，也让"控制台无报错"这条
      验收断言失去意义 -->
@@ -58,13 +56,18 @@
   <p id="status" role="status" aria-live="polite"></p>
   <span id="op" role="status" aria-live="polite"></span>
   <button id="fetch-btn" class="btn btn--primary" type="button"></button>
-  <!-- 主题选择器：选项由 app.js 按服务端注入的那份清单搭出来（含"跟随系统"与各来源分组） -->
-  <select id="theme-select" disabled></select>
-  <!-- 跟随系统时的深、浅两套偏好，对应 VSCode 的 workbench.preferredDark/LightColorTheme。
-       只在当前选的是"跟随系统"时显示：不跟随时它们不生效，摆在底栏里只会占地方挤掉别的控件。
-       选项同样由 app.js 按注入的清单搭出来（与被隐藏的初值一起，见 buildThemeSelect） -->
-  <select id="theme-dark" disabled hidden></select>
-  <select id="theme-light" disabled hidden></select>
+  <!--
+    设置入口：原来的三个主题下拉框已经整体迁进设置面板（面板由服务端按配置注册表生成），
+    底栏腾出来的位置给它。图标与铃铛同一套做法——内联 SVG + currentColor，颜色只有一个来源
+    （按钮的前景令牌），形状是两条带滑块的横杆：比齿轮更容易用几条路径画准，语义也够清楚
+  -->
+  <button id="settings-btn" class="btn btn--secondary" type="button">
+    <svg class="settings-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M1.5 3.8h7.2v1.4H1.5zM11.3 3.8h3.2v1.4h-3.2zM1.5 10.8h1.2v1.4H1.5zM6.7 10.8h7.8v1.4H6.7z"/>
+      <circle fill="currentColor" cx="9.9" cy="4.5" r="2.1"/>
+      <circle fill="currentColor" cx="4.9" cy="11.5" r="2.1"/>
+    </svg>
+  </button>
   <!--
     通知中心入口，摆在底栏最右端（VSCode 的铃铛也在状态栏右端）。
     未读数写进里面的 .badge，由 app.js 维护：徽标那套几何与配色已有现成样式，不再另写一份。
@@ -166,6 +169,35 @@
   <div id="graph-body">
     <div id="graph-list" tabindex="0"></div>
   </div>
+</div>
+<!--
+  设置面板：底栏的设置按钮打开（VSCode 的设置也从齿轮那样的入口进）。
+  形态与仓库卡片一致——铺满整页的浮层加居中的圆角卡片，关掉就回到刚才看的那一列。
+
+  为什么单独一个面板，而不塞进通知中心或某个卡片里：配置是页面级的东西，与任何一个仓库
+  都无关；挂在仓库卡片上会让"它只对当前仓库生效"变成一种很容易产生的误解。
+
+  为什么排在这里（仓库卡片之后、提交详情卡之前）：它与那两个浮层同层（--z-diff），
+  谁在后谁压在上面。排在其后，于是"在 diff 或仓库卡片开着时点齿轮"打开的面板一定盖得住
+  它们（底栏的层级高于所有浮层，齿轮在那两种情况下本来就点得到），而关掉面板又回到原来那一层。
+
+  骨架写死在这里、每一项由 app.js 按服务端给的元数据生成：骨架与数据无关，而"有哪些配置项"
+  必须由服务端说了算——写死在页面里就意味着每加一项配置都要回来改这个文件
+-->
+<div id="settings" class="overlay" aria-hidden="true">
+  <header>
+    <button id="settings-back" class="btn btn--secondary" type="button"></button>
+    <span id="settings-title"></span>
+    <span id="settings-esc"><kbd>Esc</kbd></span>
+  </header>
+  <!-- 最近一次保存的结果（成功、失败、或"要刷新才生效"）：与 #diff-op、#graph-op 同样的角色。
+       面板正文每次保存后都会重建，提示塞进正文就会被一起冲掉 -->
+  <p id="settings-op"></p>
+  <div id="settings-body"></div>
+  <footer>
+    <span id="settings-path"></span>
+    <button id="settings-save" class="btn btn--primary" type="button" disabled></button>
+  </footer>
 </div>
 <!--
   提交详情卡：鼠标移到泳道图上某条提交时贴着光标出现，点一下即钉住（钉住之后不随鼠标移动消失）。

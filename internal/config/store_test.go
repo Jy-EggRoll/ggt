@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/jy-eggroll/ggt/internal/locales"
 )
 
 // 本文件的测试一律用 t.TempDir() 显式传路径，**绝不依赖 HOME**。
@@ -434,6 +437,198 @@ func TestManagedKeysHaveNoParse(t *testing.T) {
 		}
 		if s.Parse != nil {
 			t.Errorf("%q 不应提供 Parse，否则 set 会绕过 ggt repo 的校验", key)
+		}
+	}
+}
+
+// TestSettingMetadataIsComplete 断言注册表里的元数据自洽。
+//
+// 为什么必须有这条测试：候选清单、整数边界这些元数据都不是编译期能检查的东西，漏填或填错时
+// 构建与其余测试全部通过，问题要到用户打开设置面板时才暴露——表现为"页面上能选，提交后却被
+// 拒收""页面允许填 0，解析器只收正整数"这类自相矛盾。这里遍历全部注册项一次守住，
+// 加新配置项时不需要再补测试用例
+func TestSettingMetadataIsComplete(t *testing.T) {
+	for _, s := range Settings() {
+		// Parse 与 ManagedBy 恰有其一：两者都缺的项写不进去也不说明该由谁管；
+		// 两者都有的项意味着 ManagedBy 那道"不能在这里改"的限制可以被 set 绕过
+		if s.Parse == nil && s.ManagedBy == "" {
+			t.Errorf("%q 既没有 Parse 也没有 ManagedBy：它无法被写入，也没说明该由谁管", s.Key)
+		}
+		if s.Parse != nil && s.ManagedBy != "" {
+			t.Errorf("%q 同时有 Parse 与 ManagedBy：set 会绕过 %s 的校验", s.Key, s.ManagedBy)
+		}
+
+		// 默认值必须能被自己的 Parse 接受，否则 reset --defaults 写出来的文件当场非法
+		if s.Parse != nil {
+			if _, err := s.Parse(ValueText(s.Default)); err != nil {
+				t.Errorf("%q 的默认值 %#v 通不过自己的 Parse：%v", s.Key, s.Default, err)
+			}
+		}
+
+		// 整数边界只对整数项有意义
+		if (s.Min != nil || s.Max != nil) && s.Kind != KindInt {
+			t.Errorf("%q 声明了整数边界，但 Kind 是 %s", s.Key, s.Kind)
+		}
+		if s.Min != nil && s.Max != nil && *s.Min > *s.Max {
+			t.Errorf("%q 的下界 %d 大于上界 %d", s.Key, *s.Min, *s.Max)
+		}
+		if n, ok := s.Default.(int); ok {
+			if s.Min != nil && n < *s.Min {
+				t.Errorf("%q 的默认值 %d 小于下界 %d", s.Key, n, *s.Min)
+			}
+			if s.Max != nil && n > *s.Max {
+				t.Errorf("%q 的默认值 %d 大于上界 %d", s.Key, n, *s.Max)
+			}
+		}
+
+		// AllowCustom 只在有候选时才有意义：没有候选就无所谓"候选之外的写法"
+		if s.AllowCustom && s.Options == nil {
+			t.Errorf("%q 声明了 AllowCustom 却没有候选清单", s.Key)
+		}
+
+		if s.Options == nil {
+			continue
+		}
+		opts := s.Options()
+		if len(opts) == 0 {
+			t.Errorf("%q 的候选清单是空的：要么给出取值，要么别声明 Options（那表示自由输入）", s.Key)
+		}
+		seen := make(map[string]bool, len(opts))
+		for _, o := range opts {
+			if seen[o.Value] {
+				t.Errorf("%q 的候选里 %q 出现了两次", s.Key, o.Value)
+			}
+			seen[o.Value] = true
+
+			// 候选必须能通过自己的 Parse：这正是"页面能选、命令行却拒收"那道漂移的拦路测试
+			if s.Parse == nil {
+				continue
+			}
+			if _, err := s.Parse(o.Value); err != nil {
+				t.Errorf("%q 的候选值 %q 通不过自己的 Parse：%v（页面能选，写入却会被拒）", s.Key, o.Value, err)
+			}
+		}
+	}
+}
+
+// TestLanguageOptionsCoverSupported 断言语言项的候选取值就是随二进制发布的语言，且都带显示名。
+//
+// 它守的不是注册表自洽，而是注册表与 locales 包之间的一致性：语言清单若在两处各写一份，
+// 会出现"l10n 认得一种语言、页面里却选不到"这种没有任何编译错误、也没人会发现的错位
+func TestLanguageOptionsCoverSupported(t *testing.T) {
+	s, ok := Lookup("language")
+	if !ok {
+		t.Fatal("注册表里没有 language")
+	}
+	if s.Options == nil {
+		t.Fatal("language 应有候选清单")
+	}
+
+	labels := map[string]string{}
+	for _, o := range s.Options() {
+		labels[o.Value] = o.Label
+	}
+	supported := locales.Supported()
+	if len(labels) != len(supported) {
+		t.Errorf("语言候选有 %d 项，Supported() 有 %d 项：两处清单已经分叉", len(labels), len(supported))
+	}
+	for _, tag := range supported {
+		label, ok := labels[tag]
+		if !ok {
+			t.Errorf("语言 %q 在 Supported() 里却不在候选中", tag)
+			continue
+		}
+		// 显示名等于标签本身说明 DisplayName 的名称表漏了它、退回了标签
+		if label == "" || label == tag {
+			t.Errorf("语言 %q 缺显示名（实得 %q）：locales 的名称表漏了这一项", tag, label)
+		}
+	}
+}
+
+// TestThemeOptionsEmptyValueRule 断言主题三项的候选与"能不能清空"这条规则一致。
+//
+// theme 的空串是"跟随系统"，是有意义的取值；两个偏好的空串则意味着没配色可渲染。
+// 网页设置面板据此判断该项允不允许清空（候选里有没有空值项），因此这条规则必须锁住——
+// 它一旦松动，写入校验会放空串进来，页面渲染时整页没有颜色
+func TestThemeOptionsEmptyValueRule(t *testing.T) {
+	hasEmptyValue := func(opts []Option) bool {
+		for _, o := range opts {
+			if o.Value == "" {
+				return true
+			}
+		}
+		return false
+	}
+
+	themeSetting, ok := Lookup("theme")
+	if !ok || themeSetting.Options == nil {
+		t.Fatal("theme 应有候选清单")
+	}
+	themeOpts := themeSetting.Options()
+	if !hasEmptyValue(themeOpts) {
+		t.Error("theme 的候选里应有一个空值项，它代表跟随系统")
+	}
+	// 内置主题是 go:embed 进来的，任何时候都该存在。只剩一个空值项说明主题包枚举失败
+	// 或调用方传错了目录，而那种退化光看"有没有空值项"是发现不了的
+	if len(themeOpts) < 2 {
+		t.Errorf("theme 的候选只有 %d 项：内置主题应当总是在列，说明主题枚举已经失效", len(themeOpts))
+	}
+
+	for _, key := range []string{"theme_dark", "theme_light"} {
+		s, ok := Lookup(key)
+		if !ok || s.Options == nil {
+			t.Fatalf("%s 应有候选清单", key)
+		}
+		if hasEmptyValue(s.Options()) {
+			t.Errorf("%s 的候选里不该有空值项：该偏好为空时页面没有配色可渲染", key)
+		}
+	}
+}
+
+// TestConcurrentKeyWritesKeepEveryKey 断言并发写不同的键时不会互相覆盖。
+//
+// 这是 writeMu 的行为级测试。SetKeyAt 是"读整份文件、改一个键、写回"，没有那把锁时两个
+// 并发调用会各自读到旧内容再各写一份，后写的那次把先写的键整个抹掉。断言锁存在（例如
+// 检查某个字段）只能测出"看起来加了锁"，而丢更新这件事只有真的并发写一次才看得见
+func TestConcurrentKeyWritesKeepEveryKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+
+	// 挑类型各不相同的几个键：字符串、布尔、整数都覆盖到
+	writes := map[string]any{
+		"concurrency":        "CPUFull",
+		"log_level":          "debug",
+		"size_unit":          "binary",
+		"language":           "zh-CN",
+		"ignore_submodules":  true,
+		"theme":              "",
+		"size_bucket_low_mb": 300,
+	}
+
+	var wg sync.WaitGroup
+	for key, value := range writes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := SetKeyAt(path, key, value); err != nil {
+				t.Errorf("写 %s 失败：%v", key, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	raw, err := ReadRawAt(path)
+	if err != nil {
+		t.Fatalf("回读失败：%v", err)
+	}
+	for key, want := range writes {
+		got, ok := raw[key]
+		if !ok {
+			t.Errorf("键 %s 被并发写入抹掉了（缺了它说明发生了丢更新）", key)
+			continue
+		}
+		// 比文本形态而不是比原始值：JSON 回读后整数是 json.Number，直接比会因类型不同而误报
+		if ValueText(got) != ValueText(want) {
+			t.Errorf("%s 的值是 %q，应为 %q", key, ValueText(got), ValueText(want))
 		}
 	}
 }

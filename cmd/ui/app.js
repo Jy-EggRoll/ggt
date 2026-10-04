@@ -67,13 +67,7 @@ const MSG = {
     commitMsg: 'Commit message',
     fetch: 'Fetch all',
     fetching: 'Fetching…',
-    theme: 'Theme',
     themeFollow: 'Follow the system',
-    themeMine: 'My themes',
-    themeDarkPref: 'Dark',
-    themeLightPref: 'Light',
-    themeDarkPrefLabel: 'Preferred dark theme when following the system',
-    themeLightPrefLabel: 'Preferred light theme when following the system',
     graphEntry: 'History graph',
     graphAllRefs: 'All branches and tags',
     graphCount: 'showing {{shown}} / {{total}}',
@@ -96,6 +90,15 @@ const MSG = {
     notifClose: 'Dismiss this notification',
     notifEmpty: 'No notifications',
     notifBell: 'Notifications',
+    settings: 'Settings',
+    settingsSave: 'Save',
+    settingsSaveCount: 'Save ({{n}})',
+    settingsSaved: 'Settings saved',
+    settingsSaveFailed: 'Some settings were not saved',
+    settingsReset: 'Reset to default',
+    settingsPath: 'Config file',
+    settingsEmpty: 'No settings to show',
+    settingManaged: 'Managed by {{cmd}}; change it there',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -133,13 +136,7 @@ const MSG = {
     commitMsg: '提交信息',
     fetch: '拉取全部',
     fetching: '正在拉取…',
-    theme: '主题',
     themeFollow: '跟随系统',
-    themeMine: '我放进去的主题',
-    themeDarkPref: '深色',
-    themeLightPref: '浅色',
-    themeDarkPrefLabel: '跟随系统时的深色主题',
-    themeLightPrefLabel: '跟随系统时的浅色主题',
     graphEntry: '分支图',
     graphAllRefs: '全部分支与 tag',
     graphCount: '已显示 {{shown}} / {{total}}',
@@ -162,6 +159,15 @@ const MSG = {
     notifClose: '关闭这条通知',
     notifEmpty: '没有通知',
     notifBell: '通知中心',
+    settings: '设置',
+    settingsSave: '保存',
+    settingsSaveCount: '保存（{{n}}）',
+    settingsSaved: '设置已保存',
+    settingsSaveFailed: '部分设置未能保存',
+    settingsReset: '恢复默认',
+    settingsPath: '配置文件',
+    settingsEmpty: '没有可显示的配置项',
+    settingManaged: '由 {{cmd}} 管理，请在那里修改',
   },
 };
 
@@ -214,10 +220,15 @@ const diffOpEl = document.getElementById('diff-op');
 const commitMsgEl = document.getElementById('graph-msg');
 const commitBtnEl = document.getElementById('graph-commit-btn');
 const fetchBtnEl = document.getElementById('fetch-btn');
-const themeSelectEl = document.getElementById('theme-select');
-// 跟随系统时分别用哪套深色/浅色主题的两个下拉框，只在"跟随系统"下显示
-const themeDarkEl = document.getElementById('theme-dark');
-const themeLightEl = document.getElementById('theme-light');
+// 设置面板：底栏的入口按钮，以及面板的头部、正文、结果行、配置文件路径、保存按钮
+const settingsBtnEl = document.getElementById('settings-btn');
+const settingsEl = document.getElementById('settings');
+const settingsBackEl = document.getElementById('settings-back');
+const settingsTitleEl = document.getElementById('settings-title');
+const settingsBodyEl = document.getElementById('settings-body');
+const settingsOpEl = document.getElementById('settings-op');
+const settingsPathEl = document.getElementById('settings-path');
+const settingsSaveEl = document.getElementById('settings-save');
 // 仓库卡片：容器、列表、头部，以及顶栏上的仓库操作（分支选择、拉取、同步、推送、全仓 diff）
 const graphEl = document.getElementById('graph');
 const graphListEl = document.getElementById('graph-list');
@@ -819,18 +830,24 @@ let diffScrollX = 0;
 // 每次打开的序号：响应回来时用它丢弃"用户已经关掉或换了目标"的那次结果
 let diffSeq = 0;
 
+// settingsOpen 为真表示设置面板正打开。
+// 它刻意与 diff、卡片这两个标志声明在一起：三者都是"整页覆盖 + 锁定滚动"的浮层，
+// 而"有没有浮层开着"这件事必须被同一处看到（见 syncScrollLock 与 resume），
+// 分散声明时最典型的漏法是新面板忘了并进去，表现为打开设置后背后还能滚动
+let settingsOpen = false;
+
 // syncScrollLock 统一决定要不要锁住页面滚动，并顺带切换遮罩层。
 // 遮罩与滚动锁由同一处决定：两件事都取决于"有没有浮层开着"，分头写迟早会出现
 // "层关了、模糊还在"这种半截状态
 function syncScrollLock() {
-  const overlayOpen = diffOpen || cardOpen;
+  const overlayOpen = diffOpen || cardOpen || settingsOpen;
   document.documentElement.style.overflow = overlayOpen ? 'hidden' : '';
   document.body.classList.toggle('overlay-open', overlayOpen);
 }
 
-// resume 在两个浮层都关掉之后恢复看板：补一次取数（期间工作区可能已经变了）并恢复轮询
+// resume 在浮层都关掉之后恢复看板：补一次取数（期间工作区可能已经变了）并恢复轮询
 function resume() {
-  if (diffOpen || cardOpen) return;
+  if (diffOpen || cardOpen || settingsOpen) return;
   refresh();
   startPolling();
 }
@@ -1379,90 +1396,375 @@ function fetchAll() {
   });
 }
 
-// fillThemeOptions 把一份主题清单填进某个下拉框。followLabel 非空时在最前面加一项空值选项——
-// 那是主选择器要的"跟随系统"；两个偏好下拉框不要它，它们本身就是"跟随系统时用哪套"
-function fillThemeOptions(sel, groups, followLabel) {
-  sel.textContent = '';
-  if (followLabel) {
-    const follow = document.createElement('option');
-    follow.value = '';
-    follow.textContent = followLabel;
-    sel.appendChild(follow);
+// ——— 设置面板 ———
+//
+// 面板里的每一项都由服务端给的元数据长出来（GET /api/settings）：Kind 决定控件形态、
+// Options 决定候选、Min/Max 决定输入边界、ManagedBy 决定是否只读。页面不认识任何一个具体的
+// 配置键，新增一项配置因此不必回来改这个文件——这是"配置逻辑与界面共用一份抽象"的直接结果。
+//
+// 写入走 POST /api/settings，与命令行的 "ggt config set" 是同一份后端实现：解析与校验因此
+// 只在后端做一次。页面这边不做取值校验——前端校验只能当提示，不能成为唯一防线
+
+// settingsItems 是服务端给的清单；settingsControls 按配置键索引控件（保存时要读回控件里的值）；
+// settingsDirty 只记录用户改过、还没保存的键。
+// 保存时只发改过的键：没碰过的项不发送，页面因此不会因为"少认识某个值"而把配置改坏
+let settingsItems = [];
+let settingsControls = new Map();
+let settingsDirty = new Set();
+// 打开面板前的焦点元素：关闭时还回去，否则焦点会掉在已经隐藏的浮层里
+let settingsFocusReturn = null;
+
+// wrapControl 把控件放进一个容器里再返回。
+//
+// 为什么要多这一层：面板的样式表按 ".setting-control 里的输入框"这条后代选择器统一给外观，
+// 而把 setting-control 直接挂在控件自己身上时，那条选择器匹配不到（控件与 .setting-control
+// 是同一个元素），表现是下拉框与数字框还留着浏览器的原生外观，跟卡片里的控件不是一套
+function wrapControl(el) {
+  const box = document.createElement('div');
+  box.appendChild(el);
+  return box;
+}
+
+// settingsControlFor 按元数据生成一项的控件，返回 { el, get, readOnly }。
+// get 给出控件当前的文本形态取值——与后端收字符串一致，页面因此不需要知道任何类型转换
+function settingsControlFor(item) {
+  // 受命令管理的项（仓库列表）：显示出来让用户知道它存在、现在是什么值，以及该去哪儿改。
+  // 禁用而不是不显示——不显示会让人以为这一项不存在
+  if (item.managedBy) {
+    const box = document.createElement('textarea');
+    box.rows = 2;
+    box.readOnly = true;
+    box.disabled = true;
+    box.value = item.value;
+    return { el: wrapControl(box), get: () => item.value, readOnly: true };
   }
-  for (const group of groups || []) {
-    const optgroup = document.createElement('optgroup');
-    optgroup.label = group.label || t('themeMine');
-    for (const item of group.themes || []) {
+
+  // 布尔项用复选框：两个候选放进下拉框也能用，但开关一眼就看得懂
+  if (item.kind === 'bool') {
+    const label = document.createElement('label');
+    label.className = 'setting-bool';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = item.value === 'true';
+    label.appendChild(input);
+    return { el: wrapControl(label), get: () => (input.checked ? 'true' : 'false') };
+  }
+
+  // 只在候选里取值：下拉框。候选按 Group 分组（主题来自不同来源，组标题是品牌名，不翻译）
+  if (item.options.length > 0 && !item.allowCustom) {
+    const sel = document.createElement('select');
+    const groups = new Map();
+    for (const o of item.options) {
+      const name = o.group || '';
+      if (!groups.has(name)) {
+        if (name) {
+          const optgroup = document.createElement('optgroup');
+          optgroup.label = name;
+          sel.appendChild(optgroup);
+          groups.set(name, optgroup);
+        } else {
+          // 没有来源分组的是用户自己放进配置目录的主题，组标题是页面文案
+          groups.set(name, sel);
+        }
+      }
       const option = document.createElement('option');
-      option.value = item.id;
-      option.textContent = item.name;
-      optgroup.appendChild(option);
+      option.value = o.value;
+      // 空值代表"不做选择"（主题里就是跟随系统）。这一条的显示名由页面给：
+      // 服务端那份注册表里是英文，页面按当前语言说才自然
+      option.textContent = o.label || (o.value === '' ? t('themeFollow') : o.value);
+      groups.get(name).appendChild(option);
     }
-    sel.appendChild(optgroup);
+    sel.value = item.value;
+    // 文件里的值若不在候选里，服务端会把它补进候选（见 internal/config 的 viewOptions），
+    // 因此这次赋值总能落在某个候选项上，不会静默显示成别的取值
+    return { el: wrapControl(sel), get: () => sel.value };
   }
-  sel.disabled = false;
+
+  // 整数项：数字输入框，边界来自注册表的 Min/Max（边界与各自的解析器由测试钉在一起）
+  if (item.kind === 'int') {
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.inputMode = 'numeric';
+    if (item.min !== null) input.min = String(item.min);
+    if (item.max !== null) input.max = String(item.max);
+    input.value = item.value;
+    return { el: wrapControl(input), get: () => input.value.trim() };
+  }
+
+  // 有候选又允许自由输入（并发数那种）：输入框 + 候选清单。
+  // 用 datalist 而不是"下拉框再加一个输入框"：同一个控件既能点选也能手写
+  if (item.options.length > 0) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = item.value;
+    const listId = 'setting-list-' + item.key;
+    const list = document.createElement('datalist');
+    list.id = listId;
+    for (const o of item.options) {
+      const option = document.createElement('option');
+      option.value = o.value;
+      list.appendChild(option);
+    }
+    input.setAttribute('list', listId);
+    const wrap = document.createElement('div');
+    wrap.append(input, list);
+    return { el: wrap, get: () => input.value.trim() };
+  }
+
+  // 路径列表：一行一条。多行输入框而不是逗号分隔——路径里本来就可能带空格
+  if (item.kind === 'paths') {
+    const box = document.createElement('textarea');
+    box.rows = 3;
+    box.value = item.value;
+    return { el: wrapControl(box), get: () => box.value.trim() };
+  }
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = item.value;
+  return { el: wrapControl(input), get: () => input.value.trim() };
 }
 
-// buildThemeSelect 按服务端注入的清单搭出三个选择器：主选择器（含"跟随系统"）与两个偏好
-// （跟随系统时分别用哪套深色/浅色，对应 VSCode 的 preferredDark/LightColorTheme）。
+// settingsRow 画一项配置：标题 + 键名 + 恢复默认按钮 + 控件 + 说明 + 该项的错误行。
 //
-// 分组标题与"跟随系统"都是页面文案，因此在这里按当前语言给——服务端那份清单里，
-// 用户自己那组的标题刻意留空，就是交给这里填（页面文案不走 Go 的 l10n 管线）
-function buildThemeSelect() {
-  const data = window.__GGT_THEME__ && typeof window.__GGT_THEME__ === 'object' ? window.__GGT_THEME__ : {};
+// 标题与键名都显示：标题是给人读的，键名是给命令行用的（ggt config set <键名> <值>），
+// 少哪一个都会让用户在两处之间来回对照
+function settingsRow(item) {
+  const row = document.createElement('div');
+  row.className = 'setting-row';
+  row.dataset.key = item.key;
 
-  fillThemeOptions(themeSelectEl, data.groups, t('themeFollow'));
-  themeSelectEl.value = data.current || '';
-  themeSelectEl.setAttribute('aria-label', t('theme'));
+  const head = document.createElement('div');
+  head.className = 'setting-head';
+  const title = document.createElement('span');
+  title.className = 'setting-title';
+  title.textContent = item.title || item.key;
+  const key = document.createElement('code');
+  key.className = 'setting-key';
+  key.textContent = item.key;
+  head.append(title, key);
 
-  fillThemeOptions(themeDarkEl, data.groups, '');
-  themeDarkEl.value = data.dark || '';
-  themeDarkEl.setAttribute('aria-label', t('themeDarkPrefLabel'));
+  if (!item.managedBy) {
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'btn btn--secondary setting-reset';
+    reset.textContent = t('settingsReset');
+    reset.addEventListener('click', () => resetSetting(item.key));
+    head.appendChild(reset);
+  }
+  row.appendChild(head);
 
-  fillThemeOptions(themeLightEl, data.groups, '');
-  themeLightEl.value = data.light || '';
-  themeLightEl.setAttribute('aria-label', t('themeLightPrefLabel'));
+  const ctl = settingsControlFor(item);
+  settingsControls.set(item.key, ctl);
+  ctl.el.classList.add('setting-control');
+  if (!ctl.readOnly) {
+    // input 与 change 都听：文本框靠 input 即时反馈，下拉框与复选框只发 change
+    const onChange = () => {
+      if (ctl.get() === item.value) settingsDirty.delete(item.key);
+      else settingsDirty.add(item.key);
+      row.classList.toggle('dirty', settingsDirty.has(item.key));
+      updateSaveButton();
+    };
+    ctl.el.addEventListener('input', onChange);
+    ctl.el.addEventListener('change', onChange);
+  }
+  row.appendChild(ctl.el);
 
-  // 两个偏好只在"跟随系统"下有意义：不跟随时把它们收起（VSCode 里这两个设置始终可见、
-  // 只是被忽略，而底栏空间有限，按依赖关系收起更省地方，也让"它们为什么在这里"不言自明）
-  const following = !(data.current || '');
-  themeDarkEl.hidden = !following;
-  themeLightEl.hidden = !following;
+  // 说明行：受管理的项说清去哪儿改，其余给合法取值的描述（与服务端报错里那句同源）
+  const hint = document.createElement('p');
+  hint.className = 'setting-hint';
+  hint.textContent = item.managedBy ? t('settingManaged', { cmd: item.managedBy }) : item.expected || '';
+  row.appendChild(hint);
+
+  const err = document.createElement('p');
+  err.className = 'setting-error';
+  err.hidden = true;
+  row.appendChild(err);
+  return row;
 }
 
-// 换主题：把选择写进配置文件，然后整页重载。
-//
-// 为什么重载而不是就地改 CSS 变量：配色是服务端渲染 index.html 时注入的，就地改就等于让
-// 客户端再实现一遍主题解析（重新取颜色、自己拼变量），同一件事两处实现迟早漂移。
-// 重载的代价只是一次本地请求，而换主题本来就是低频动作
-//
-// 结果走通知与其他写操作一致，但要知道一处局限：成功之后紧跟着就是重载，那条通知会随页面
-// 一起消失，因此"换主题成功"这件事在界面上仍然看不到（失败时不会重载，通知会一直留着，
-// 这是本次真正的改善）。要让成功也看得见，只能把通知存到内存之外再在重载后取回，
-// 而那与"通知只存在内存里"这条约束直接冲突，故本轮不做，见提交说明里的取舍
-themeSelectEl.addEventListener('change', async () => {
-  const out = await runWrite('/api/theme', { key: 'theme', value: themeSelectEl.value }, notifFromResult);
-  if (!out || out.error) {
-    buildThemeSelect(); // 没写成就把选择器拨回当前生效的那套，别让它显示一个没生效的值
+// updateSaveButton 让保存按钮反映"有几项改动待保存"，没有改动时禁用。
+// 按钮上带数目，用户因此知道自己刚才改了几项，不必回头一个个找
+function updateSaveButton() {
+  const n = settingsDirty.size;
+  settingsSaveEl.disabled = n === 0;
+  settingsSaveEl.textContent = n > 0 ? t('settingsSaveCount', { n }) : t('settingsSave');
+}
+
+// setSettingsOp 写面板顶部那行结果提示（与 diff、卡片里那一行是同一种角色）
+function setSettingsOp(text, isError) {
+  settingsOpEl.textContent = text || '';
+  settingsOpEl.classList.toggle('error', !!isError);
+}
+
+// fetchSettingsView 取一次配置项清单。取数与渲染分开的理由见 resetSetting
+async function fetchSettingsView() {
+  try {
+    const res = await fetch('/api/settings', { headers: authHeaders, cache: 'no-store' });
+    const out = await res.json();
+    // 非 JSON 响应（基座直接回的 401/403 纯文本）也要能说出原因
+    if (!res.ok && !out.error) out.error = 'HTTP ' + res.status;
+    return out;
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+// loadSettings 取清单并重画面板。
+// 保存成功后也走它：面板显示的因此永远是配置文件里的真实内容，而不是"用户输入了什么就显示什么"
+async function loadSettings() {
+  const out = await fetchSettingsView();
+  // 用户在响应到达之前关掉了面板（或又打开了一次）就把这次结果丢掉，
+  // 否则会出现"已经回到看板却又被旧结果写了一次"
+  if (!settingsOpen) return;
+  if (out.error) {
+    setSettingsOp(t('loadFailed', { err: out.error }), true);
     return;
   }
-  location.reload();
-});
-
-// 两个偏好下拉框走同一条路，只是写的是不同的配置键（/api/theme 的 key 参数）
-for (const [sel, key] of [
-  [themeDarkEl, 'theme_dark'],
-  [themeLightEl, 'theme_light'],
-]) {
-  sel.addEventListener('change', async () => {
-    const out = await runWrite('/api/theme', { key, value: sel.value }, notifFromResult);
-    if (!out || out.error) {
-      buildThemeSelect();
-      return;
-    }
-    location.reload();
-  });
+  renderSettings(out);
 }
+
+function renderSettings(out) {
+  settingsItems = out.items || [];
+  settingsControls = new Map();
+  settingsDirty = new Set();
+  setSettingsOp('');
+  settingsPathEl.textContent = t('settingsPath') + ': ' + (out.path || '');
+  settingsBodyEl.replaceChildren();
+  if (settingsItems.length === 0) {
+    settingsBodyEl.textContent = t('settingsEmpty');
+  } else {
+    const frag = document.createDocumentFragment();
+    for (const item of settingsItems) frag.appendChild(settingsRow(item));
+    settingsBodyEl.appendChild(frag);
+  }
+  updateSaveButton();
+}
+
+// saveSettings 把改过的项一次发给服务端。
+//
+// 一次请求而不是逐项往返：改三项就是三次串行等待，而它们本来可以一起写。
+// 失败按项回归属：一项写不进去不该让整批都失败，用户改对那一项再保存即可
+async function saveSettings() {
+  if (settingsDirty.size === 0) return;
+  const values = {};
+  for (const key of settingsDirty) {
+    const ctl = settingsControls.get(key);
+    if (ctl) values[key] = ctl.get();
+  }
+  settingsSaveEl.disabled = true;
+  const out = await postJSON('/api/settings', { values });
+  if (out.error) {
+    setSettingsOp(out.error, true);
+    notify(out.error, 'error');
+    updateSaveButton();
+    return;
+  }
+
+  const failed = Object.keys(out.errors || {});
+  if (failed.length > 0) {
+    // 逐项贴回它自己那一行：用户不必猜是哪一项被拒了
+    for (const key of failed) {
+      const row = settingsBodyEl.querySelector('.setting-row[data-key="' + key + '"]');
+      if (!row) continue;
+      const err = row.querySelector('.setting-error');
+      err.textContent = out.errors[key];
+      err.hidden = false;
+      row.classList.add('invalid');
+    }
+    setSettingsOp(t('settingsSaveFailed'), true);
+    updateSaveButton();
+    return;
+  }
+
+  // 结果写在面板自己那一行，而不是发成通知：通知堆叠区就在右下角，恰好压在面板页脚那颗
+  // 保存按钮上（通知的层级高于浮层），保存一次之后想再点一次就会被它挡住。
+  // 这也是 #diff-op / #graph-op 一直以来的做法——动作发生在这个面里，结果就写在这个面里；
+  // 只有"这件事在动作结束后还有用"的消息才值得发成通知
+  const notes = Object.values(out.notes || {});
+  const text = notes.length > 0 ? t('settingsSaved') + ' · ' + notes.join(' ') : t('settingsSaved');
+  // notes 是"这项改完还要做什么"，例如语言要下次运行才生效：与结果写在一起，
+  // 用户不必去别处找这句话
+  setSettingsOp(text, false);
+  // 主题这类由服务端烧进首页的取值，只改配置文件不会反映到当前页面上，必须刷新
+  if (out.reload) {
+    location.reload();
+    return;
+  }
+  await loadSettings();
+  // 提示写在重画之后：renderSettings 会先把这一行清空，先写的话会被一起清掉
+  setSettingsOp(text, false);
+}
+
+// resetSetting 把一项恢复成内置默认值：服务端会把这个键从配置文件里删掉，
+// 与命令行的 "ggt config reset" 是同一种做法（文件里因此只留下用户真正改过的项）。
+//
+// 立即生效而不是等"保存"：它本身就是一次明确的动作，再让用户去按一次保存反而多一步。
+// 只重画这一行而不是整块重画：整块重画会把用户还没保存的其他改动一起抹掉
+async function resetSetting(key) {
+  const out = await postJSON('/api/settings', { unset: [key] });
+  const err = out.error || (out.errors || {})[key];
+  if (err) {
+    setSettingsOp(err, true);
+    return;
+  }
+  if (out.reload) {
+    location.reload();
+    return;
+  }
+
+  const view = await fetchSettingsView();
+  if (!settingsOpen || view.error) return;
+  const item = (view.items || []).find((it) => it.key === key);
+  const row = settingsBodyEl.querySelector('.setting-row[data-key="' + key + '"]');
+  if (!item || !row) return;
+  // item.value 同步成服务端给的新值，这一行随后的改动比较才有正确的基准
+  const idx = settingsItems.findIndex((it) => it.key === key);
+  if (idx >= 0) settingsItems[idx] = item;
+  settingsDirty.delete(key);
+  row.replaceWith(settingsRow(item));
+  updateSaveButton();
+  // 结果同样写面板自己那一行，理由见 saveSettings
+  setSettingsOp(t('settingsSaved'), false);
+}
+
+// openSettings 打开面板：先把浮层摆出来再取数据，取数据的那一趟往返期间面板已经可见，
+// 不至于点了没反应
+async function openSettings() {
+  settingsFocusReturn = document.activeElement;
+  settingsOpen = true;
+  settingsEl.classList.add('open');
+  settingsEl.setAttribute('aria-hidden', 'false');
+  // 视口锁与遮罩由 syncScrollLock 统一决定，这里不自己改样式
+  syncScrollLock();
+  stopPolling();
+  settingsBackEl.focus();
+  await loadSettings();
+}
+
+function closeSettings() {
+  if (!settingsOpen) return;
+  settingsOpen = false;
+  settingsEl.classList.remove('open');
+  settingsEl.setAttribute('aria-hidden', 'true');
+  syncScrollLock();
+  resume();
+  if (settingsFocusReturn && settingsFocusReturn.focus) settingsFocusReturn.focus();
+  settingsFocusReturn = null;
+}
+
+// 面板里的固定文案与三个入口在加载时接好：文案要跟随语言，而 index.html 是静态骨架、不参与翻译
+settingsTitleEl.textContent = t('settings');
+settingsBackEl.textContent = '← ' + t('back');
+settingsBtnEl.setAttribute('aria-label', t('settings'));
+settingsSaveEl.textContent = t('settingsSave');
+settingsBtnEl.addEventListener('click', openSettings);
+settingsBackEl.addEventListener('click', closeSettings);
+settingsSaveEl.addEventListener('click', saveSettings);
+
+
+
+
 
 // commitFromUI 用卡片里那个输入框提交。成功才清空输入框：失败时保留原文，
 // 便于用户改一处再试，而不是从头再敲一遍。
@@ -1515,6 +1817,11 @@ commitMsgEl.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  // 设置面板与通知中心都是"后开的先收"：面板是整页浮层，压在看板之上，因此排在第一个
+  if (settingsOpen) {
+    closeSettings();
+    return;
+  }
   // 通知中心浮在最上面，先收它：一层一层退，顺序与打开时相反。
   // 焦点同时交还铃铛，否则焦点会掉在已经隐藏的面板里
   if (notifCenterOpen) {
@@ -1704,7 +2011,6 @@ document.title = 'ggt';
 
 // 图标主题与首次取数并行：数据先到就先画（没有类型图标），图标到位后再用同一份数据重画一次。
 // 串行等待会让首屏白屏时间平白多出一次本地 fetch
-buildThemeSelect();
 loadIconTheme().then(() => {
   if (lastRepos.length > 0) render(lastRepos);
 });

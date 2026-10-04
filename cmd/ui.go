@@ -36,6 +36,7 @@ import (
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
 	"github.com/jy-eggroll/eggokit/webui"
+	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/jy-eggroll/ggt/internal/git"
 	"github.com/jy-eggroll/ggt/internal/worker"
 	"github.com/spf13/cobra"
@@ -940,12 +941,13 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	mux.HandleFunc("/api/sync", cache.handleSync)
 	// 拉取是"对全部仓库"的一次行动，因此单独一个端点，不挂在某个仓库上
 	mux.HandleFunc("/api/fetch", cache.handleFetch)
-	// 换主题是把选择写进配置文件，同样只在 POST 上
-	mux.HandleFunc("/api/theme", cache.handleTheme)
 	// 分支图：提交历史与一个提交的文件列表，都是只读的。仓库操作（切分支、拉取、同步等）
 	// 另有各自的端点，见上面那几行
 	mux.HandleFunc("/api/log", cache.handleLog)
 	mux.HandleFunc("/api/commit-files", cache.handleCommitFiles)
+	// 设置面板：GET 读全部配置项（由注册表投影而来），POST 写。
+	// 它不碰仓库，只读写配置文件，因此与上面那些端点没有共同前提
+	mux.HandleFunc("/api/settings", handleSettings(config.GetDefaultConfigPath()))
 
 	// 页面自己不会说"当前语言是哪个"，由 Go 端把语言写进两个占位符：
 	//   - __GGT_LANG_VALUE__ 供页面内翻译表选语言
@@ -957,15 +959,14 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	// 用 ReplaceAll 而不是 Replace(…, 1)：后者只替换第一处，一旦页面注释里出现占位符字面量，
 	// 被替换的就是注释、真正的使用处原样留下，语言会静默停在默认值上——实际踩过一次，
 	// 表现为界面文案全是英文而所有数据正常，很难联想到是注释把占位符"吃掉"了
-	// 主题与语言一样每次请求现算：两者都能在运行期改（语言改配置、主题在页面上选），
-	// 烧死在启动时就会表现为"改了不生效"
+	// 主题与语言一样每次请求现算：两者都能在运行期改（语言改配置，主题在设置面板里选），
+	// 烧死在启动时就会表现为"改了不生效"。主题只注入配色 CSS：候选清单与当前选择由
+	// 设置面板自己取（/api/settings），不再随首页多带一份
 	renderIndex := func() []byte {
 		lang := l10n.Current()
-		css, themeData := resolveTheme()
 		out := bytes.ReplaceAll(indexHTML, []byte("__GGT_HTML_LANG__"), []byte(lang))
 		out = bytes.ReplaceAll(out, []byte("__GGT_LANG_VALUE__"), []byte(lang))
-		out = bytes.ReplaceAll(out, []byte("__GGT_THEME_CSS__"), []byte(css))
-		return bytes.ReplaceAll(out, []byte("__GGT_THEME_DATA__"), []byte(themeDataJSON(themeData)))
+		return bytes.ReplaceAll(out, []byte("__GGT_THEME_CSS__"), []byte(resolveTheme()))
 	}
 
 	srv, err := webui.New(webui.Config{

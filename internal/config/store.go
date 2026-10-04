@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/jy-eggroll/eggokit/jsonfile"
 	"github.com/jy-eggroll/eggokit/l10n"
@@ -87,8 +88,22 @@ func WriteRawAt(path string, raw map[string]any) error {
 	return writeFileAtomic(target, buf)
 }
 
+// writeMu 串行化对配置文件的写入。
+//
+// 为什么需要这把锁：SetKeyAt 与 UnsetKeyAt 都是"读整份文件、改一个键、写回"的读-改-写序列，
+// 而原子写只保证文件不会被写坏，不保证两个并发的读-改-写不会互相覆盖——后写完的那次会把
+// 先写的那次整个抹掉。命令行是串行进程，从来碰不到这件事；看板的设置端点第一次让配置写入
+// 变成可并发（同时改两个键，结果只剩一个），因此锁加在这里而不是只加在端点那一层
+//
+// 只做进程内串行化：同时开着两个 ggt 进程各写一次配置这种极端场景不在本项目的使用模式下，
+// 为它引入文件锁（以及随之而来的锁文件清理、陈锁判定）代价远大于收益
+var writeMu sync.Mutex
+
 // SetKeyAt 写入单个配置项，保留文件里的其他键（含未知键）。
 func SetKeyAt(path, key string, value any) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+
 	raw, err := ReadRawAt(path)
 	if err != nil {
 		return err
@@ -99,6 +114,9 @@ func SetKeyAt(path, key string, value any) error {
 
 // UnsetKeyAt 删除单个配置项。键本来就不存在时是空操作（幂等）。
 func UnsetKeyAt(path, key string) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+
 	raw, err := ReadRawAt(path)
 	if err != nil {
 		return err
@@ -115,6 +133,9 @@ func UnsetKeyAt(path, key string) error {
 // 写默认值这条路径**刻意不是"删了再写"**：那样会留下"删成功、写失败"的窗口，
 // 配置与仓库记录会一起消失。直接从空 map 起步做一次原子写，中途失败则原文件完好。
 func ResetAllAt(path string, writeDefaults bool) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+
 	if !writeDefaults {
 		target, err := resolveSymlink(path)
 		if err != nil {

@@ -55,6 +55,11 @@
   --sp-5: 16px;
   --sp-6: 24px;
 
+  /* 等宽字体族：diff 正文、提交号、设置面板里的配置键名共用一份。
+     同一份字体栈原先在样式表里抄了两遍，而且两遍还不一致（一处带 DejaVu Sans Mono，
+     一处不带）——收成一个令牌之后只有一处定义，也就不存在"改了一处忘了另一处" */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+
   /* --page-pad / --statusbar-h 是页面上唯一的一份"留白与底栏高度"：app.js 算列高时从计算样式
      里读它们（cssVar），而不是在 JS 里再写一遍数字——底栏是后加的，硬编码的话它一出现就会
      压住最下面一行卡片。底栏 32px = 24px 控件上下各留 4px */
@@ -628,25 +633,114 @@ body {
 }
 #fetch-btn:disabled { cursor: default; }
 
-/* 主题选择器：初始 disabled，由 app.js 填完选项后解开——
-   这样在清单注入失败时它是一个灰色不可点的控件，而不是一个空下拉框。
-   配色取 dropdown.*：它就是 VSCode 里下拉框的那组令牌（inputColors.ts）；高度与按钮同一档 */
-#theme-select {
-  flex: none;
-  height: var(--control-h);
-  max-width: 12em;
+/* ——— 设置面板 ———
+   与仓库卡片共用 .overlay 的骨架（几何、底色、圆角、阴影、标题栏），这里只写它自己的部分：
+   层级、正文滚动区、每一项的行布局、控件外观与页脚。
+
+   层级取 --z-diff 而不是再新增一个令牌：它与 diff、仓库卡片本来就是同一层的东西，
+   靠 DOM 顺序压在它们之上（见 index.html 里的说明）；低于底栏，因此面板开着时
+   铃铛与它自己的入口仍然点得到 */
+#settings { z-index: var(--z-diff); }
+
+/* 正文：在 flex 列布局里占满剩余高度并自己滚。
+   用 flex:1 + min-height:0 而不是 max-height——后者在内容短时留出一块空白，长时又会溢到页脚上 */
+#settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-4) var(--sp-4);
+}
+
+/* 每一项：标题行（标题 + 键名 + 恢复默认）、控件、说明、以及这一项自己的错误行。
+   项之间用分隔线而不是各自一张卡片：一屏要看下十来项，卡片会把面板撑得很长 */
+.setting-row { padding: var(--sp-3) 0; border-bottom: 1px solid var(--card-border); }
+.setting-row:last-child { border-bottom: 0; }
+/* 有未保存改动、或被服务端拒绝的项，在左侧留一条竖线：一屏十几项时只靠控件边框看不出是哪一项，
+   而这条线扫一眼就能定位（脏的是待保存，红的是被拒） */
+.setting-row.dirty,
+.setting-row.invalid {
+  padding-left: var(--sp-3);
+  border-radius: var(--radius-xs);
+  box-shadow: inset 3px 0 0 var(--focus-border, var(--git-modified));
+}
+.setting-row.invalid { box-shadow: inset 3px 0 0 var(--git-conflicting); }
+
+.setting-head { display: flex; align-items: center; gap: var(--sp-2); }
+.setting-title { font-weight: 600; }
+/* 键名是给命令行用的（ggt config set <键名> <值>），等宽且淡：能对上号，又不与标题抢视线 */
+.setting-key {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+/* 恢复默认靠右：它与标题同排，但性质是动作而不是说明 */
+.setting-reset { flex: none; margin-left: auto; }
+
+/* 控件：输入框、下拉框、多行框共用一套外观。
+   配色取 input.* 与 dropdown.*（VSCode 的 inputColors.ts 那组令牌），与卡片里的控件同一来源 */
+.setting-control { margin-top: var(--sp-2); }
+.setting-control input,
+.setting-control select,
+.setting-control textarea {
+  width: 100%;
+  max-width: 32em;
+  min-height: var(--control-h);
   font: inherit;
-  color: var(--dropdown-fg);
-  background: var(--dropdown-bg);
-  border: 1px solid var(--dropdown-border, var(--card-border));
+  color: var(--input-fg, var(--text));
+  background: var(--input-bg, var(--bg));
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-sm);
   padding: 0 var(--sp-2);
-  cursor: pointer;
 }
-#theme-select:disabled {
-  color: var(--disabled-fg);
+.setting-control textarea { padding: var(--sp-2); resize: vertical; }
+.setting-control select { cursor: pointer; }
+/* 数字框不需要跟文本输入一样宽：它只放一个整数，铺满整行看起来像一大块空白 */
+.setting-control input[type="number"] { max-width: 12em; }
+/* 布尔项是一个包着复选框的标签：宽度随内容，上面那条 width:100% 是给文本类控件的 */
+.setting-bool { display: flex; align-items: center; gap: var(--sp-2); cursor: pointer; }
+.setting-bool input { width: auto; min-height: 0; }
+/* 只读项（仓库列表这类由别的命令管理的配置）：显示出来但不接受编辑 */
+.setting-control textarea:disabled {
+  color: var(--text-dim);
+  background: var(--card-bg);
   cursor: default;
 }
+
+.setting-hint,
+.setting-error { margin: var(--sp-1) 0 0; font-size: var(--fs-xs); color: var(--text-dim); }
+.setting-error { color: var(--git-conflicting); }
+
+/* 页脚：左边是配置文件的路径（用户要知道改的是哪个文件），右边是保存。
+   路径可能很长，省略号截断而不折行——它是一行元信息，不该把页脚撑成两行 */
+#settings footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--card-bg);
+  border-top: 1px solid var(--card-border);
+}
+#settings-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+#settings-save { flex: none; }
+
+/* 面板顶部那行结果提示：与 #diff-op 同一角色，只是位置在标题栏下方而不是正文里 */
+#settings-op {
+  flex: none;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-4) 0;
+  font-size: var(--fs-xs);
+}
+#settings-op:empty { display: none; }
+#settings-op.error { color: var(--git-conflicting); }
 
 /* 最近一次看板层面操作的结果。可能含 git 的多行原话，因此允许折行并限宽限高——
    限宽免得它把按钮挤出屏幕，限高免得一段长报错把整块看板盖住（超出部分可滚动查看） */
@@ -898,7 +992,7 @@ kbd {
 pre.diff {
   margin: 0;
   padding: 6px 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   /* 长行折行显示，不做横向滚动（早先是 white-space: pre + overflow-x: auto，已改）：
@@ -1244,7 +1338,7 @@ pre.diff .meta { color: var(--text-dim); }
 .g-row .subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .g-row .hash {
   flex: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--text-dim);
 }

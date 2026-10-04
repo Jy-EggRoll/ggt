@@ -7,9 +7,6 @@
 package cmd
 
 import (
-	"encoding/json"
-	"net/http"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -132,45 +129,12 @@ var themeOwnVars = map[theme.Type]map[string]string{
 	},
 }
 
-// uiThemeData 是注入页面的主题数据：当前选择 + 分组好的可选主题。
-//
-// 由服务端注入而不是让页面自己请求：首屏就该带上正确的配色（否则会先闪一下默认色），
-// 而服务端渲染 index.html 时本来就在替换占位符，顺手带上这份数据不需要多一次往返
-type uiThemeData struct {
-	// Current 是当前选中的主题 id，空表示跟随系统
-	Current string `json:"current"`
-	// Dark / Light 是"跟随系统"时深色与浅色各自用的那套（配置的 theme_dark / theme_light）。
-	// 页面据此把两个偏好下拉框的当前值摆正——服务端不做"哪套生效"的判断，那是浏览器的活
-	Dark  string `json:"dark"`
-	Light string `json:"light"`
-	// Groups 是选择器里的分组；Label 为空的那组表示"用户自己放进来的"，
-	// 标题由页面按当前语言给（页面文案不走 Go 的 l10n 管线）
-	Groups []uiThemeGroup `json:"groups"`
-}
-
-type uiThemeGroup struct {
-	Label  string          `json:"label"`
-	Themes []uiThemeOption `json:"themes"`
-}
-
-type uiThemeOption struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// themeDirs 是扫描用户主题的目录：配置目录本身，以及它的 themes 子目录。
-// 两个都看——"把主题文件丢进配置目录"是最自然的用法，而主题多了之后又需要一个地方归置
-func themeDirs() []string {
-	dir := filepath.Dir(config.GetDefaultConfigPath())
-	return []string{dir, filepath.Join(dir, "themes")}
-}
-
 // currentThemeID 读配置里选中的主题 id。
 //
 // 每次都从文件读，不吃进程启动时那份缓存：换主题是运行期动作（页面上点一下就会写配置），
 // 若读的是启动时的旧值，用户换完主题刷新页面看到的还是旧配色，会以为选择没生效
 func currentThemeID() string {
-	v, err := config.EffectiveAt(config.GetDefaultConfigPath(), "theme")
+	v, err := config.EffectiveAt(config.GetDefaultConfigPath(), themeKey)
 	if err != nil {
 		return ""
 	}
@@ -209,28 +173,27 @@ func themePref(key, fallback string) string {
 	return s
 }
 
-// resolveTheme 解析出本次页面渲染该用的 CSS 与选择器数据。
+// resolveTheme 解析出本次页面渲染该用的配色 CSS。
 //
 // 选中的主题解析失败时（文件被删了、内容写坏了）回退到跟随系统并记一条日志：
 // 页面不该因为一个坏主题文件就整页没有颜色，而"配色悄悄变回默认"这种事必须留下痕迹
-func resolveTheme() (string, uiThemeData) {
-	data := uiThemeData{
-		Current: currentThemeID(),
-		Dark:    themePref(themeDarkKey, theme.DefaultDarkID),
-		Light:   themePref(themeLightKey, theme.DefaultLightID),
-		Groups:  groupThemes(theme.Available(themeDirs())),
+//
+// 只返回 CSS：主题的候选清单与当前选择现在由设置面板自己取（/api/settings），
+// 不再随首页注入一份同样的数据——同一件事只有一处来源
+func resolveTheme() string {
+	dark := themePref(themeDarkKey, theme.DefaultDarkID)
+	light := themePref(themeLightKey, theme.DefaultLightID)
+	current := currentThemeID()
+	if current == "" {
+		return systemThemeCSS(dark, light)
 	}
-	if data.Current == "" {
-		return systemThemeCSS(data.Dark, data.Light), data
-	}
-	resolved, err := theme.Resolve(data.Current)
+	resolved, err := theme.Resolve(current)
 	if err != nil {
 		logger.Warn(l10n.T("Failed to load the selected theme; following the system instead", nil),
-			"theme", data.Current, "error", err)
-		data.Current = ""
-		return systemThemeCSS(data.Dark, data.Light), data
+			"theme", current, "error", err)
+		return systemThemeCSS(dark, light)
 	}
-	return themeBlock(resolved), data
+	return themeBlock(resolved)
 }
 
 // systemThemeCSS 是"跟随系统"时的样式：把深、浅两套都写进去，浅色那份套在
@@ -369,96 +332,4 @@ func themeBlock(r *theme.Resolved) string {
 	}
 	b.WriteString("}")
 	return b.String()
-}
-
-// groupThemes 把可用主题按来源分组，供选择器用 <optgroup> 展示
-func groupThemes(list []theme.Theme) []uiThemeGroup {
-	var groups []uiThemeGroup
-	index := map[string]int{}
-	for _, t := range list {
-		i, ok := index[t.Group]
-		if !ok {
-			groups = append(groups, uiThemeGroup{Label: t.Group})
-			i = len(groups) - 1
-			index[t.Group] = i
-		}
-		groups[i].Themes = append(groups[i].Themes, uiThemeOption{ID: t.ID, Name: t.Name})
-	}
-	return groups
-}
-
-// themeDataJSON 把主题数据序列化成能安全塞进 <script> 的 JSON。
-//
-// 用 json.Marshal 而不是关掉 HTML 转义的编码器：主题名来自用户放进来的文件，
-// 里面出现 </script> 这类字样时，未转义的 JSON 会把 script 标签提前闭合，页面结构就破了。
-// json.Marshal 默认把 < > & 转成 \u003c 这种形式，塞进脚本里是安全的
-func themeDataJSON(data uiThemeData) string {
-	b, err := json.Marshal(data)
-	if err != nil {
-		logger.Error(l10n.T("Failed to encode the theme list", nil), "error", err)
-		return "{}"
-	}
-	return string(b)
-}
-
-// handleTheme 写主题相关的三个配置键之一：{"key":"theme"|"theme_dark"|"theme_light","value":"<id>"}。
-//
-// 一个端点管三个键，而不是拆成三个端点：三者的校验与落盘完全一样（都要求"必须在可用列表里"，
-// 只有 theme 额外允许空串=跟随系统），拆开就等于把同一段逻辑抄三遍。
-//
-// 只接受"当前可用列表里确实存在的 id"，不接受任意字符串：这个端点的作用是让页面上的选择
-// 生效，而页面上的选项就是 Available() 给出的那些。放任意值进来，就等于一次请求能让配置里的
-// theme 指向任意路径，而渲染页面时我们会去读那个文件
-func (c *uiCache) handleTheme(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeUIWrite(w, http.StatusMethodNotAllowed, uiWriteResult{Error: l10n.T("Only POST is allowed", nil)})
-		return
-	}
-	var req struct {
-		// Key 是三个主题键之一
-		Key string `json:"key"`
-		// Value 是主题 id；Key 为 theme 时空串表示跟随系统
-		Value string `json:"value"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeUIWrite(w, http.StatusBadRequest, uiWriteResult{Error: l10n.T("Invalid request body", nil)})
-		return
-	}
-
-	key := strings.TrimSpace(req.Key)
-	value := strings.TrimSpace(req.Value)
-	switch key {
-	case themeKey:
-		// 空串是有意义的取值：跟随系统
-	case themeDarkKey, themeLightKey:
-		// 两个偏好不接受空串：空串意味着"跟随系统时没有配色可渲染"，页面只会一片无色
-		if value == "" {
-			writeUIWrite(w, http.StatusBadRequest, uiWriteResult{Error: l10n.T("A theme id is required", nil)})
-			return
-		}
-	default:
-		writeUIWrite(w, http.StatusNotFound, uiWriteResult{Error: l10n.T("Unknown theme setting", nil)})
-		return
-	}
-
-	if value != "" && !themeKnown(value) {
-		writeUIWrite(w, http.StatusNotFound, uiWriteResult{Error: l10n.T("Unknown theme", nil)})
-		return
-	}
-	if err := config.SetKey(key, value); err != nil {
-		writeUIWrite(w, http.StatusInternalServerError, uiWriteResult{Error: err.Error()})
-		return
-	}
-	writeUIWrite(w, http.StatusOK, uiWriteResult{Output: l10n.T("Theme saved", nil)})
-}
-
-// themeKnown 判断一个 id 是否在"当前可用主题"里。可用列表同时取决于内置主题与用户放进配置
-// 目录的文件，因此每次都重新枚举——这也是这里不做缓存的原因
-func themeKnown(id string) bool {
-	for _, t := range theme.Available(themeDirs()) {
-		if t.ID == id {
-			return true
-		}
-	}
-	return false
 }

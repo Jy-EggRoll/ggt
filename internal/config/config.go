@@ -79,6 +79,16 @@ func GetDefaultConfigPath() string {
 	return path
 }
 
+// ThemeDirs 返回用户主题可能存放的目录：配置目录本身，以及它的 themes 子目录。
+// 两个都看——"把主题文件丢进配置目录"是最自然的用法，主题多了之后又需要一个地方归置
+//
+// 为什么放在本包而不是看板那一层：可用主题同时决定配置项 theme 的候选取值（见 settings.go），
+// 两处各算一遍目录，迟早出现"命令行认得的主题、页面上选不到"这种错位
+func ThemeDirs() []string {
+	dir := filepath.Dir(GetDefaultConfigPath())
+	return []string{dir, filepath.Join(dir, "themes")}
+}
+
 // LoadLanguage 只读取配置文件里的 language 字段，用于在命令行解析之前确定输出语言。
 //
 // 单独提供本函数而不是复用 LoadConfig，原因有二：
