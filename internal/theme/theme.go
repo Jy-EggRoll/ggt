@@ -389,60 +389,20 @@ func inferType(colors map[string]string) Type {
 	if bg == "" {
 		bg = colors["sideBar.background"]
 	}
-	r, g, b, ok := parseHex(bg)
+	// 复用 contrast.go 的颜色解析：同一个包里不该有两份解析规则（它们对 #RGBA 的支持就不一样，
+	// 曾各自存在过，迟早会给出不同答案）
+	c, ok := parseColor(bg)
 	if !ok {
 		return Dark
 	}
-	lum := (0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)) / 255
+	lum := (0.2126*c.r + 0.7152*c.g + 0.0722*c.b) / 255
 	if lum > 0.5 {
 		return Light
 	}
 	return Dark
 }
 
-// parseHex 解出 #RGB / #RRGGBB / #RRGGBBAA 的 RGB 三个分量。解不出来时 ok 为假
-func parseHex(s string) (int, int, int, bool) {
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "#") {
-		return 0, 0, 0, false
-	}
-	hex := s[1:]
-	switch len(hex) {
-	case 3:
-		hex = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
-	case 6, 8:
-		hex = hex[:6]
-	default:
-		return 0, 0, 0, false
-	}
-	var v [3]int
-	for i := 0; i < 3; i++ {
-		n, err := parseHexByte(hex[i*2 : i*2+2])
-		if err != nil {
-			return 0, 0, 0, false
-		}
-		v[i] = n
-	}
-	return v[0], v[1], v[2], true
-}
-
-func parseHexByte(s string) (int, error) {
-	var n int
-	for i := 0; i < 2; i++ {
-		c := s[i]
-		switch {
-		case c >= '0' && c <= '9':
-			n = n*16 + int(c-'0')
-		case c >= 'a' && c <= 'f':
-			n = n*16 + int(c-'a') + 10
-		case c >= 'A' && c <= 'F':
-			n = n*16 + int(c-'A') + 10
-		default:
-			return 0, fmt.Errorf("not a hex digit: %q", c)
-		}
-	}
-	return n, nil
-}
+// parseHex 已并入 contrast.go 的 parseColor，本包只保留一份颜色解析规则
 
 // defaultsFor 取出某个类型的注册表默认值
 func defaultsFor(t Type) (map[string]string, error) {

@@ -180,6 +180,50 @@ func systemThemeCSS() string {
 	return b.String()
 }
 
+// contrastPairs 记录"哪些前景会被铺在哪些底色上"：键是前景的 CSS 变量名，值是该前景可能压住的底色。
+//
+// 放在这里而不是 internal/theme：哪些元素成对出现属于本项目的页面概念，而那个包要整包搬进
+// 共享库给别的项目复用，不能带上 ggt 的页面知识（见该包的包注释）
+//
+// hover 底色也算进来：按钮的前景在常态与 hover 两种底色下都得读得出来。主题没给
+// button.hoverBackground 时它不在 vars 里，这一项自然跳过——那时样式表回落到
+// list.hoverBackground，是个中性色，风险低得多
+var contrastPairs = map[string][]string{
+	"btn-fg":           {"btn-bg", "btn-hover-bg"},
+	"btn-secondary-fg": {"btn-secondary-bg", "btn-secondary-hover-bg"},
+	"dropdown-fg":      {"dropdown-bg"},
+	"input-fg":         {"input-bg"},
+	"badge-fg":         {"badge-bg"},
+}
+
+// applyContrastFixes 在对比度实在不够时只调前景色的明度，返回调整过的项数。
+//
+// 底色一律不动：那是主题的设计。改上游色值等于自己维护一份主题副本，上游一升级就得重做，
+// 每套主题还都要各修一遍；而这个函数对任何主题都成立（见 internal/theme/contrast.go）
+func applyContrastFixes(vars map[string]string) int {
+	adjusted := 0
+	for fgName, bgNames := range contrastPairs {
+		fg, ok := vars[fgName]
+		if !ok {
+			continue
+		}
+		bgs := make([]string, 0, len(bgNames))
+		for _, name := range bgNames {
+			if v, ok := vars[name]; ok {
+				bgs = append(bgs, v)
+			}
+		}
+		if len(bgs) == 0 {
+			continue
+		}
+		if fixed, changed := theme.EnsureContrast(fg, bgs, theme.MinContrast); changed {
+			vars[fgName] = fixed
+			adjusted++
+		}
+	}
+	return adjusted
+}
+
 // themeBlock 把一套解析好的主题拼成一条 :root{...} 规则
 func themeBlock(r *theme.Resolved) string {
 	vars := make(map[string]string, len(cssVarNames)+len(themeOwnVars[r.Type]))
@@ -190,6 +234,12 @@ func themeBlock(r *theme.Resolved) string {
 	}
 	for name, v := range themeOwnVars[r.Type] {
 		vars[name] = v
+	}
+
+	// 配色被我们动过就必须留痕：不留的话，用户看到"按钮文字比 VSCode 里深一点"会以为是主题
+	// 自己的问题，而这条日志正是"为什么和你看到的 VSCode 不一样"的唯一线索
+	if n := applyContrastFixes(vars); n > 0 {
+		logger.Debug(l10n.T("Adjusted theme colors for contrast", nil), "theme", r.ID, "count", n)
 	}
 
 	// 变量名排序后再拼：map 的遍历顺序随机，不排序则每次渲染出的 CSS 文本都不同，
