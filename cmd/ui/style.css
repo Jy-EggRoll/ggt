@@ -44,18 +44,160 @@
  *   --diff-add-bg --diff-del-bg
  */
 :root {
+  /* ——— 尺度变量 ———
+   * 上游没有间距、圆角、动效这三类令牌（已核 colors/*.ts），因此下面这几组的取值是本项目自拟的：
+   * 间距按 4px 基准取 VSCode 界面里实际出现的档位，圆角按"越小越方正"排五档，
+   * 动效收敛成三条各有唯一职责的时长 */
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 24px;
+
   /* --page-pad / --statusbar-h 是页面上唯一的一份"留白与底栏高度"：app.js 算列高时从计算样式
      里读它们（cssVar），而不是在 JS 里再写一遍数字——底栏是后加的，硬编码的话它一出现就会
-     压住最下面一行卡片 */
+     压住最下面一行卡片。底栏 32px = 24px 控件上下各留 4px */
   --page-pad: 16px;
-  --statusbar-h: 30px;
-  /* --col-w 是列宽的唯一定义处：app.js 从计算样式里读它来算横向坐标，
+  --statusbar-h: 32px;
+  /* --col-w / --col-gap 是列宽与列间距的唯一定义处：app.js 从计算样式里读它们来算横向坐标，
      两边各写一份数字迟早会漂移（改了 CSS 忘了改 JS，表现为卡片与列错位） */
   --col-w: 320px;
+  --col-gap: 16px;
   /* 三种行高都取 VSCode 的 22px。续段标识是 ggt 自己的概念，取同高使列内节奏一致 */
   --row-h: 22px;
   --head-h: 22px;
   --cont-h: 22px;
+  /* 控件与顶栏高度：顶栏 38px 让 24px 的控件上下各留 7px，也避免顶栏高度随控件内容跳动 */
+  --control-h: 24px;
+  --topbar-h: 38px;
+
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* 浮层留白与层级刻度：一次排开，避免以后再出现"两层用同一个 z-index" */
+  --overlay-inset: 18px;
+  --z-statusbar: 5;
+  --z-scrim: 7;
+  --z-card: 9;
+  --z-diff: 10;
+  --z-hover: 20;
+
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --line-tight: 1.4;
+  --line-relaxed: 1.6;
+
+  /* 动效三条时长各管一类：颜色 100ms、位移 180ms（与 app.js 滚轮的 180ms 同一时间感）、
+     无限循环的进度类动画 900ms。曲线用近似的等减速——别拿 ease 做位移，它的加速段会让
+     "卡片滑到新位置"看起来犹豫 */
+  --dur-fast: 100ms;
+  --dur-move: 180ms;
+  --dur-slow: 900ms;
+  --ease-decel: cubic-bezier(0.2, 0, 0, 1);
+
+  /* 由主题令牌派生：样式表里因此仍然没有颜色字面量 */
+  --focus-ring: var(--focus-border, var(--text));
+  --disabled-fg: var(--disabled-fg-token, var(--text-dim));
+  /* 遮罩：底色与模糊都在这里，两层浮层共用同一个值 */
+  --scrim-bg: color-mix(in srgb, var(--bg) 55%, transparent);
+  --scrim-blur: 2px;
+}
+
+/*
+ * 焦点：全局一份，控件不再各自处理。
+ * 用 :focus-visible 而不是 :focus——鼠标点一下按钮不该留下焦点框，键盘走位时才需要看得见
+ */
+:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+/*
+ * 按钮三级：主（button.*）、次（button.secondary*）、图标（toolbar.hoverBackground）。
+ * 几何自拟（上游没有按钮几何令牌），语义照抄：底色与前景永远成对取自同一组令牌，
+ * 这样换主题时不会出现"前景与底色各自漂移"
+ */
+.btn {
+  flex: none;
+  height: var(--control-h);
+  padding: 0 var(--sp-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) ease,
+    color var(--dur-fast) ease;
+}
+.btn--primary {
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+}
+.btn--primary:hover { background: var(--btn-hover-bg, color-mix(in srgb, var(--btn-bg) 88%, var(--text))); }
+.btn--secondary {
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-fg);
+  border-color: var(--card-border);
+}
+.btn--secondary:hover { background: var(--btn-secondary-hover-bg, var(--hover-bg)); }
+/* 禁用不用 opacity：浅色主题下半透明的蓝底会把文字糊掉，而上游有专门的禁用前景令牌 */
+.btn:disabled,
+.btn:disabled:hover {
+  background: none;
+  border-color: transparent;
+  color: var(--disabled-fg);
+  cursor: default;
+}
+
+/*
+ * 浮层骨架：#graph（仓库卡片）与 #diff 共用——两者是同一类东西（浮在看板之上的一张卡片），
+ * 差别只在层级与内容。几何、底色、圆角、阴影、标题栏都收在这里，两处不再各写一份
+ */
+.overlay {
+  position: fixed;
+  /* 近乎全屏而不是铺满整屏：四周留白取 18px 而不是与 --page-pad 相等的 16px——
+     两者相等时卡片边线与看板卡片边线会糊成一条，反而看不出层次 */
+  inset: var(--overlay-inset);
+  display: none;
+  flex-direction: column;
+  /* 浮层底色取 editorWidget.background：VSCode 的浮层用它，比 editor.background 略亮，
+     正好把卡片从底下的看板里"抬"起来 */
+  background: var(--panel-bg, var(--bg));
+  border: 1px solid var(--editor-widget-border, var(--card-border));
+  border-radius: var(--radius-lg);
+  /* widget.shadow 是 VSCode 给浮层用的阴影令牌 */
+  box-shadow: 0 8px 32px var(--widget-shadow, transparent);
+  /* 圆角要真的裁掉子元素（标题栏与正文都是直角），否则四角会露出内容 */
+  overflow: hidden;
+}
+.overlay.open { display: flex; }
+.overlay > header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: var(--topbar-h);
+  padding: 0 var(--sp-4);
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--card-border);
+}
+
+/* 浮层背后的遮罩层：类由 app.js 的 syncScrollLock 切换（与滚动锁同一处，免得出现"层关了、
+   模糊还留着"）。放在 body 上而不是浮层内部：负 z-index 的后代会被父元素自己的背景盖住，
+   backdrop-filter 模糊到的就是那块不透明的底色，等于没模糊；放在 body 上背后才是真正的看板。
+   模糊只给 2px：再强一点看板就被糊成一片色块，"透视"的意思就没了 */
+body.overlay-open::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-scrim);
+  background: var(--scrim-bg);
+  backdrop-filter: blur(var(--scrim-blur));
 }
 
 * { box-sizing: border-box; }
@@ -127,7 +269,7 @@ body {
   background: var(--card-bg);
   border-left: 1px solid var(--card-border);
   border-right: 1px solid var(--card-border);
-  transition: transform 0.3s ease;
+  transition: transform var(--dur-move) var(--ease-decel);
   will-change: transform;
 }
 
@@ -193,18 +335,23 @@ body {
  */
 .badge {
   flex: none;
-  background: var(--badge-bg);
-  border-radius: 11px;
-  padding: 3px 5px;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
   min-width: 18px;
-  min-height: 18px;
-  line-height: 11px;
-  font-weight: 600;
-  text-align: center;
+  padding: 0 var(--sp-1);
+  /* 胶囊圆角用 pill 而不是"高度的一半"那个巧合值：徽标换高度时它不会跟着坏掉 */
+  border-radius: var(--radius-pill);
+  background: var(--badge-bg);
   color: var(--badge-fg, var(--text-dim));
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  /* 等宽数字：计数从 9 变 10 时徽标宽度不跳 */
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
-.badge.err { color: var(--git-conflicting); }
+.badge.err { color: var(--status-error, var(--git-conflicting)); }
 
 /*
  * 变更文件行。结构：[类型图标] [路径] …… [行尾状态字母]
@@ -234,6 +381,14 @@ body {
   display: flex;
   align-items: center;
   color: var(--text-dim);
+}
+/* 说明行的正文必须放进一个盒子里才能出省略号：flex 容器里的匿名文本项不响应
+   text-overflow，长 git 报错会被硬裁掉、连省略号都没有（文件行不受影响，它有 .path 那个盒子） */
+.row.note .text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /*
@@ -334,16 +489,15 @@ body {
  *   g-*  → 只决定同一色相下的深浅（它属于哪一组）
  * 底色由 --tint 与卡片底色混出，样式表里因此仍然没有任何颜色字面量
  */
-.row.file { background: color-mix(in srgb, var(--tint, var(--card-bg)) 12%, var(--card-bg)); }
-/* 已暂存那组更实、未暂存那组更淡——这就是两组的"小幅度区分"。不用两种色相区分：
-   同一个文件在两组各出现一次时（例如 staged M 与 unstaged M），两种色相会让"它到底怎么了"
-   更难判断；深浅只表达"已经进索引 / 还没进"，不抢状态信息的位 */
+/* 状态底色只给"有分组"的行：分组只有 未合并 / 已暂存 / 未暂存 三种，
+   因此这里不给 .row.file 兜底底色，而是逐个分组写，避免出现一条谁也不生效的死规则 */
+.row.file.g-merge { background: color-mix(in srgb, var(--tint, var(--card-bg)) 12%, var(--card-bg)); }
 .row.file.g-index { background: color-mix(in srgb, var(--tint, var(--card-bg)) 18%, var(--card-bg)); }
 .row.file.g-work { background: color-mix(in srgb, var(--tint, var(--card-bg)) 9%, var(--card-bg)); }
 
-/* hover 仍是平铺的 list.hoverBackground：与 VSCode 的行反馈一致，也避免两种半透明叠加后
-   越看越花。它必须写在上面那些之后——选择器权重相同时靠源码顺序决定胜负 */
-.row.file:hover { background: var(--hover-bg); }
+/* hover 用叠一层半透明色而不是直接平铺 --hover-bg：直接平铺会把上面那层状态底色抹掉，
+   而抹掉的时机恰好是用户要点这一行的时候。叠色则保住色相，只加深一点 */
+.row.file:hover { background-image: linear-gradient(var(--hover-bg), var(--hover-bg)); }
 
 /* 续段标识：卡片被列边界切开后，下一列顶部用它说明「这是谁的后续」。
    不画左右实线边框而用虚线，是为了在视觉上与卡片主体区分开 */
@@ -361,7 +515,7 @@ body {
   border-left: 1px dashed var(--card-border);
   border-right: 1px dashed var(--card-border);
   border-radius: 7px 7px 0 0;
-  transition: transform 0.3s ease;
+  transition: transform var(--dur-move) var(--ease-decel);
   will-change: transform;
   overflow: hidden;
   white-space: nowrap;
@@ -395,12 +549,12 @@ body {
 #status {
   /* margin-right: auto 把它留在左端、把后面的控件推到右端 */
   margin: 0 auto 0 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   pointer-events: none;
-  transition: color 0.2s ease;
+  transition: color var(--dur-fast) ease;
 }
-#status.error { color: var(--git-conflicting); }
+#status.error { color: var(--status-error, var(--git-conflicting)); }
 
 /* ——— 看板底栏 ———
  * 整宽固定在底部，左侧「更新于…」，右侧是看板层面的动作（拉取全部、主题选择）与它们的结果。
@@ -413,48 +567,36 @@ body {
   right: 0;
   bottom: 0;
   height: var(--statusbar-h);
-  /* 低于 diff 覆盖层（10）：覆盖层打开时整条被盖住，这些动作作用于整个看板而不是当前 diff */
-  z-index: 5;
+  /* 低于浮层（--z-card / --z-diff）：浮层打开时整条被盖住，这些动作作用于整个看板而不是当前那层 */
+  z-index: var(--z-statusbar);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-4);
   background: var(--card-bg);
   border-top: 1px solid var(--card-border);
 }
-#fetch-btn {
-  flex: none;
-  font: inherit;
-  /* 主按钮取 VSCode 的 button.*：底色与前景来自同一组令牌。以前底色借徽章的、文字借全局
-     前景色，两者一旦不搭就是"看不清"（2026 Light 下深灰字压重蓝底），见 ui_theme.go 的说明 */
-  color: var(--btn-fg);
-  background: var(--btn-bg);
-  border: 0;
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-}
-/* hover 回落到 list.hoverBackground：button.hoverBackground 在上游是 lighten()/darken()
-   算出来的，没有可照抄的字面值，因此不进 defaults.json（见 internal/theme/theme.go 的说明） */
-#fetch-btn:hover { background: var(--btn-hover-bg, var(--hover-bg)); }
-/* 拉取进行中置灰：一次只允许一个写操作在飞 */
-#fetch-btn:disabled { opacity: 0.5; cursor: default; }
+#fetch-btn:disabled { cursor: default; }
 
 /* 主题选择器：初始 disabled，由 app.js 填完选项后解开——
    这样在清单注入失败时它是一个灰色不可点的控件，而不是一个空下拉框。
-   配色取 dropdown.*：它就是 VSCode 里下拉框的那组令牌（inputColors.ts） */
+   配色取 dropdown.*：它就是 VSCode 里下拉框的那组令牌（inputColors.ts）；高度与按钮同一档 */
 #theme-select {
   flex: none;
+  height: var(--control-h);
   max-width: 12em;
   font: inherit;
   color: var(--dropdown-fg);
   background: var(--dropdown-bg);
   border: 1px solid var(--dropdown-border, var(--card-border));
-  border-radius: 4px;
-  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--sp-2);
   cursor: pointer;
 }
-#theme-select:disabled { opacity: 0.5; cursor: default; }
+#theme-select:disabled {
+  color: var(--disabled-fg);
+  cursor: default;
+}
 
 /* 最近一次看板层面操作的结果。可能含 git 的多行原话，因此允许折行并限宽限高——
    限宽免得它把按钮挤出屏幕，限高免得一段长报错把整块看板盖住（超出部分可滚动查看） */
@@ -469,7 +611,7 @@ body {
   color: var(--cont-fg);
 }
 #op:empty { display: none; }
-#op.error { color: var(--git-conflicting); }
+#op.error { color: var(--status-error, var(--git-conflicting)); }
 
 /* 尊重「减少动态效果」的系统设置：这类用户对位移动画敏感，动画会让界面难以使用。
    滚轮那条平滑在这里管不到（它已改由 app.js 驱动），app.js 会用同一个媒体查询
@@ -486,82 +628,17 @@ body {
  * app.js 里的 layout 就量不到行高（offsetHeight 归零），关闭后必须先重排才能恢复——
  * 而"盖住但不移出布局"让看板始终维持着关闭前的状态，回来时不需要重排、也不会闪一下
  */
-#diff {
-  position: fixed;
-  /* 近乎全屏，而不是铺满整屏：四周留白 + 圆角 + 阴影，一眼就能看出"这是浮在看板之上的一层
-     面板"，被盖住的看板则由 body.diff-open::before 那层模糊虚化后透出来。
-     留白取 18px 而不是与 --page-pad 相等的 16px：两者相等时面板的边线与卡片的边线会糊成
-     一条，反而看不出层次 */
-  inset: 18px;
-  /* 默认不显示：用 display 而不是 visibility，未打开时不参与键盘 Tab 序 */
-  display: none;
-  flex-direction: column;
-  /* 浮层底色取 editorWidget.background：VSCode 的浮层用它，比 editor.background 略亮，
-     正好把面板从底下的看板里"抬"起来。取不到时回落到 editor.background */
-  background: var(--panel-bg, var(--bg));
-  border: 1px solid var(--card-border);
-  border-radius: 8px;
-  /* widget.shadow 是 VSCode 给浮层用的阴影令牌，样式表里因此不需要任何颜色字面量 */
-  box-shadow: 0 8px 32px var(--widget-shadow, transparent);
-  /* 圆角要真的裁掉子元素（标题栏与正文都是直角），否则四角会露出内容 */
-  overflow: hidden;
-  /* 盖住 #empty 与底栏（#tools 是 z-index 5），否则底栏会浮在面板之上 */
-  z-index: 10;
-}
-#diff.open { display: flex; }
+/* diff 只声明自己的层级与两处归属它的东西：几何、底色、标题栏都在 .overlay 里 */
+#diff { z-index: var(--z-diff); }
 
-/* 面板背后的模糊层：只在 diff 打开时有（类由 app.js 的 syncScrollLock 切换，与滚动锁同一处，
-   免得出现"层已经关了、模糊还留着"）。为什么放在 body 上而不是 #diff 内部：负 z-index 的后代
-   会被父元素自己的背景盖住，backdrop-filter 模糊到的就是那块不透明的底色，等于没模糊；
-   放在 body 上，它的背后才是真正的看板 */
-body.diff-open::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  /* 低于面板（10）、高于看板与底栏（5），正好夹在两者之间 */
-  z-index: 9;
-  /* 半透明底色 + backdrop-filter 是"把底下内容虚化"的组合：只写 blur 也能模糊，
-     但叠一点底色能让面板与看板的对比更清楚（对比度不足时虚化看起来只是"花"） */
-  background: color-mix(in srgb, var(--bg) 40%, transparent);
-  backdrop-filter: blur(6px);
-}
-
-#diff header {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: var(--card-bg);
-  border-bottom: 1px solid var(--card-border);
-}
-
-/* 返回按钮取 VSCode 的次要按钮令牌（button.secondary*）：返回不是主操作，用它才不会跟
-   "提交"那颗主按钮抢眼。面板与 diff 两层各有一个返回键，外观共用同一套规则 */
-#diff-back,
-#repo-back {
-  flex: none;
-  font: inherit;
-  color: var(--btn-secondary-fg);
-  background: var(--btn-secondary-bg);
-  border: 1px solid var(--card-border);
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-}
-#diff-back:hover,
-#repo-back:hover { background: var(--btn-secondary-hover-bg, var(--hover-bg)); }
-
-#diff-title,
-#repo-title {
+#diff-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 700;
 }
-/* 标题里的分支名（面板用）与文件路径（diff 用）比主体淡一档，与文件行里"目录淡化"一致 */
-#diff-title .dir,
-#repo-title .dir {
+/* 标题里的文件路径比主体淡一档，与文件行里"目录淡化"一致 */
+#diff-title .dir {
   font-weight: 400;
   color: var(--text-dim);
 }
@@ -570,19 +647,18 @@ body.diff-open::before {
 #diff-esc {
   margin-left: auto;
   flex: none;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
-#diff-esc kbd {
+/* 键帽：上游 keybindingLabel.* 是一整组（底色带透明度、前景、边框），三者都照抄进 defaults.json */
+kbd {
   font: inherit;
-  border: 1px solid var(--card-border);
-  border-radius: 3px;
-  padding: 1px 4px;
-  /* 原来借的是徽章底色：浅色主题里那是重蓝块，键帽不该长成那样。键帽在 VSCode 里是
-     keybindingLabel.*，但它的默认值是带透明度的 RGBA，没有可照抄的十六进制字面量，
-     不值得为一个小键帽固化一份换算结果，因此改用中性边框勾勒 */
-  background: none;
-  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  padding: 1px var(--sp-1);
+  border: 1px solid var(--kbd-border, var(--card-border));
+  border-radius: var(--radius-xs);
+  background: var(--kbd-bg, transparent);
+  color: var(--kbd-fg, var(--text-dim));
 }
 
 /* diff 正文是唯一的纵向滚动容器：overscroll-behavior 阻断滚动链，
@@ -658,61 +734,6 @@ pre.diff .meta { color: var(--text-dim); }
 .row.file { cursor: pointer; }
 
 /*
- * ——— 仓库面板 ———
- *
- * 点仓库标题行进入，是这个仓库的主页面：整仓 diff 从这里进去，（后面要做的）分支图也是
- * 这里的一个入口。骨架与 diff 覆盖层相同，但层级更低——diff 从面板里打开，浮在它上面
- */
-#repo {
-  position: fixed;
-  inset: 0;
-  display: none;
-  flex-direction: column;
-  background: var(--bg);
-  /* 低于 diff 覆盖层（10）：从面板里打开整仓 diff 时，diff 浮在面板之上 */
-  z-index: 8;
-}
-#repo.open { display: flex; }
-
-#repo header {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: var(--card-bg);
-  border-bottom: 1px solid var(--card-border);
-}
-
-/* 分支与领先/落后的汇总，靠右；与看板标题行上的那串元信息同一套语义 */
-#repo-state {
-  margin-left: auto;
-  flex: none;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-#repo-body {
-  flex: 1 1 auto;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 12px;
-}
-
-/* 面板里的入口行：看板行同一套观感（22px 高、hover 高亮、行尾计数徽标） */
-.entry {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--row-h);
-  padding: 0 10px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.entry:hover { background: var(--hover-bg); }
-.entry .badge { margin-left: auto; }
-
-/*
  * ——— 行内动作：暂存 / 取消暂存 ———
  *
  * 与 VSCode 一样只在鼠标移入该行时出现。这里用 visibility 而不是 display：
@@ -741,61 +762,15 @@ pre.diff .meta { color: var(--text-dim); }
   cursor: pointer;
 }
 .row:hover .act { visibility: visible; }
-.act:hover { background: var(--hover-bg); color: var(--text); }
+/* 分组行头上的整组动作常亮：它们不是"鼠标移到这一行才出现"的行内动作，而是这一组的常设入口 */
+.act.always { visibility: visible; }
+/* 图标按钮的 hover 取 toolbar.hoverBackground：它才是"工具条上的动作"那个语义，
+   行的 list.hoverBackground 是"列表行"的语义 */
+.act:hover { background: var(--toolbar-hover-bg, var(--hover-bg)); color: var(--text); }
 
 /* 写操作进行中：禁止再点动作按钮（避免同一文件连点两次），并把光标换成进行中 */
 #board.busy { cursor: progress; }
 #board.busy .act { pointer-events: none; }
-
-/* ——— 覆盖层里的提交区 ——— */
-
-/* flex: 1 让提交区吃掉标题与 Esc 提示之间的全部空间，输入框因此能随窗口伸展 */
-#commit {
-  flex: 1 1 auto;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  justify-content: flex-end;
-}
-#commit-msg {
-  flex: 1 1 200px;
-  min-width: 100px;
-  max-width: 380px;
-  font: inherit;
-  /* 输入框取 input.*：它和按钮、下拉框一样是 VSCode 里独立的一组令牌 */
-  color: var(--input-fg, var(--text));
-  background: var(--input-bg, var(--bg));
-  border: 1px solid var(--card-border);
-  border-radius: 4px;
-  padding: 3px 6px;
-}
-#commit-msg:focus {
-  outline: none;
-  /* 聚焦色取 focusBorder，而不是 git-modified——后者是"这个文件被改过"的语义，
-     与"这个输入框拿到了焦点"毫无关系 */
-  border-color: var(--focus-border, var(--git-modified));
-}
-#commit button {
-  flex: none;
-  font: inherit;
-  /* 提交是主操作：button.* */
-  color: var(--btn-fg);
-  background: var(--btn-bg);
-  border: 0;
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-}
-#commit button:hover { background: var(--btn-hover-bg, var(--hover-bg)); }
-/* 推送与"提交"同排但次一等：用 button.secondary*，与返回键同一套 */
-#commit #push-btn {
-  color: var(--btn-secondary-fg);
-  background: var(--btn-secondary-bg);
-  border: 1px solid var(--card-border);
-}
-#commit #push-btn:hover { background: var(--btn-secondary-hover-bg, var(--hover-bg)); }
-/* 正在写的时候两个按钮都置灰：一次只允许一个写操作在飞 */
-#commit button:disabled { opacity: 0.5; cursor: default; }
 
 /* 最近一次写操作的结果。空的时候整行消失（:empty 对"没有任何子节点"成立，
    而 textContent = '' 正好清空子节点） */
@@ -810,43 +785,15 @@ pre.diff .meta { color: var(--text-dim); }
   border-bottom: 1px solid var(--card-border);
 }
 #diff-op:empty { display: none; }
-#diff-op.error { color: var(--git-conflicting); }
+#diff-op.error { color: var(--status-error, var(--git-conflicting)); }
 
-/* ——— 分支图 ———
+/* ——— 仓库卡片（分支图） ———
  *
- * 与仓库面板同一套骨架（铺满整屏 + 顶栏）：它是"这个仓库的另一页"，不是浮层。
- * 层级夹在面板（8）与 diff（10）之间，理由见 index.html 的说明
+ * 点看板上的仓库名直接进来，默认就是这个仓库的提交分支图。几何、底色、标题栏由 .overlay 给，
+ * 这里只声明自己的层级（低于 diff、高于看板与底栏）与卡片内特有的几块：顶栏控件、提交行、列表
  */
-#graph {
-  position: fixed;
-  inset: 0;
-  display: none;
-  flex-direction: column;
-  background: var(--bg);
-  z-index: 9;
-}
-#graph.open { display: flex; }
+#graph { z-index: var(--z-card); }
 
-#graph header {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: var(--card-bg);
-  border-bottom: 1px solid var(--card-border);
-}
-#graph-back {
-  flex: none;
-  font: inherit;
-  color: var(--btn-secondary-fg);
-  background: var(--btn-secondary-bg);
-  border: 1px solid var(--card-border);
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-}
-#graph-back:hover { background: var(--btn-secondary-hover-bg, var(--hover-bg)); }
 #graph-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -854,113 +801,148 @@ pre.diff .meta { color: var(--text-dim); }
   font-weight: 700;
 }
 #graph-title .dir { font-weight: 400; color: var(--text-dim); }
-#graph-count { flex: none; font-size: 11px; color: var(--text-dim); }
-/* 过滤开关推到右端：它作用在整张图上，与标题分开才不会看成一回事 */
+#graph-state,
+#graph-count { flex: none; font-size: var(--fs-xs); color: var(--text-dim); }
+#graph-esc { flex: none; font-size: var(--fs-xs); color: var(--text-dim); }
+
+/* 过滤开关是这一排控件的起点，margin-left:auto 把它和右边的仓库操作一起推到右端 */
 #graph-filter {
   margin-left: auto;
   flex: none;
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
+  gap: var(--sp-1);
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   cursor: pointer;
 }
-#graph-esc { flex: none; font-size: 11px; color: var(--text-dim); }
-#graph-esc kbd {
+/* 分支选择器与按钮同高同档；配色取 dropdown.*（与看板底栏那个选择器同一套） */
+#graph-branch {
+  flex: none;
+  height: var(--control-h);
+  max-width: 12em;
   font: inherit;
-  border: 1px solid var(--card-border);
-  border-radius: 3px;
-  padding: 1px 4px;
+  color: var(--dropdown-fg);
+  background: var(--dropdown-bg);
+  border: 1px solid var(--dropdown-border, var(--card-border));
+  border-radius: var(--radius-sm);
+  padding: 0 var(--sp-2);
+  cursor: pointer;
 }
 
-/* 取数失败时的原话，角色与 #diff-op 相同 */
+/* 提交信息与提交按钮：VSCode 的源码管理视图里这一对也在最上方，与改动列表同处一个视图 */
+#graph-commit {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--card-border);
+}
+#graph-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-h);
+  font: inherit;
+  color: var(--input-fg, var(--text));
+  background: var(--input-bg, var(--bg));
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--sp-2);
+}
+/* 占位符要能读出来，它同样是"前景压在底色上"，因此也走对比度兜底那一对 */
+#graph-msg::placeholder { color: var(--input-placeholder, var(--text-dim)); }
+#graph-msg:focus { outline: none; border-color: var(--focus-ring); }
+
+/* 取数失败或仓库操作的结果（git 的原话），角色与 #diff-op 相同 */
 #graph-op {
   margin: 0;
-  padding: 6px 12px;
-  font-size: 12px;
-  line-height: 1.5;
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-sm);
+  line-height: var(--line-relaxed);
   white-space: pre-wrap;
   color: var(--cont-fg);
   border-bottom: 1px solid var(--card-border);
 }
 #graph-op:empty { display: none; }
-#graph-op.error { color: var(--git-conflicting); }
+#graph-op.error { color: var(--status-error, var(--git-conflicting)); }
 
 #graph-body {
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
 }
+/* 列表是卡片正文里唯一的滚动容器：overscroll-behavior 阻断滚动链，否则滚到底会去滚被盖住的看板 */
 #graph-list {
   flex: 1 1 auto;
   min-width: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 6px 0;
+  padding: var(--sp-2) 0;
 }
-#graph-splitter {
-  flex: none;
-  width: 6px;
-  cursor: col-resize;
-  background: var(--card-border);
-  /* 只在拖拽或聚焦时给反馈：常亮的色条会和泳道抢注意力 */
-  opacity: 0.35;
-}
-#graph-splitter:hover,
-#graph-splitter:focus,
-#graph-splitter.dragging {
-  opacity: 1;
-  outline: none;
-}
-#graph-detail {
-  flex: none;
-  /* 宽度由页面写进 --detail-w（不是直接写 width）：这样下面的窄窗口断点只要覆盖 width
-     就能接管布局，不需要 !important 去盖内联样式 */
-  width: var(--detail-w, 340px);
-  /* 再压一道上限：窄窗口上"配置里的 340px"会把这半屏挤到放不下泳道，
-     而配置项是用户的偏好，不该因为换了屏幕就被改写 */
-  max-width: 50%;
+
+/*
+ * 提交详情卡：鼠标移到某条提交上贴着光标出现，点一下即钉住（钉住后不随鼠标移开而消失）。
+ * 层次用 --z-hover：它比两层浮层都高——临时浮在最上面的东西
+ */
+.hovercard {
+  position: fixed;
+  z-index: var(--z-hover);
+  max-width: min(420px, 40vw);
+  max-height: 60vh;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 12px;
-  background: var(--card-bg);
-  border-left: 1px solid var(--card-border);
-  font-size: 12px;
-  line-height: 1.6;
+  padding: var(--sp-4);
+  background: var(--panel-bg, var(--bg));
+  border: 1px solid var(--editor-widget-border, var(--card-border));
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px var(--widget-shadow, transparent);
+  font-size: var(--fs-sm);
+  line-height: var(--line-relaxed);
+  /* 出现只做淡入、不做位移：跟手的卡片一旦有位移，快速划过一排提交时会看起来在抖 */
+  animation: hovercard-in var(--dur-fast) var(--ease-decel);
 }
-#graph-detail h2 { margin: 0 0 8px; font-size: 13px; }
-#graph-detail dl {
-  margin: 0 0 10px;
+/* 钉住之后不再重复淡入，并用焦点色描一圈边表明"它现在是固定的" */
+.hovercard.pinned {
+  border-color: var(--focus-ring);
+  animation: none;
+}
+@keyframes hovercard-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.hovercard h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-md); }
+.hovercard dl {
+  margin: 0 0 var(--sp-4);
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 2px 8px;
+  gap: 2px var(--sp-3);
 }
-#graph-detail dt { color: var(--text-dim); }
-#graph-detail dd { margin: 0; overflow-wrap: anywhere; }
-#graph-detail .msg {
-  margin: 0 0 10px;
+.hovercard dt { color: var(--text-dim); }
+.hovercard dd { margin: 0; overflow-wrap: anywhere; }
+.hovercard .msg {
+  margin: 0 0 var(--sp-4);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-#graph-detail .files { margin: 0; padding: 0; list-style: none; }
-#graph-detail .files li {
+.hovercard .files { margin: 0; padding: 0; list-style: none; }
+.hovercard .files li {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   height: var(--row-h);
 }
-#graph-detail .files .path {
+.hovercard .files .path {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#graph-detail .files .stat { flex: none; font-variant-numeric: tabular-nums; }
-#graph-detail .files .add { color: var(--git-added); }
-#graph-detail .files .del { color: var(--git-deleted); }
-#graph-detail .hint { color: var(--text-dim); }
+.hovercard .files .stat { flex: none; font-variant-numeric: tabular-nums; }
+.hovercard .files .add { color: var(--git-added); }
+.hovercard .files .del { color: var(--git-deleted); }
+.hovercard .hint { color: var(--text-dim); }
 
 /*
  * 提交行。行高必须等于泳道高度（app.js 的 SWIMLANE_HEIGHT = 22，也是 --row-h 的取值）：
@@ -969,14 +951,20 @@ pre.diff .meta { color: var(--text-dim); }
 .g-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   height: var(--row-h);
-  padding: 0 10px;
+  padding: 0 var(--sp-4);
   cursor: pointer;
   white-space: nowrap;
 }
-.g-row:hover,
-.g-row.selected { background: var(--hover-bg); }
+.g-row:hover { background: var(--hover-bg); }
+/* 选中态与 hover 分开：hover 是"鼠标正经过"，选中是"用户钉住了这一条"。
+   两者同色的话，鼠标一移开就看不出刚才选的是哪条了 */
+.g-row.selected {
+  background: var(--list-selected-bg, var(--hover-bg));
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
 /* 泳道列固定宽度（按已加载行里最宽的泳道算），标题因此左边缘对齐；
    SVG 在里面左对齐，泳道少的行不会被拉宽 */
 .g-row .lanes { flex: none; height: var(--row-h); }
@@ -985,20 +973,21 @@ pre.diff .meta { color: var(--text-dim); }
 .g-row .hash {
   flex: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
-.g-row .meta { flex: none; font-size: 11px; color: var(--text-dim); }
-/* 引用标签（分支 / tag）：几何与徽章一致，颜色用引用自身的配色点出来 */
+.g-row .meta { flex: none; font-size: var(--fs-xs); color: var(--text-dim); }
+/* 引用标签（分支 / tag）：与计数徽标同一套观感（18px 高、胶囊圆角），
+   颜色用引用自身的配色点出来 */
 .g-row .ref {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  border-radius: 9px;
-  padding: 1px 6px;
-  font-size: 11px;
-  line-height: 15px;
+  gap: var(--sp-1);
+  height: 18px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
   background: var(--badge-bg);
   color: var(--badge-fg, var(--text-dim));
   max-width: 14em;
@@ -1009,21 +998,5 @@ pre.diff .meta { color: var(--text-dim); }
   flex: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
-}
-
-/*
- * 窄窗口：左右并排放不下（泳道最少也要几十像素，详情面板再有下限），改成上下排，
- * 各自占满宽度；分隔条在这时候没有意义，收起来
- */
-@media (max-width: 720px) {
-  #graph-body { flex-direction: column; }
-  #graph-detail {
-    width: auto;
-    max-width: none;
-    max-height: 45%;
-    border-left: 0;
-    border-top: 1px solid var(--card-border);
-  }
-  #graph-splitter { display: none; }
+  border-radius: var(--radius-pill);
 }

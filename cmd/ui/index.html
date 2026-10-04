@@ -57,7 +57,7 @@
 <div id="tools">
   <p id="status" role="status" aria-live="polite"></p>
   <span id="op" role="status" aria-live="polite"></span>
-  <button id="fetch-btn" type="button"></button>
+  <button id="fetch-btn" class="btn btn--primary" type="button"></button>
   <!-- 主题选择器：选项由 app.js 按服务端注入的那份清单搭出来（含"跟随系统"与各来源分组） -->
   <select id="theme-select" disabled></select>
   <!-- 跟随系统时的深、浅两套偏好，对应 VSCode 的 workbench.preferredDark/LightColorTheme。
@@ -78,18 +78,10 @@
   放到脚本之后取到的就是 null，表现为"页面一片空白、控制台报 addEventListener of null"
   ——本轮就是这么踩的，排查时看到的是白屏，很难联想到是标签顺序
 -->
-<div id="diff" aria-hidden="true">
+<div id="diff" class="overlay" aria-hidden="true">
   <header>
-    <button id="diff-back" type="button"></button>
+    <button id="diff-back" class="btn btn--secondary" type="button"></button>
     <span id="diff-title"></span>
-    <!-- 提交区：写提交信息并提交、推送。放在标题栏里而不是另起一栏，是因为它作用于
-         "当前这个仓库"，而打开覆盖层时恰好已经确定了是哪个仓库；三个控件的文字与
-         占位符都由 app.js 按语言填（这里只放结构） -->
-    <span id="commit">
-      <input id="commit-msg" type="text" autocomplete="off" spellcheck="false">
-      <button id="commit-btn" type="button"></button>
-      <button id="push-btn" type="button"></button>
-    </span>
     <span id="diff-esc"><kbd>Esc</kbd></span>
   </header>
   <!-- 最近一次写操作的结果：成功显示 git 的原话，失败显示 git 的原话或错误。
@@ -98,49 +90,49 @@
   <div id="diff-body"></div>
 </div>
 <!--
-  仓库面板：点看板上的仓库标题行进入。整仓 diff 从这里进去，（后面要做的）分支图也会是
-  这里的一个入口——它是"某个仓库的主页面"。
+  仓库卡片：点看板上的仓库名直接进来，默认就是这个仓库的提交分支图。
+  它是一层浮在看板之上的圆角卡片（四周留白、圆角、阴影，背后模糊透视看板），与 diff 同一套视觉。
+  这里刻意不做"替换整页"的展开：看板始终在后面，关掉卡片就回到刚才看的那一列。
 
-  它与 diff 覆盖层是两层独立的东西：面板在下、diff 浮在其上，关掉 diff 回到面板，
-  面板本身不关。层级因此必须是 面板 < diff（见 style.css 的 z-index）
+  顶栏放的是"作用在这个仓库上的操作"——分支选择、拉取、同步、推送，以及进入全仓 diff 的入口；
+  下面一行是提交信息与提交按钮。两者都在卡片里，不散落到页面别处（这也是不再单独设一个
+  仓库面板层的原因：进来就是分支图，仓库操作就在图的上方）
 -->
-<div id="repo" aria-hidden="true">
+<div id="graph" class="overlay" aria-hidden="true">
   <header>
-    <button id="repo-back" type="button"></button>
-    <span id="repo-title"></span>
-    <span id="repo-state"></span>
-  </header>
-  <div id="repo-body"></div>
-</div>
-<!--
-  分支图：从仓库面板的入口行进入，画这个仓库的提交历史与泳道（照搬 VSCode 源码管理图那套算法）。
-
-  层级夹在面板（8）与 diff（10）之间：从面板进来、从详情里的文件还能再进 diff
-
-  左半是提交列表（每行一条泳道 SVG + 引用标签 + 标题），右半是选中提交的详情，中间那条分隔条
-  可以拖拽调宽，宽度写回配置（graph_detail_width）。列表里只有加载到的那些行，滚到底再续取
--->
-<div id="graph" aria-hidden="true">
-  <header>
-    <button id="graph-back" type="button"></button>
+    <button id="graph-back" class="btn btn--secondary" type="button"></button>
     <span id="graph-title"></span>
+    <span id="graph-state"></span>
     <span id="graph-count"></span>
     <!-- 默认跨全部分支与 tag；勾掉就只看当前分支（大仓库的泳道会少很多） -->
     <label id="graph-filter">
       <input id="graph-all-refs" type="checkbox" checked>
       <span id="graph-filter-label"></span>
     </label>
+    <select id="graph-branch" disabled></select>
+    <button id="graph-fetch" class="btn btn--secondary" type="button"></button>
+    <button id="graph-sync" class="btn btn--secondary" type="button"></button>
+    <button id="graph-push" class="btn btn--secondary" type="button"></button>
+    <button id="graph-diff" class="btn btn--secondary" type="button"></button>
     <span id="graph-esc"><kbd>Esc</kbd></span>
   </header>
-  <!-- 取数失败时的原话（git 的报错、或"仓库不在配置里"这类）。与 #diff-op 同样的角色，
-       单独一行是因为列表每次续取都会重建，塞进列表里会被冲掉 -->
+  <!-- 提交信息与提交：VSCode 的源码管理视图里这两件也在最上方，与"改动列表"同处一个视图 -->
+  <div id="graph-commit">
+    <input id="graph-msg" type="text" autocomplete="off" spellcheck="false">
+    <button id="graph-commit-btn" class="btn btn--primary" type="button"></button>
+  </div>
+  <!-- 取数失败或仓库操作的结果（git 的原话）。与 #diff-op 同样的角色，单独一行是因为
+       列表每次续取都会重建，塞进列表里会被冲掉 -->
   <p id="graph-op"></p>
   <div id="graph-body">
     <div id="graph-list" tabindex="0"></div>
-    <div id="graph-splitter" role="separator" aria-orientation="vertical" tabindex="0"></div>
-    <aside id="graph-detail"></aside>
   </div>
 </div>
+<!--
+  提交详情卡：鼠标移到泳道图上某条提交时贴着光标出现，点一下即钉住（钉住之后不随鼠标移动消失）。
+  它挂在 body 上而不是卡片内部：定位要跟光标走，放在有 transform/overflow 的容器里会被裁掉
+-->
+<div id="graph-popup" class="hovercard" hidden></div>
 <script src="app.js"></script>
 </body>
 </html>

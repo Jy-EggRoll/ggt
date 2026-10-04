@@ -52,6 +52,13 @@ const MSG = {
     diffTruncated: 'Output truncated — the change is too large to show in full',
     groupUnmerged: 'Unmerged Changes',
     changes: 'Changes',
+    fetchRepo: 'Fetch',
+    sync: 'Sync',
+    branchLabel: 'Branch',
+    openDiff: 'Changes ({{n}})',
+    openWholeRepoDiff: 'Show the whole repository diff',
+    stageAll: 'Stage all changes',
+    unstageAll: 'Unstage all changes',
     back: 'Back',
     stage: 'Stage this file',
     unstage: 'Unstage this file',
@@ -73,10 +80,8 @@ const MSG = {
     graphLoading: 'Loading…',
     graphEnd: 'All commits loaded',
     graphLimitReached: 'Reached the {{n}}-commit limit; uncheck "All branches and tags" to see further back',
-    graphDetailHint: 'Pick a commit to see its details',
     graphNoCommits: 'No commits yet',
     graphNoSubject: '(no subject)',
-    graphResize: 'Resize the detail panel',
     graphFiles: 'Changed files',
     graphFilesSummary: '{{n}} files, +{{adds}} −{{dels}}',
     graphBinary: 'binary',
@@ -106,6 +111,13 @@ const MSG = {
     diffTruncated: '输出过大，已截断，仅显示前面一部分',
     groupUnmerged: '未合并的改动',
     changes: '改动',
+    fetchRepo: '拉取',
+    sync: '同步',
+    branchLabel: '分支',
+    openDiff: '改动 {{n}}',
+    openWholeRepoDiff: '查看整个仓库的改动',
+    stageAll: '暂存全部',
+    unstageAll: '全部取消暂存',
     back: '返回',
     stage: '暂存这个文件',
     unstage: '取消暂存这个文件',
@@ -127,10 +139,8 @@ const MSG = {
     graphLoading: '加载中…',
     graphEnd: '已加载全部',
     graphLimitReached: '已到 {{n}} 条上限，可取消勾选「全部分支与 tag」往回看',
-    graphDetailHint: '点一条提交看它的详情',
     graphNoCommits: '还没有提交',
     graphNoSubject: '（无提交信息）',
-    graphResize: '调整详情面板宽度',
     graphFiles: '改动的文件',
     graphFilesSummary: '{{n}} 个文件，+{{adds}} −{{dels}}',
     graphBinary: '二进制',
@@ -162,7 +172,8 @@ function t(key, vars) {
 const POLL_MS = 5000;
 
 // 卡片之间的纵向间距。与 CSS 无关：行的位置完全由本文件计算
-const GAP = 16;
+// 列间距也从 CSS 变量读：它是布局参数，与 --col-w 一样只该有一处定义
+const GAP = cssVar('--col-gap', 16);
 
 // 滚轮平滑的参数。本轮动画的固定时长与曲线照抄宿主已有的
 // AvaloniaDesktopKit/Behaviors/SmoothWheelScroll.cs（它又刻意与 Slint 1.18 对齐），
@@ -185,39 +196,38 @@ const diffBackEl = document.getElementById('diff-back');
 const diffTitleEl = document.getElementById('diff-title');
 const diffBodyEl = document.getElementById('diff-body');
 const diffOpEl = document.getElementById('diff-op');
-const commitMsgEl = document.getElementById('commit-msg');
-const commitBtnEl = document.getElementById('commit-btn');
-const pushBtnEl = document.getElementById('push-btn');
+// 提交信息与提交按钮属于"仓库卡片"（VSCode 的源码管理视图里这一对也在最上方）
+const commitMsgEl = document.getElementById('graph-msg');
+const commitBtnEl = document.getElementById('graph-commit-btn');
 const fetchBtnEl = document.getElementById('fetch-btn');
 const themeSelectEl = document.getElementById('theme-select');
 // 跟随系统时分别用哪套深色/浅色主题的两个下拉框，只在"跟随系统"下显示
 const themeDarkEl = document.getElementById('theme-dark');
 const themeLightEl = document.getElementById('theme-light');
-// 分支图：容器、列表、详情、分隔条与过滤开关
+// 仓库卡片：容器、列表、头部，以及顶栏上的仓库操作（分支选择、拉取、同步、推送、全仓 diff）
 const graphEl = document.getElementById('graph');
 const graphListEl = document.getElementById('graph-list');
-const graphDetailEl = document.getElementById('graph-detail');
 const graphTitleEl = document.getElementById('graph-title');
+const graphStateEl = document.getElementById('graph-state');
 const graphCountEl = document.getElementById('graph-count');
 const graphOpEl = document.getElementById('graph-op');
 const graphBackEl = document.getElementById('graph-back');
-const graphSplitterEl = document.getElementById('graph-splitter');
 const graphAllRefsEl = document.getElementById('graph-all-refs');
 const graphFilterLabelEl = document.getElementById('graph-filter-label');
+const graphBranchEl = document.getElementById('graph-branch');
+const graphFetchEl = document.getElementById('graph-fetch');
+const graphSyncEl = document.getElementById('graph-sync');
+const graphPushEl = document.getElementById('graph-push');
+const graphDiffEl = document.getElementById('graph-diff');
+// 提交详情卡（悬浮即显，点一下钉住）
+const graphPopupEl = document.getElementById('graph-popup');
 const boardOpEl = document.getElementById('op');
-const repoEl = document.getElementById('repo');
-const repoBackEl = document.getElementById('repo-back');
-const repoTitleEl = document.getElementById('repo-title');
-const repoStateEl = document.getElementById('repo-state');
-const repoBodyEl = document.getElementById('repo-body');
 
 // 返回按钮的文字在 JS 里填：它要跟随语言，而 index.html 是静态骨架、不参与翻译
 diffBackEl.textContent = '← ' + t('back');
-repoBackEl.textContent = '← ' + t('back');
-commitBtnEl.textContent = t('commit');
-pushBtnEl.textContent = t('push');
-commitMsgEl.placeholder = t('commitMsg');
+graphBackEl.textContent = '← ' + t('back');
 fetchBtnEl.textContent = t('fetch');
+// 卡片里的几个按钮与输入框的文案由 openRepoCard 按当前语言填（它们只在打开卡片时才出现）
 
 // 从 URL 取 token。页面是由 Go 端带 token 的地址打开的，之后所有请求改用请求头传递：
 // 把凭据留在 URL 里会进入浏览器历史、也可能随 Referer 泄露
@@ -513,8 +523,20 @@ function rowHTML(s) {
   }
 
   if (s.kind === 'group') {
-    // 分组行头：组名 + 该组的文件数。不可点（没有 kind 为 group 的点击分支）
+    // 分组行头：组名 + 该组的文件数，外加"整组动作"——未暂存那组给 +（暂存全部），
+    // 已暂存那组给 −（全部取消暂存）。
+    // 未合并组刻意不给按钮：冲突得由人来分辨，批量暂存会把还带着冲突标记的文件一起 stage 进去
+    // （与单个文件那个按钮同一套理由），而"点一下全部暂存"恰恰是最容易误触的操作
+    let action = '';
+    if (s.group.id === 'work') {
+      action = '<button class="act always" type="button" data-act="stage-all" title="' +
+        esc(t('stageAll')) + '">+</button>';
+    } else if (s.group.id === 'index') {
+      action = '<button class="act always" type="button" data-act="unstage-all" title="' +
+        esc(t('unstageAll')) + '">−</button>';
+    }
     return '<span class="group-name">' + esc(t(s.group.label)) + '</span>' +
+      (action ? '<span class="acts">' + action + '</span>' : '') +
       '<span class="badge">' + s.count + '</span>';
   }
 
@@ -548,7 +570,9 @@ function rowHTML(s) {
     );
   }
 
-  return esc(s.text || '');
+  // 说明行（例如"采集失败: <git 的原话>"）的正文要放进一个盒子里：flex 容器里的匿名文本项
+  // 不响应 text-overflow，长报错会被硬裁掉、连省略号都没有
+  return '<span class="text">' + esc(s.text || '') + '</span>';
 }
 
 // reconcile 把行元素调整到与 specs 一致，尽量复用已有元素。
@@ -738,24 +762,18 @@ let diffScrollX = 0;
 // 每次打开的序号：响应回来时用它丢弃"用户已经关掉或换了目标"的那次结果
 let diffSeq = 0;
 
-// panelOpen / panelSpec 是仓库面板的开合与它展示的那个仓库。
-// 面板与 diff 是两层独立的东西：面板在下、diff 浮在其上，关掉 diff 回到面板
-let panelOpen = false;
-let panelSpec = null;
-
-// syncScrollLock 统一决定要不要锁住页面滚动。
-// 两个覆盖层各自开合，若各写各的，关掉上层时会把下层还需要的那把锁一起解开——
-// 于是面板还开着、页面却能滚动
+// syncScrollLock 统一决定要不要锁住页面滚动，并顺带切换遮罩层。
+// 遮罩与滚动锁由同一处决定：两件事都取决于"有没有浮层开着"，分头写迟早会出现
+// "层关了、模糊还在"这种半截状态
 function syncScrollLock() {
-  document.documentElement.style.overflow = diffOpen || panelOpen ? 'hidden' : '';
-  // 模糊层只在 diff 打开时铺上（见 style.css 的 body.diff-open）。它与滚动锁同一处切换：
-  // 两件事都由"有哪层覆盖层开着"决定，分头写迟早会出现"层关了、模糊还在"
-  document.body.classList.toggle('diff-open', diffOpen);
+  const overlayOpen = diffOpen || cardOpen;
+  document.documentElement.style.overflow = overlayOpen ? 'hidden' : '';
+  document.body.classList.toggle('overlay-open', overlayOpen);
 }
 
-// resume 在两个覆盖层都关掉之后恢复看板：补一次取数（期间工作区可能已经变了）并恢复轮询
+// resume 在两个浮层都关掉之后恢复看板：补一次取数（期间工作区可能已经变了）并恢复轮询
 function resume() {
-  if (diffOpen || panelOpen) return;
+  if (diffOpen || cardOpen) return;
   refresh();
   startPolling();
 }
@@ -913,7 +931,6 @@ function closeDiff() {
   if (!diffOpen) return;
   diffOpen = false;
   diffSeq++; // 作废可能还在路上的那次响应
-  if (diffSpec) draftMsg.set(diffSpec.repo.path, commitMsgEl.value);
   diffEl.classList.remove('open');
   diffEl.setAttribute('aria-hidden', 'true');
   syncScrollLock();
@@ -922,77 +939,6 @@ function closeDiff() {
   // 覆盖层期间没有刷新过看板，关闭时补一次再恢复轮询（期间工作区可能已经变了）
   resume();
 }
-
-// ——— 仓库面板 ———
-//
-// 点仓库标题行进入，它是这个仓库的主页面：整仓 diff 从这里进去，（后面要做的）分支图也会
-// 是这里的一个入口。面板与 diff 叠着用，diff 关掉之后回到面板
-
-// openRepoPanel 打开某个仓库的面板。
-// 头部状态只用快照里已有的信息，不额外打接口——面板打开时这份数据本来就是刚取的
-function openRepoPanel(spec) {
-  panelSpec = spec;
-  const r = spec.repo;
-
-  repoTitleEl.innerHTML = '<span>' + esc(r.name) + '</span>' +
-    (r.branch && !r.noCommits ? '<span class="dir"> ' + esc(r.branch) + '</span>' : '');
-  const state = [];
-  if (r.noCommits) state.push(t('noCommits'));
-  else if (r.detached) state.push(t('detached'));
-  if (r.upstream && !r.noCommits) {
-    if (r.ahead > 0) state.push(t('ahead', { n: r.ahead }));
-    if (r.behind > 0) state.push(t('behind', { n: r.behind }));
-  }
-  repoStateEl.textContent = state.join(' · ');
-  renderRepoEntries();
-
-  panelOpen = true;
-  repoEl.classList.add('open');
-  repoEl.setAttribute('aria-hidden', 'false');
-  syncScrollLock();
-  stopPolling();
-  repoBackEl.focus();
-}
-
-// renderRepoEntries 画出面板里的入口行：整仓改动与分支图。
-// 分支图那一行没有计数徽标——提交总数要打开之后取（列表接口顺带给出），
-// 为了一个徽标让面板一打开就多跑一次 git log 不划算
-function renderRepoEntries() {
-  const r = panelSpec.repo;
-  repoBodyEl.innerHTML =
-    '<div class="entry" data-entry="changes">' +
-    '<span class="entry-name">' + esc(t('changes')) + '</span>' +
-    '<span class="badge">' + r.files.length + '</span>' +
-    '</div>' +
-    '<div class="entry" data-entry="graph">' +
-    '<span class="entry-name">' + esc(t('graphEntry')) + '</span>' +
-    '</div>';
-}
-
-// closeRepoPanel 关闭面板。若 diff 还开着（用户从面板里进去了），一并关掉——
-// 返回键的语义是"回到上一层"，不是"只关掉最上面那层"
-function closeRepoPanel() {
-  if (!panelOpen) return;
-  if (diffOpen) closeDiff();
-  // 分支图是从面板进去的，返回键的语义是"回到上一层"：面板关掉时它必须一起关
-  if (graphOpen) closeGraphState();
-  panelOpen = false;
-  panelSpec = null;
-  repoEl.classList.remove('open');
-  repoEl.setAttribute('aria-hidden', 'true');
-  repoBodyEl.textContent = '';
-  syncScrollLock();
-  resume();
-}
-
-repoBackEl.addEventListener('click', closeRepoPanel);
-
-repoBodyEl.addEventListener('click', (e) => {
-  const entry = e.target.closest('.entry');
-  if (!entry) return;
-  if (entry.dataset.entry === 'changes') openDiff(panelSpec);
-  if (entry.dataset.entry === 'graph') openGraph(panelSpec);
-});
 
 // ——— 写操作：暂存 / 取消暂存 / 提交 / 推送 ———
 
@@ -1031,8 +977,11 @@ async function runWrite(path, body, show) {
   if (writeBusy) return null;
   writeBusy = true;
   board.classList.add('busy');
-  commitBtnEl.disabled = true;
-  pushBtnEl.disabled = true;
+  // 一次只允许一个写操作在飞：把卡片上的写控件与底栏那个按钮一起置灰。
+  // 分支选择器只在列表为空时保持禁用，别把它永久锁上
+  const writable = [commitBtnEl, graphPushEl, graphSyncEl, graphFetchEl];
+  for (const el of writable) el.disabled = true;
+  graphBranchEl.disabled = true;
   fetchBtnEl.disabled = true;
   let out;
   try {
@@ -1046,8 +995,8 @@ async function runWrite(path, body, show) {
   } finally {
     writeBusy = false;
     board.classList.remove('busy');
-    commitBtnEl.disabled = false;
-    pushBtnEl.disabled = false;
+    for (const el of writable) el.disabled = false;
+    graphBranchEl.disabled = graphBranchEl.options.length === 0;
     fetchBtnEl.disabled = false;
     refresh();
   }
@@ -1055,7 +1004,15 @@ async function runWrite(path, body, show) {
 }
 
 // applyFileAction 执行行内的暂存 / 取消暂存。
+// applyFileAction 执行行内动作：单个文件的暂存 / 取消暂存，以及分组行头上的整组动作
 function applyFileAction(spec, action) {
+  if (action === 'stage-all' || action === 'unstage-all') {
+    return runWrite(
+      action === 'stage-all' ? '/api/stage-all' : '/api/unstage-all',
+      { repo: spec.repo.path },
+      setBoardOp,
+    );
+  }
   return runWrite(
     action === 'stage' ? '/api/stage' : '/api/unstage',
     { repo: spec.repo.path, file: spec.file.path },
@@ -1152,25 +1109,23 @@ for (const [sel, key] of [
   });
 }
 
-// commitFromUI 用输入框里的信息提交。成功才清空输入框：失败时保留原文，
-// 便于用户改一处再试，而不是从头再敲一遍
+// commitFromUI 用卡片里那个输入框提交。成功才清空输入框：失败时保留原文，
+// 便于用户改一处再试，而不是从头再敲一遍。
+// 提交之后分支图上要多出一条新提交，因此图与看板都刷新一次
 async function commitFromUI() {
-  const out = await runWrite(
-    '/api/commit',
-    { repo: diffSpec.repo.path, message: commitMsgEl.value.trim() },
-    setOp,
-  );
+  const repo = currentRepo();
+  const out = await runWrite('/api/commit', { repo: repo.path, message: commitMsgEl.value.trim() }, setGraphOp);
   if (!out || out.error) return;
   commitMsgEl.value = '';
-  draftMsg.delete(diffSpec.repo.path);
-  await loadDiff(); // 暂存区已经变了，diff 的两段内容要跟着变
+  draftMsg.delete(repo.path);
+  await loadGraph(false);
 }
 
-// pushFromUI 推送当前分支。推送不改动两段 diff 的内容，但会把"领先 N"这类状态清掉，
-// 因此看板已在 runWrite 里重取；这里只把 diff 也重取一次以保持一致
+// pushFromUI 推送当前分支。推送不改动图的内容，但会把"领先 N"这类状态清掉，
+// 因此看板的快照在 runWrite 里已重取，这里只把卡片头部与图也刷新一次
 async function pushFromUI() {
-  const out = await runWrite('/api/push', { repo: diffSpec.repo.path }, setOp);
-  if (out && !out.error) await loadDiff();
+  const out = await runWrite('/api/push', { repo: currentRepo().path }, setGraphOp);
+  if (out && !out.error) await loadGraph(false);
 }
 
 // 点行即可打开：用事件委托而不是给每行挂监听——行元素会被复用、也会被增删，
@@ -1179,21 +1134,23 @@ board.addEventListener('click', (e) => {
   const row = e.target.closest('.row');
   if (!row || !row.__spec) return;
   const s = row.__spec;
-  if (s.kind !== 'head' && s.kind !== 'file') return;
-  // 行尾的动作按钮优先于"打开"：它是行内动作，不该顺带把整页打开
+  // 分组行头也参与：它上面有"整组暂存/取消暂存"两个按钮
+  if (s.kind !== 'head' && s.kind !== 'file' && s.kind !== 'group') return;
+  // 行尾的动作按钮优先于"打开"：它是行内动作，不该顺带把卡片打开。
+  // 分组行头上的"整组暂存/取消暂存"也走这一条
   const act = e.target.closest('.act');
   if (act) {
     applyFileAction(s, act.dataset.act);
     return;
   }
-  // 仓库标题行进的是仓库面板（整仓 diff 从面板里进），文件行直接进 diff
-  if (s.kind === 'head') openRepoPanel(s);
-  else openDiff(s);
+  // 仓库标题行直接进仓库卡片（默认就是它的分支图）；文件行进它自己的 diff
+  if (s.kind === 'head') openRepoCard(s);
+  else if (s.kind === 'file') openDiff(s);
 });
 
 diffBackEl.addEventListener('click', closeDiff);
 commitBtnEl.addEventListener('click', commitFromUI);
-pushBtnEl.addEventListener('click', pushFromUI);
+graphPushEl.addEventListener('click', pushFromUI);
 fetchBtnEl.addEventListener('click', fetchAll);
 
 // 回车即提交：写提交信息时手不用离开键盘
@@ -1203,22 +1160,22 @@ commitMsgEl.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  // 焦点在提交输入框里时，Esc 先退出输入而不是关掉卡片——否则"想退出输入框"这个动作会把
+  // 刚写好的提交信息一起丢掉（它会留在草稿里，但用户并不知道）。再按一次才关
+  if (document.activeElement === commitMsgEl) {
+    commitMsgEl.blur();
+    return;
+  }
   if (diffOpen) {
-    // 焦点在提交输入框里时，Esc 先退出输入而不是关掉整页——否则"想退出输入框"这个动作
-    // 会把刚写好的提交信息一起丢掉（它会留在草稿里，但用户并不知道）。再按一次才关
-    if (document.activeElement === commitMsgEl) {
-      commitMsgEl.blur();
-      return;
-    }
     closeDiff();
     return;
   }
-  // diff 与分支图都没开时 Esc 关面板：三层各自响应自己那一层，先上后下
-  if (graphOpen) {
-    closeGraph();
+  // 钉住的提交详情先收，再收卡片：一层一层退，顺序与打开时相反
+  if (cardPinned) {
+    hideCommitCard(true);
     return;
   }
-  if (panelOpen) closeRepoPanel();
+  if (cardOpen) closeRepoCard();
 });
 
 // ——— 主循环 ———
@@ -1275,7 +1232,7 @@ function stopPolling() {
 // 窗口尺寸变化会改变列高，必须重新布局（不重新取数）。
 // 覆盖层打开期间不重排：看板尺寸没变，重排要量行高、纯属白花，且此刻没人看得到结果
 window.addEventListener('resize', () => {
-  if (!diffOpen && !panelOpen && lastSpecs.length > 0) layout(lastEls, lastSpecs);
+  if (!diffOpen && !cardOpen && lastSpecs.length > 0) layout(lastEls, lastSpecs);
 });
 
 // 系统明暗主题切换时图标表要换一套（Seti 的浅色段是另一份平行表），因此重画一次；
@@ -1352,7 +1309,7 @@ window.addEventListener(
   (e) => {
     // diff 覆盖层或仓库面板打开时把手势让回浏览器：那边要滚的是正文（纵向），
     // 被本处理器抢去转横向会让正文完全滚不动
-    if (diffOpen || panelOpen) return;
+    if (diffOpen || cardOpen) return;
     // 横向手势（触控板横扫、Shift+滚轮）交给浏览器原生处理：那条路自带缓动，手感最好
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.deltaY === 0) return;
     e.preventDefault();
@@ -1375,7 +1332,7 @@ document.addEventListener('visibilitychange', () => {
   }
   // 覆盖层打开期间由 closeDiff / closeRepoPanel 统一恢复（它们会先 refresh 再 startPolling），
   // 这里不能抢先启动，否则看板会在覆盖层后面偷偷刷新
-  if (diffOpen || panelOpen) return;
+  if (diffOpen || cardOpen) return;
   refresh();
   startPolling();
 });
@@ -1407,19 +1364,15 @@ const CIRCLE_STROKE_WIDTH = 2;
 // 浏览器不会把它当图形画——表现为"什么都没有"，控制台也不报错
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-let graphOpen = false;
-let graphSpec = null; // 当前仓库（来自看板快照）
+let cardOpen = false;
+let cardSpec = null; // 当前仓库（来自看板快照）
 let graphItems = []; // 已加载的"提交 + 泳道"
 let graphTotal = 0;
 let graphLimit = 0; // 已请求的条数；滚到底翻倍
 let graphMaxLimit = 2000;
 let graphAllRefs = true; // 默认跨全部分支与 tag
-let graphSeq = 0; // 作废过期响应
-let graphDetailSeq = 0;
-let graphSelected = '';
-let graphDetailWidth = 340;
-let graphWidthRange = { min: 240, max: 800 };
-let graphWidthWriteTimer = null;
+let cardSeq = 0; // 作废过期响应（卡片被关掉、或换了仓库时）
+let cardSelected = ''; // 当前钉住详情的那条提交
 
 // graphColor 把接口给的变量名包成 var(...)。变量名为空（主题没写那个令牌、也没默认值）时
 // 用兜底色，而不是留一个空的 stroke——那会让线整条消失
@@ -1637,7 +1590,7 @@ function renderGraphRows() {
 
   for (const vm of graphItems) {
     const row = document.createElement('div');
-    row.className = 'g-row' + (vm.item.hash === graphSelected ? ' selected' : '');
+    row.className = 'g-row' + (vm.item.hash === cardSelected ? ' selected' : '');
     row.dataset.hash = vm.item.hash;
 
     const lanes = mkEl('div', 'lanes');
@@ -1682,9 +1635,9 @@ function setGraphOp(text, isError) {
 // loadGraph 取一批历史。more 为真表示"滚到底了，再取一批"——做法是把 limit 翻倍重取，
 // 而不是 skip：泳道是逐行递推的，只取第二页会让整页的线从最左边重新开始
 async function loadGraph(more) {
-  if (!graphSpec) return;
-  const repoPath = graphSpec.repo.path;
-  const seq = ++graphSeq;
+  if (!cardSpec) return;
+  const repoPath = cardSpec.repo.path;
+  const seq = ++cardSeq;
   const nextLimit = more ? Math.min(graphLimit * 2, graphMaxLimit) : 100;
 
   try {
@@ -1695,8 +1648,8 @@ async function loadGraph(more) {
     });
     const res = await fetch('/api/log?' + params.toString(), { cache: 'no-store', headers: authHeaders });
     const data = await res.json();
-    // 用户可能已经关掉分支图或换了仓库：这一份响应就作废
-    if (seq !== graphSeq || !graphOpen) return;
+    // 用户可能已经关掉卡片或换了仓库：这一份响应就作废
+    if (seq !== cardSeq || !cardOpen) return;
     if (data.error) {
       setGraphOp(data.error, true);
       return;
@@ -1707,38 +1660,86 @@ async function loadGraph(more) {
     graphItems = data.items || [];
     graphTotal = data.total || 0;
     graphMaxLimit = data.maxLimit || graphMaxLimit;
-    if (data.detailWidth) graphDetailWidth = data.detailWidth;
-    if (data.minDetailWidth) graphWidthRange.min = data.minDetailWidth;
-    if (data.maxDetailWidth) graphWidthRange.max = data.maxDetailWidth;
-    applyGraphDetailWidth();
+    if (data.branch) cardSpec.repo.branch = data.branch;
+    fillBranchSelect(data.branches || [], data.branch || '');
+    // 头部随仓库状态更新：切了分支、提交或推送之后，标题上的分支与领先/落后必须跟着变。
+    // 这也是"切分支成功了吗"在页面上唯一看得见的结果
+    const repo = currentRepo();
+    graphTitleEl.innerHTML =
+      '<span>' + esc(repo.name) + '</span>' +
+      (data.branch ? '<span class="dir"> ' + esc(data.branch) + '</span>' : '');
+    graphStateEl.textContent = repoStateText(repo);
     renderGraphRows();
   } catch (err) {
-    if (seq === graphSeq) setGraphOp(err.message, true);
+    if (seq === cardSeq) setGraphOp(err.message, true);
   }
 }
 
-// openGraph 打开某个仓库的分支图。它在仓库面板之上，因此面板保持打开——返回键逐层退回
-function openGraph(spec) {
-  graphSpec = spec;
+// fillBranchSelect 用本地分支名填满分支选择器，并把当前分支选中。
+// 当前分支不在列表里（例如 detached HEAD）时补一项进去，免得选择器空着
+function fillBranchSelect(branches, current) {
+  graphBranchEl.replaceChildren();
+  const names = branches.slice();
+  if (current && !names.includes(current)) names.unshift(current);
+  for (const name of names) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    graphBranchEl.appendChild(option);
+  }
+  graphBranchEl.value = current;
+  graphBranchEl.disabled = names.length === 0;
+  graphBranchEl.setAttribute('aria-label', t('branchLabel'));
+}
+
+// repoStateText 拼出卡片头部的状态串（未提交 / detached / 领先落后），与看板卡片那行同源
+function repoStateText(r) {
+  const state = [];
+  if (r.noCommits) state.push(t('noCommits'));
+  else if (r.detached) state.push(t('detached'));
+  if (r.upstream && !r.noCommits) {
+    if (r.ahead > 0) state.push(t('ahead', { n: r.ahead }));
+    if (r.behind > 0) state.push(t('behind', { n: r.behind }));
+  }
+  return state.join(' · ');
+}
+
+// openRepoCard 打开某个仓库的卡片：默认就是这个仓库的提交分支图，顶栏是这个仓库的操作。
+//
+// 这一层替代了原来的"仓库面板"：点仓库直接进来，不再有中间那一步选择；仓库自身的操作
+// （切分支、拉取、同步、推送、提交）也都收在这张卡片里，不散落到页面上别处
+function openRepoCard(spec) {
+  cardSpec = spec;
   const r = spec.repo;
 
   graphTitleEl.innerHTML =
     '<span>' + esc(r.name) + '</span>' +
     (r.branch && !r.noCommits ? '<span class="dir"> ' + esc(r.branch) + '</span>' : '');
+  graphStateEl.textContent = repoStateText(r);
   graphFilterLabelEl.textContent = t('graphAllRefs');
   graphAllRefsEl.checked = graphAllRefs;
-  graphSplitterEl.setAttribute('aria-label', t('graphResize'));
+  graphBranchEl.disabled = true; // 分支列表要等 /api/log 回来，先禁用免得点开是空的
 
-  graphSelected = '';
+  // 顶栏与提交行的文案按当前语言填（结构在 HTML 里，文案在这里）
+  graphFetchEl.textContent = t('fetchRepo');
+  graphSyncEl.textContent = t('sync');
+  graphPushEl.textContent = t('push');
+  graphDiffEl.textContent = t('openDiff', { n: r.files.length });
+  graphDiffEl.title = t('openWholeRepoDiff');
+  commitBtnEl.textContent = t('commit');
+  commitMsgEl.placeholder = t('commitMsg');
+  commitMsgEl.value = draftMsg.get(r.path) || '';
+
+  cardSelected = '';
+  hideCommitCard(true);
   graphItems = [];
   graphTotal = 0;
   graphLimit = 0;
   graphCountEl.textContent = '';
   setGraphOp('');
-  graphDetailEl.replaceChildren(mkEl('p', 'hint', t('graphDetailHint')));
   graphListEl.replaceChildren();
 
-  graphOpen = true;
+  cardOpen = true;
   graphEl.classList.add('open');
   graphEl.setAttribute('aria-hidden', 'false');
   syncScrollLock();
@@ -1748,36 +1749,39 @@ function openGraph(spec) {
   loadGraph(false);
 }
 
-// closeGraphState 只收起分支图这一层，不碰焦点与轮询。
-// 面板与分支图一起关掉时用它——否则焦点会被丢给一个马上要隐藏的返回键
-function closeGraphState() {
-  if (!graphOpen) return;
-  graphOpen = false;
-  graphSeq++; // 作废在路上的那次响应
-  graphDetailSeq++;
+// closeCardState 只收起卡片这一层，不碰焦点与轮询。
+// 与关掉整张卡片分开，是为了让"只换内容"这类场景不误触轮询与焦点
+function closeCardState() {
+  if (!cardOpen) return;
+  cardOpen = false;
+  cardSeq++; // 作废在路上的那次响应
+  hoverSeq++;
+  hideCommitCard(true);
   graphEl.classList.remove('open');
   graphEl.setAttribute('aria-hidden', 'true');
   // 一张图可能上千行，关掉就释放这些元素
   graphListEl.replaceChildren();
-  graphDetailEl.replaceChildren();
   graphItems = [];
 }
 
-// closeGraph 关闭分支图，回到下面的仓库面板（面板本身不关）
-function closeGraph() {
-  if (!graphOpen) return;
-  closeGraphState();
+// closeRepoCard 关闭卡片：若 diff 还开着（从卡片里进去的），一并关掉——返回键的语义是
+// "回到上一层"，不是"只关掉最上面那层"
+function closeRepoCard() {
+  if (!cardOpen) return;
+  if (diffOpen) closeDiff();
+  // 草稿留在内存里：下次打开同一个仓库时把没提交完的信息放回去
+  if (cardSpec) draftMsg.set(cardSpec.repo.path, commitMsgEl.value);
+  closeCardState();
   syncScrollLock();
-  if (panelOpen) repoBackEl.focus();
-  else resume();
+  resume();
 }
 
-graphBackEl.addEventListener('click', closeGraph);
+graphBackEl.addEventListener('click', closeRepoCard);
 
 // 滚到底续取：判据是"已经滚到最后 120px 以内"，不用 IntersectionObserver——
 // 这里只有一个哨兵，滚动事件本身很便宜
 graphListEl.addEventListener('scroll', () => {
-  if (!graphOpen) return;
+  if (!cardOpen) return;
   const el = graphListEl;
   if (el.scrollTop + el.clientHeight < el.scrollHeight - 120) return;
   if (graphItems.length >= graphTotal) return;
@@ -1791,41 +1795,86 @@ graphListEl.addEventListener('scroll', () => {
 // 过滤开关：默认全部分支与 tag，勾掉只看当前分支
 graphAllRefsEl.addEventListener('change', () => {
   graphAllRefs = graphAllRefsEl.checked;
-  graphSelected = '';
-  graphDetailEl.replaceChildren(mkEl('p', 'hint', t('graphDetailHint')));
+  cardSelected = '';
+  hideCommitCard(true);
   loadGraph(false);
 });
 
-// selectGraphCommit 选中一条提交：列表上的选中态 + 右侧详情。详情里的元信息来自列表那一行
-// （已经取回来的），文件列表单独一次请求——它只在选中时才需要
-async function selectGraphCommit(hash) {
-  graphSelected = hash;
-  for (const row of graphListEl.children) {
-    if (row.classList) row.classList.toggle('selected', row.dataset.hash === hash);
-  }
+/* ——— 提交详情卡：悬浮即显 + 点击钉住 ———
+ *
+ * 为什么不做成侧栏常驻面板：泳道图占满整个卡片宽度才看得清分叉与合并，侧栏会一直吃掉一块宽度。
+ * 但"只能靠悬浮"也不行——键盘用户根本触发不了 hover，而"点什么就出什么"是这次的要求。
+ * 因此做成两级：
+ *   - 鼠标移过某一行：立刻贴着光标弹出（元信息来自内存，文件清单异步补上并缓存）
+ *   - 点一下（或按上下键 / 回车）：钉住，不再随鼠标移开消失，Esc 或点别处才收
+ */
+const commitCardCache = new Map(); // 提交哈希 -> 文件清单：同一个提交反复划过时不重复请求
+let hoverSeq = 0;
+let cardPinned = false;
+let hoverCardTimer = null;
 
-  const vm = graphItems.find((v) => v.item.hash === hash);
-  if (!vm) return;
-
-  graphDetailEl.replaceChildren(renderGraphDetail(vm, null));
-
-  const seq = ++graphDetailSeq;
-  try {
-    const params = new URLSearchParams({ repo: graphSpec.repo.path, hash });
-    const res = await fetch('/api/commit-files?' + params.toString(), {
-      cache: 'no-store',
-      headers: authHeaders,
-    });
-    const data = await res.json();
-    if (seq !== graphDetailSeq || graphSelected !== hash) return;
-    graphDetailEl.replaceChildren(renderGraphDetail(vm, data.error ? null : data));
-  } catch {
-    // 文件列表取不到不影响详情本身：那一半照常显示，少了文件清单而已
-  }
+// commitCardPosition 把卡片摆在光标右下 14px；靠近右/下边缘时翻到另一侧，别被窗口切掉
+function commitCardPosition(x, y) {
+  const box = graphPopupEl.getBoundingClientRect();
+  let left = x + 14;
+  let top = y + 14;
+  if (left + box.width > window.innerWidth - 8) left = Math.max(8, x - box.width - 14);
+  if (top + box.height > window.innerHeight - 8) top = Math.max(8, y - box.height - 14);
+  graphPopupEl.style.left = left + 'px';
+  graphPopupEl.style.top = top + 'px';
 }
 
-// renderGraphDetail 画右侧详情。files 为 null 时只画元信息与提交信息（文件列表随后补上）
-function renderGraphDetail(vm, files) {
+function hideCommitCard(force) {
+  if (cardPinned && !force) return;
+  cardPinned = false;
+  if (hoverCardTimer) clearTimeout(hoverCardTimer);
+  hoverCardTimer = null;
+  graphPopupEl.hidden = true;
+  graphPopupEl.classList.remove('pinned');
+}
+
+// showCommitCard 立刻画出能拿到的那一半（元信息在内存里，要什么有什么），
+// 文件清单随后补上——不为了"一次画全"让卡片迟一拍才出现
+function showCommitCard(vm, x, y, pinned) {
+  cardPinned = !!pinned;
+  graphPopupEl.classList.toggle('pinned', cardPinned);
+  graphPopupEl.hidden = false;
+
+  const cached = commitCardCache.get(vm.item.hash);
+  graphPopupEl.replaceChildren(renderCommitCard(vm, cached || null));
+  commitCardPosition(x, y);
+  if (cached) return;
+
+  const seq = ++hoverSeq;
+  const params = new URLSearchParams({ repo: cardSpec.repo.path, hash: vm.item.hash });
+  fetch('/api/commit-files?' + params.toString(), { cache: 'no-store', headers: authHeaders })
+    .then((res) => res.json())
+    .then((data) => {
+      // 用户可能已经移到别的提交、或把卡片收起来了：只在卡片还开着时补内容
+      if (seq !== hoverSeq || graphPopupEl.hidden) return;
+      const files = data && !data.error ? data : null;
+      if (!files) return;
+      commitCardCache.set(vm.item.hash, files);
+      graphPopupEl.replaceChildren(renderCommitCard(vm, files));
+      commitCardPosition(x, y);
+    })
+    .catch(() => {
+      // 文件清单取不到不影响元信息：那一半照常显示
+    });
+}
+
+// pinCommitCard 把某条提交钉住。键盘路径没有光标，因此贴着那一行定位
+function pinCommitCard(vm, row) {
+  cardSelected = vm.item.hash;
+  for (const r of graphListEl.children) {
+    if (r.classList) r.classList.toggle('selected', r.dataset.hash === cardSelected);
+  }
+  const box = row.getBoundingClientRect();
+  showCommitCard(vm, box.right - 40, box.bottom - 4, true);
+}
+
+// renderCommitCard 画详情卡。files 为 null 时只画元信息与提交信息（文件清单随后补）
+function renderCommitCard(vm, files) {
   const item = vm.item;
   const box = document.createDocumentFragment();
 
@@ -1849,13 +1898,12 @@ function renderGraphDetail(vm, files) {
   }
 
   if (files) {
-    const summary = t('graphFilesSummary', {
+    box.appendChild(mkEl('h2', '', t('graphFiles')));
+    box.appendChild(mkEl('p', 'hint', t('graphFilesSummary', {
       n: files.files.length,
       adds: files.insertions,
       dels: files.deletions,
-    });
-    box.appendChild(mkEl('h2', '', t('graphFiles')));
-    box.appendChild(mkEl('p', 'hint', summary));
+    })));
     const list = mkEl('ul', 'files');
     for (const f of files.files) {
       const li = mkEl('li');
@@ -1874,59 +1922,85 @@ function renderGraphDetail(vm, files) {
   return box;
 }
 
+// 鼠标移过某一行就弹卡；移开时给 120ms 宽限再收——不留宽限的话，从行移向卡片的那段空隙
+// 会把它闪掉，而"贴着光标"的卡片本来就常常需要把鼠标移进去看更多内容
+graphListEl.addEventListener('mouseover', (e) => {
+  if (!cardOpen || cardPinned) return;
+  const row = e.target.closest('.g-row');
+  if (!row) return;
+  const vm = graphItems.find((v) => v.item.hash === row.dataset.hash);
+  if (!vm) return;
+  if (hoverCardTimer) clearTimeout(hoverCardTimer);
+  showCommitCard(vm, e.clientX, e.clientY, false);
+});
+graphListEl.addEventListener('mouseleave', () => {
+  if (cardPinned) return;
+  hoverCardTimer = setTimeout(() => hideCommitCard(false), 120);
+});
+// 鼠标移进卡片本身时取消那次收起：用户正把鼠标挪过去看文件清单
+graphPopupEl.addEventListener('mouseenter', () => {
+  if (hoverCardTimer) clearTimeout(hoverCardTimer);
+  hoverCardTimer = null;
+});
+graphPopupEl.addEventListener('mouseleave', () => {
+  if (cardPinned) return;
+  hoverCardTimer = setTimeout(() => hideCommitCard(false), 120);
+});
+
+// 点一下即钉住：这条路径不依赖悬浮，鼠标停在别处也能把详情留在屏幕上
 graphListEl.addEventListener('click', (e) => {
   const row = e.target.closest('.g-row');
-  if (row) selectGraphCommit(row.dataset.hash);
+  if (!row) return;
+  const vm = graphItems.find((v) => v.item.hash === row.dataset.hash);
+  if (vm) pinCommitCard(vm, row);
 });
 
-// ——— 详情面板的宽度：拖拽分隔条，松手才写配置 ———
-//
-// 拖动过程中每一帧都写一次配置会让配置文件被反复重写（还可能撞上其它写操作），
-// 因此移动只改页面上的宽度，pointerup 才写回一次
-function applyGraphDetailWidth() {
-  const w = Math.min(Math.max(graphDetailWidth, graphWidthRange.min), graphWidthRange.max);
-  graphDetailWidth = w;
-  // 写的是自定义属性而不是 width：窄窗口的断点用 CSS 接管布局时不需要 !important
-  graphDetailEl.style.setProperty('--detail-w', w + 'px');
+// 键盘：上下键在提交之间移动并钉住详情，回车同样钉住当前这条。
+// 没有这条路的话，键盘用户永远看不到提交详情
+graphListEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  if (graphItems.length === 0) return;
+  e.preventDefault();
+  const step = e.key === 'ArrowDown' ? 1 : -1;
+  const current = graphItems.findIndex((v) => v.item.hash === cardSelected);
+  const index = current === -1 ? 0 : Math.min(graphItems.length - 1, Math.max(0, current + step));
+  const vm = graphItems[index];
+  const row = graphListEl.querySelector('.g-row[data-hash="' + vm.item.hash + '"]');
+  if (!row) return;
+  row.scrollIntoView({ block: 'nearest' });
+  pinCommitCard(vm, row);
+});
+
+/* ——— 卡片顶栏上的仓库操作 ———
+ *
+ * 五件：切分支、拉取本仓库、同步、推送、提交，外加进入全仓 diff 的入口。
+ * 全部走 runWrite：统一处理"一次只允许一个写操作在飞"、失败时把 git 的原话交出来、
+ * 以及写完之后失效快照
+ */
+function currentRepo() {
+  // 快照会在每次刷新后重建，卡片手里的那份可能已经旧了：按路径回去找当前的那一份
+  const found = lastRepos.find((r) => r.path === cardSpec.repo.path);
+  return found || cardSpec.repo;
 }
 
-async function saveGraphDetailWidth() {
-  try {
-    await postJSON('/api/graph-pref', { width: graphDetailWidth });
-  } catch {
-    // 宽度写不进配置不影响这一次的使用：面板已经按新宽度显示了，下次打开退回旧值而已
+// cardWrite 发一次仓库操作。成功后先刷新看板快照、再刷新分支图：切分支、提交、拉取都会改变
+// 图的内容，而头部那行状态来自看板快照（顺序反了会读到上一轮的分支与领先/落后）
+async function cardWrite(path, body) {
+  const out = await runWrite(path, body, setGraphOp);
+  if (out && !out.error) {
+    await refresh();
+    await loadGraph(false);
   }
+  return out;
 }
 
-graphSplitterEl.addEventListener('pointerdown', (e) => {
-  e.preventDefault();
-  const startX = e.clientX;
-  const startWidth = graphDetailWidth;
-  graphSplitterEl.classList.add('dragging');
-  graphSplitterEl.setPointerCapture(e.pointerId);
-
-  const onMove = (ev) => {
-    graphDetailWidth = startWidth - (ev.clientX - startX);
-    applyGraphDetailWidth();
-  };
-  const onUp = () => {
-    graphSplitterEl.classList.remove('dragging');
-    graphSplitterEl.removeEventListener('pointermove', onMove);
-    graphSplitterEl.removeEventListener('pointerup', onUp);
-    graphSplitterEl.removeEventListener('pointercancel', onUp);
-    saveGraphDetailWidth();
-  };
-  graphSplitterEl.addEventListener('pointermove', onMove);
-  graphSplitterEl.addEventListener('pointerup', onUp);
-  graphSplitterEl.addEventListener('pointercancel', onUp);
+graphBranchEl.addEventListener('change', async () => {
+  const out = await cardWrite('/api/checkout', { repo: cardSpec.repo.path, branch: graphBranchEl.value });
+  // 失败（工作区脏、分支名不存在）时把选择器拨回当前分支，别让它显示一个没生效的值
+  if (out && out.error) graphBranchEl.value = cardSpec.repo.branch || '';
 });
-
-// 键盘也能调：左右箭头各 10px，停手 400ms 后写回配置（连按不会连写）
-graphSplitterEl.addEventListener('keydown', (e) => {
-  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-  e.preventDefault();
-  graphDetailWidth += e.key === 'ArrowLeft' ? 10 : -10;
-  applyGraphDetailWidth();
-  if (graphWidthWriteTimer) clearTimeout(graphWidthWriteTimer);
-  graphWidthWriteTimer = setTimeout(saveGraphDetailWidth, 400);
-});
+graphFetchEl.addEventListener('click', () => cardWrite('/api/fetch', { repo: cardSpec.repo.path }));
+graphSyncEl.addEventListener('click', () => cardWrite('/api/sync', { repo: cardSpec.repo.path }));
+graphPushEl.addEventListener('click', () => cardWrite('/api/push', { repo: cardSpec.repo.path }));
+// 全仓 diff 从卡片顶栏进：它浮在卡片之上，关掉回到卡片（不再占据"入口行"那样的对等地位）
+graphDiffEl.addEventListener('click', () => openDiff({ repo: currentRepo() }));
