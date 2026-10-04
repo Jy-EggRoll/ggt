@@ -256,6 +256,31 @@ function cssVar(name, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+// viewportSize 返回真实的视口尺寸（布局视口，CSS 像素）。
+//
+// 为什么不能直接用 window.innerWidth / innerHeight：页面内容一旦横向或纵向溢出，Chromium
+// 会把这两个值跟着内容一起撑大，而它们看起来就是个普通的窗口尺寸，读的人不会起疑。
+// 实测（手机档，视口 390×844、看板按 4 列排宽 1344px）：
+//     window.innerWidth  1360    window.innerHeight  2944
+//     documentElement.clientWidth  390    clientHeight  844
+// 看板的宽高偏偏又由 JS 按列数算出来写到元素上（见 layout 末尾的 board.style.width/height），
+// 于是"尺寸读大了 → 看板算大了 → 溢出更多 → 尺寸读得更大"能自举成一个稳态：窄屏下按 4 列
+// 排并横向溢出。分列、贴边、滚轮横滚上限与翻页折算因此全都按一个被撑大的尺寸在算。
+// 更隐蔽的一层：layout 是轮询也会重跑的，一次重排就能把列高按 2944 算成近三倍，整块看板
+// 塌成一列。改读 documentElement 的 client 尺寸后，这两条路都不会再被内容反过来影响
+//
+// 有一件事要说明白：一开始把"窄屏下详情卡被摆到视口外、点不到关闭按钮"也记在这条因果上，
+// 实测证明不成立——那种情形下新旧代码算出的位置一模一样，真因是锚点本身在视口外，
+// 见 commitCardPosition 的注释。这里不再重复那个错误结论
+//
+// 取 client 尺寸而不是 visualViewport：后者语义是"当前可见区"，会随捏合缩放变化，而这里要的是
+// 布局依据。client 尺寸还会扣掉经典滚动条占宽，用于分列与贴边反而更准——无溢出时它与
+// innerWidth 的差别也就只有滚动条那十几像素，其余场合与原来的取值一致
+function viewportSize() {
+  const de = document.documentElement;
+  return { w: de.clientWidth, h: de.clientHeight };
+}
+
 function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
@@ -669,7 +694,9 @@ function layout(els, specs) {
   // 列高 = 视口高 − 页面上下留白 − 底栏高度。三个数字都从 CSS 变量读（cssVar 见上），
   // 不在这里自己写死：底栏是后加的，硬编码的话它一出现就会压住最下面一行卡片，
   // 而"JS 里一份、CSS 里一份"的数字迟早会漂移
-  const colH = window.innerHeight - cssVar('--page-pad', 16) * 2 - cssVar('--statusbar-h', 30);
+  // 视口高走 viewportSize 而不是 window.innerHeight：内容溢出时后者会被撑大，而看板的高度又是
+  // 按它算出来写回元素的，那正是"看板把自己撑高"的闭环（见 viewportSize 的注释）
+  const colH = viewportSize().h - cssVar('--page-pad', 16) * 2 - cssVar('--statusbar-h', 30);
 
   // tailRows[i] 是第 i 条标题行之后、属于同一张卡片的内容行数，用来判断
   // 「列尾还值不值得起一张新卡片」。
@@ -1263,7 +1290,9 @@ let scrollAnim = null;
 let scrollRaf = 0;
 
 function smoothScrollBy(px) {
-  const max = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+  // 减的是视口宽而不是 window.innerWidth：有横向溢出时后者会等于 scrollWidth，相减恒为 0，
+  // 滚轮横滚于是彻底失效——窄屏看板正是这种情形（见 viewportSize 的注释）
+  const max = Math.max(0, document.documentElement.scrollWidth - viewportSize().w);
   // 目标基于「当前位置」累加：连续拨动因此不会丢失位移，也不会跳回去
   const target = Math.min(max, Math.max(0, window.scrollX + px));
   if (reduceMotion.matches) {
@@ -1319,7 +1348,7 @@ window.addEventListener(
     // （鼠标一格约 100px，触控板是细粒度像素），照搬 60px 会把触控板的手感拉坏。
     // 只有行/页两种模式需要折算，行模式按 Slint 的 line→60px 对齐
     const px = e.deltaMode === 1 ? e.deltaY * LINE_PX
-      : e.deltaMode === 2 ? e.deltaY * window.innerHeight
+      : e.deltaMode === 2 ? e.deltaY * viewportSize().h
         : e.deltaY;
     smoothScrollBy(px);
   },
@@ -1827,10 +1856,19 @@ let hoverSuppressAt = null;
 // commitCardPosition 把卡片摆在光标右下 14px；靠近右/下边缘时翻到另一侧，别被窗口切掉
 function commitCardPosition(x, y) {
   const box = graphPopupEl.getBoundingClientRect();
+  // 贴边判断与最终落位都按真实视口算，不用 window.innerWidth / innerHeight：内容溢出时那两个值
+  // 会被一起撑大（见 viewportSize），"右边放不下"于是判断不出来，卡片会跨出屏幕右缘
+  const vp = viewportSize();
   let left = x + 14;
   let top = y + 14;
-  if (left + box.width > window.innerWidth - 8) left = Math.max(8, x - box.width - 14);
-  if (top + box.height > window.innerHeight - 8) top = Math.max(8, y - box.height - 14);
+  if (left + box.width > vp.w - 8) left = x - box.width - 14;
+  if (top + box.height > vp.h - 8) top = y - box.height - 14;
+  // 翻转只把卡片挪到锚点的另一侧，救不了"锚点本身就在视口外"这种情形：点击与键盘钉住都走
+  // pinCommitCard，锚点取自行尾（row.right − 40），而泳道图在窄屏下比视口宽（实测 390 的视口里
+  // #graph-list 就有 986），行尾连同锚点都在屏幕外——实测卡片因此被摆到 x=795，连右上角那个
+  // 关闭按钮都点不到。所以最后再夹一次：宁可叠在行上，也不能把这张卡唯一的可见出口挪出屏幕
+  left = Math.max(8, Math.min(left, vp.w - box.width - 8));
+  top = Math.max(8, Math.min(top, vp.h - box.height - 8));
   graphPopupEl.style.left = left + 'px';
   graphPopupEl.style.top = top + 'px';
 }
