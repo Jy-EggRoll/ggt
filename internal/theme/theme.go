@@ -98,6 +98,9 @@ var builtinFS embed.FS
 //	editorWidget.background                              src/vs/platform/theme/common/colors/editorColors.ts
 //	widget.shadow                                        src/vs/platform/theme/common/colors/editorColors.ts
 //	diffEditor.{inserted,removed}LineBackground          src/vs/platform/theme/common/colors/editorColors.ts
+//	diffEditor.{inserted,removed}TextBackground          src/vs/platform/theme/common/colors/editorColors.ts
+//	                                                     前者铺整行、后者盖行内变化的字符，两者都是
+//	                                                     半透明色，页面里叠在一起用
 //	sideBar.background                                   src/vs/workbench/common/theme.ts
 //	scmGraph.foreground1..5                              src/vs/workbench/contrib/scm/browser/scmHistory.ts 的 colorRegistry
 //	scmGraph.historyItemRefColor / RemoteRefColor        scmHistory.ts 里引用 charts.blue / charts.purple，

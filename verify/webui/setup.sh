@@ -2,8 +2,9 @@
 # 造出网页验收要用的临时仓库与配置。
 #
 # 为什么要现造，而不是指向某个固定目录：验收里的断言（暂存区那个文件是 400 行新增、有纯改名、
-# 合并提交相对第一个父提交改了哪两个文件、板上正好两个仓库）都建立在这份内容上；内容一变，
-# 断言就不再说明任何问题。每次从零造，才能保证这套验收在任何机器上都是同一件事。
+# 合并提交相对第一个父提交改了哪两个文件、板上正好两个仓库、行内高亮只盖住变化的字符）
+# 都建立在这份内容上；内容一变，断言就不再说明任何问题。每次从零造，才能保证这套验收在任何
+# 机器上都是同一件事。
 #
 # 隔离：配置写在 <目标目录>/home/.config/go-git-ggt/ggt-config.json，被测服务以 HOME=<目标目录>/home
 # 启动，因此它读写的都是这份临时配置，绝不碰使用者自己的 ~/.config/go-git-ggt
@@ -70,7 +71,10 @@ printf 'one\ntwo\nthree\n' > feature.txt
 git add -A
 git commit -qm '初始提交'
 git checkout -q -b side
-printf 'one\ntwo\nTHREE\nfour\n' > feature.txt
+# 这份 feature.txt 同时给两条断言当输入：two 改成 two 二 是“在行尾插入两个字符”，用来断言
+# 高亮范围严格窄于整行；three 改成 THREE 是大小写改写，两者都会出现在合并提交的正文里。
+# 两处都不改变文件集合，所以“按第一个父提交改了 2 个文件”那条断言不受影响
+printf 'one\ntwo 二\nTHREE\nfour\n' > feature.txt
 printf '侧\n' > side-only.txt
 git add -A
 git commit -qm '侧面的改动'

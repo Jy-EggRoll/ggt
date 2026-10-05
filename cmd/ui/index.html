@@ -211,6 +211,13 @@
   它挂在 body 上而不是卡片内部：定位要跟光标走，放在有 transform/overflow 的容器里会被裁掉
 -->
 <div id="graph-popup" class="hovercard" hidden></div>
+<!--
+  行内 diff 的引擎：收编自 VSCode 的 diff 算法，来源、许可证与再生成步骤见该文件抬头。
+  它必须排在 app.js 之前——app.js 是经典脚本，到这一行就同步执行，它算行内高亮时要用这个文件
+  挂出来的 window.ggtDiffEngine；排在后面取到的就是 undefined，表现为行内高亮静默失效，
+  而页面其余部分完全正常，很难联想到是标签顺序
+-->
+<script src="vendor/vscode-diff.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

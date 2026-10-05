@@ -1080,10 +1080,48 @@ pre.diff {
 pre.diff .dl {
   display: block;
   /* 左右内边距给在这里而不是 pre 上：底色要一直铺到卡片边缘，中间不留空隙 */
-  padding: 0 8px;
+  padding: 0 var(--sp-3);
+  /* 左边界统一留一道色条的宽度，增删行才与上下文行的正文左端齐平：
+     若只给增删行加边框，它们的正文会比上下文行右移 3 像素 */
+  border-left: 3px solid transparent;
 }
-pre.diff .add { background: var(--diff-add-bg); }
-pre.diff .del { background: var(--diff-del-bg); }
+/*
+ * 增删行：整行铺底色，最左边再加一道更深的色条
+ *
+ * 为什么正文里不放 + 与 -：代码自己以这两个字符开头时（Markdown 列表项、diff 的 diff、
+ * 递增表达式）会与标记连成 "+- item"、"-- item"，分不清哪一部分是标记、哪一部分是内容。
+ * VSCode 的 diff 视图同样不在正文里放这两个字符，它用整行底色加一道边槽色条来区分
+ * （见上游 diffEditor/style.css 的 .inline-added-margin-view-zone）
+ *
+ * 色条取的是这一档的“行内”令牌而不是整行底色的令牌（--diff-add-text-bg / --diff-del-text-bg）：
+ * 两者同色时色条完全看不出来——色条压在同一行的底色之上，同一种半透明色叠在一起还是那个颜色。
+ * 试过用同一个令牌加一道 1 像素透明缝把两者分开，结果那 1 像素只是在底色里挖了个缺口，像渲染瑕疵
+ *
+ * 底色铺满边框盒（不写 background-clip，默认就是 border-box），色条因此是压在整行底色之上，
+ * 与行内高亮同一层叠色关系——这是它看得出来、而不是只比底色深几个色阶的关键：
+ * 曾用 background-clip: padding-box 把底色挡在色条之外，色条直接压在卡片底色上，
+ * 实测只比整行底色深 5 个色阶，肉眼等于没有
+ *
+ * 颜色可能来自主题（见 ui_theme.go 的 cssVarNames）：这两个令牌本来就在主题的 diff 调色板里，
+ * 含义是这一档最显眼的颜色，拿它当色条既不必新增令牌，也不必编一个十六进制值。
+ * 3 像素按上游边槽的观感取：看得见，又不至于像一条分割线那么抢眼
+ */
+pre.diff .add { background: var(--diff-add-bg); border-left-color: var(--diff-add-text-bg); }
+pre.diff .del { background: var(--diff-del-bg); border-left-color: var(--diff-del-text-bg); }
+/*
+ * 行内（词级）改动。外层 .dl 已经给整行铺了增删底色，这里把行内真正变化的那些字符再压深一档，
+ * 好让人一眼看出“这一行里是哪几个词变了”
+ *
+ * 底色与整行底色是两个独立令牌，这也是 VSCode 的分法：整行变了用
+ * diffEditor.insertedLineBackground / removedLineBackground，行内这几个字符变了用
+ * insertedTextBackground / removedTextBackground。四者都是半透明色，后者叠在前者之上，
+ * 才得到最终观感（见上游 diffEditor/style.css 的 .line-insert 与 .char-insert）
+ *
+ * 颜色跟着父元素走，不给行内元素另设修饰类：一处区间出现在删行里就是“被删掉的内容”，
+ * 出现在增行里就是“新增的内容”，父元素的 .del / .add 已经把这件事说清了
+ */
+pre.diff .add .hl { background: var(--diff-add-text-bg); }
+pre.diff .del .hl { background: var(--diff-del-text-bg); }
 /*
  * @@ 段头与 diff/index/---/+++ 这类 git 元信息统一用淡色。
  * 为什么不给段头单独配色：本视图已经约定“不做语法高亮”，只有真正增删的行着色；

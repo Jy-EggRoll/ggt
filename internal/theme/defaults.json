@@ -49,7 +49,9 @@
     "gitDecoration.stageDeletedResourceForeground": "#c74e39",
     "gitDecoration.conflictingResourceForeground": "#e4676b",
     "diffEditor.insertedLineBackground": "#9bb95533",
-    "diffEditor.removedLineBackground": "#ff000033"
+    "diffEditor.removedLineBackground": "#ff000033",
+    "diffEditor.insertedTextBackground": "#9ccc2c33",
+    "diffEditor.removedTextBackground": "#ff000033"
   },
   "light": {
     "editor.background": "#ffffff",
@@ -101,6 +103,8 @@
     "gitDecoration.stageDeletedResourceForeground": "#ad0707",
     "gitDecoration.conflictingResourceForeground": "#ad0707",
     "diffEditor.insertedLineBackground": "#9bb95533",
-    "diffEditor.removedLineBackground": "#ff000033"
+    "diffEditor.removedLineBackground": "#ff000033",
+    "diffEditor.insertedTextBackground": "#9ccc2c40",
+    "diffEditor.removedTextBackground": "#ff000033"
   }
 }

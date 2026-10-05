@@ -838,6 +838,9 @@ function layout(els, specs) {
 //
 // 覆盖整页打开某个仓库或某个文件的改动（对齐结论：不做语法高亮、分“已暂存 / 未暂存”两段、
 // 覆盖整页替换看板、Esc 或返回键回看板）。
+//
+// “不做语法高亮”说的是不按语言着色，与行内（词级）高亮不冲突：后者只标出这一行里哪几个字符
+// 变了，颜色仍然取自主题的增删令牌，见下面“行内（词级）比对”一节。
 
 // diffOpen 为真表示覆盖层正打开。它同时关掉三件事，各自的理由不同：
 //   - 轮询：看板被盖住，刷了也没人看，而每次刷新都要让服务端为每个仓库起一趟 git
@@ -905,27 +908,293 @@ function diffLineClass(line) {
   return '';
 }
 
-// diffHTML 把一份统一 diff 转成用于 <pre> 的 HTML：按行首字符着色，
-// 并把连续同类行合并进同一个元素。
+// diffLineBody 剥掉统一 diff 给每一行加的那个标记字符，只留这一行真正的内容。
+//
+// 三个标记字符是：+ 增、- 删、空格上下文。页面上都不显示——增删由整行底色与左侧色条表示
+// （见 style.css 的 pre.diff .add/.del），标记留在正文里有一处实打实的坏处：
+// 代码自己以 + 或 - 开头时（Markdown 列表项、diff 的 diff、递增表达式）会与标记连成
+// "+- item"、"-- item"，看不出哪一部分是标记、哪一部分是内容。
+// VSCode 的 diff 视图同样不在正文里放这两个字符
+//
+// 上下文行那个空格也一并剥掉：只留下它，正文里就数上下文行多一个前导空格，整屏代码的左边界
+// 会参差不齐——这一列本来就不该算进内容的缩进
+//
+// 认不出类别的行（空行、畸形 diff）原样返回：少剥一个字符只是难看，多剥一个是丢内容
+function diffLineBody(cls, line) {
+  if (cls === 'add' || cls === 'del') return line.slice(1);
+  if (cls === '' && line.startsWith(' ')) return line.slice(1);
+  return line;
+}
+
+// ——— 行内（词级）比对 ———
+//
+// 这一层只回答一个问题：一行里究竟是哪几个字符变了。答案来自收编的 VSCode diff 引擎
+// （vendor/vscode-diff.js，来源、许可证与再生成步骤见该文件抬头与同目录 LICENSE），
+// 它原本服务于 VSCode 自己的 diff 编辑器
+//
+// 算法细节一概不在这里复刻：整块的对齐、两侧行数不等时的配对、标点与词边界的取舍都在引擎内部。
+// 本文件只做三件事——把统一 diff 切成“改动块”、把块交给引擎、把回给的行列区间摊回每一行
+
+// diffInnerTimeoutMs 是单个改动块的比对时限（毫秒），用来应付“比预期慢得多”那种情况
+//
+// 上游给这项计算的预算是 5000 毫秒（src/vs/editor/common/config/diffEditor.ts 的
+// maxComputationTime），那是给后台线程留的额度；本视图跑在页面主线程上，超时直接表现为界面卡住，
+// 因此压到 1000 毫秒
+//
+// 为什么不是更小：这是按真实经过的时间判定的，耗时就落在时限附近的块会时超时不超时，
+// 于是同一份输入时有时无。实测（真实浏览器、上限以内的块）是 40 到 100 毫秒，且随内容而变——
+// 批量改名这类每行十几字符的内容约 40 毫秒，每行几十字符的数字表格到 100 毫秒；
+// 早先取 100 毫秒恰好压在这个区间上，“两侧合计接近 200 行”的块稳定拿不到任何行内高亮，
+// 同一份输入还会一次有一处高亮、一次一处都没有。定在 1000 毫秒之后，上限以内的实测耗时留出
+// 十倍余量，判定不再贴着边界；它仍然挡得住畸形输入（字符极多、结构极碎的那种，实测可跑到分钟级）
+//
+// 超时不是错误，但超时的结果要丢掉：引擎在这种情形下会把整块算作一处改动，于是块内每一行
+// 都被整行高亮——逐词的信息一点没多、节点数却按行数翻倍（见 diffInnerSpans 里的判断），
+// 而且“整行都变了”是句错话，宁可什么都不标
+const diffInnerTimeoutMs = 1000;
+
+// diffInnerMaxLines 是单个改动块两侧合计的行数上限，超过就不做行内比对
+//
+// 上游没有这一道上限，它替整个文件只设一个超时；本视图多这一道是因为：改动块一旦长到这个规模，
+// 它已经是“整段重写”而不是“改了几个词”，逐词高亮不再有信息量，而代价（对齐的耗时加上随后
+// 每行两个元素的 DOM）却随行数线性增长。定在两百行以内，单个块的耗时与节点数就都固定在一个
+// 可预期的范围内，也省掉一次注定要作废的比对
+//
+// 耗时随内容而变，行数只是它的粗略代理：实测（真实浏览器）这个上限附近是 40 到 100 毫秒——
+// 批量改名这类每行十几字符的内容约 40 毫秒，每行几十字符的数字表格到 100 毫秒。
+// 单个块最坏约 400 个节点（带行内高亮的行各一个 .dl 加一个 .hl），与文件总行数无关
+const diffInnerMaxLines = 200;
+
+// diffInnerMaxChars 是单个改动块两侧合计的字符数上限，同样超过就不做行内比对
+//
+// 为什么行数上限之外还要这一道：行数不是耗时的可靠代理，引擎的代价随内容的总字符数走。
+// 两行四十万字符（打包产物、base64、单行 JSON）这种块行数只有 2，行数上限挡不住它，
+// 代价却要按分钟算（实测过 60 秒以上仍未返回）——真到那一步只能等超时，
+// 用户白等一秒，还是看不到高亮
+//
+// 定在 16 KiB 是让这两道上限在“每行约八十字符的普通代码”上正好衔接：行再长的由这一道拦住，
+// 行数更多的由前一道拦住。按实测每千字符约二十毫秒算，这一档离上面的时限还有一个量级
+const diffInnerMaxChars = 16384;
+
+// diffEngine 是收编引擎的实例：undefined 表示还没建，null 表示引擎不可用
+//
+// 为什么要挡“不可用”这一种情况：引擎来自 vendor/vscode-diff.js，而那个文件由 go:embed
+// 打进二进制、又排在 app.js 之前引入，正常情况下一定存在；可一旦嵌入或引入顺序出问题，
+// 页面不该整片白掉——行内高亮是锦上添花的一层，拿不到就退回整行着色
+let diffEngine;
+function ensureDiffEngine() {
+  if (diffEngine === undefined) {
+    diffEngine =
+      typeof ggtDiffEngine !== 'undefined' && ggtDiffEngine.DefaultLinesDiffComputer
+        ? new ggtDiffEngine.DefaultLinesDiffComputer()
+        : null;
+  }
+  return diffEngine;
+}
+
+// isNoNewlineMarker 判定这一行是不是 git 的“\ No newline at end of file”标记。
+// 它夹在删行与增行之间时不该把改动块切成两半：它说的是相邻那一行缺行尾换行，
+// 与那处改动同属一块
+function isNoNewlineMarker(line) {
+  return line.startsWith('\\');
+}
+
+// diffLineSpans 找出所有改动块，交给引擎算出行内高亮区间，返回与 lines 等长的区间表。
+//
+// 入参 lines 是剥掉行首标记之后的行内容（见 diffLineBody），列号要按它的下标算，
+// 因此这里不再自己 slice
+//
+// 改动块的定义是“一段连续的删行紧跟一段连续的增行”。统一 diff 的排版保证了 hunk 内所有 - 行
+// 一定排在所有 + 行之前，因此“先删后增且相邻”就是块，不必再去猜哪一行对着哪一行；
+// 块内两侧行数不等（删两行加五行）是常态，配对由引擎整块对齐时一并解决
+//
+// 块外的上下文行（以空格开头那些）不参与比对。它们看起来是现成的参照物——紧邻的上下文行
+// 往往与增行只差几个字符，把引擎的对齐引过去就能只标那几个字符——但 git 已经判定那些行没变，
+// 让引擎把它们跟增行配成一对，就会出现“上下文行没变，却与它配对的增行只标了两个字”这种
+// 与整行底色互相矛盾的结论。块内配对、块外不动，两侧说法才一致
+function diffLineSpans(lines, classes) {
+  const spans = new Array(lines.length);
+
+  let i = 0;
+  while (i < lines.length) {
+    if (classes[i] !== 'del') {
+      i++;
+      continue;
+    }
+    // 先收删行，再收紧接着的增行，两段扫描都允许跨过“\ No newline”标记
+    const delIdx = [];
+    while (i < lines.length && (classes[i] === 'del' || isNoNewlineMarker(lines[i]))) {
+      if (classes[i] === 'del') delIdx.push(i);
+      i++;
+    }
+    const addIdx = [];
+    while (i < lines.length && (classes[i] === 'add' || isNoNewlineMarker(lines[i]))) {
+      if (classes[i] === 'add') addIdx.push(i);
+      i++;
+    }
+    // 只有一侧的改动（纯删或纯增）没有“哪几个字符变了”可言，整行着色已经说清
+    if (!delIdx.length || !addIdx.length) continue;
+    // 规模上限：超限的块直接不做，省掉一次注定要作废的比对。两道上限都在这里判，
+    // 都是纯按输入量算的，所以同一份 diff 每次得到的结论一致
+    if (delIdx.length + addIdx.length > diffInnerMaxLines) continue;
+    let chars = 0;
+    for (const n of delIdx) chars += lines[n].length;
+    for (const n of addIdx) chars += lines[n].length;
+    if (chars > diffInnerMaxChars) continue;
+
+    const found = diffInnerSpans(
+      delIdx.map((n) => lines[n]),
+      addIdx.map((n) => lines[n]),
+    );
+    for (let k = 0; k < delIdx.length; k++) if (found.del[k]) spans[delIdx[k]] = found.del[k];
+    for (let k = 0; k < addIdx.length; k++) if (found.add[k]) spans[addIdx[k]] = found.add[k];
+  }
+  return spans;
+}
+
+// diffInnerSpans 用引擎算出块两侧每一行该高亮的字符区间。
+//
+// 入参是块内删侧与增侧的行内容（已剥掉行首的 +/-，不含换行符），出参与入参同行序：
+// 每行一个 [起, 止) 的字符区间数组，列号按 UTF-16 码元算——这正是 JS 字符串下标的口径，
+// 因此拿到的区间可以直接切字符串，中文与 emoji 都不会被切成半个
+//
+// 行内容里不含换行符这一点必须守住：引擎按编辑器的行模型处理，传进去的行若自带换行，
+// 列号会整体错位一行（实测过，症状是中文改字被标到上一行的行尾）
+function diffInnerSpans(delLines, addLines) {
+  const spans = { del: new Array(delLines.length), add: new Array(addLines.length) };
+  const engine = ensureDiffEngine();
+  if (!engine) return spans;
+
+  let result;
+  try {
+    result = engine.computeDiff(delLines, addLines, {
+      // 行尾空白也算改动：这一行既然走到了这里，就说明 git 已经判过它与对面那行不同，
+      // 再把空白差异抹掉，会让“只改了缩进”这类改动在高亮上是一片空白。
+      // 上游这个选项默认取 true（diffEditor.ts 的 ignoreTrimWhitespace），此处刻意取反
+      ignoreTrimWhitespace: false,
+      // 搬家检测解决的是“同一段代码挪到了别处”，对一屏之内的字符对齐没有增量，开着只是白花预算
+      computeMoves: false,
+      maxComputationTimeMs: diffInnerTimeoutMs,
+      // “细分到子词”的第二轮扩展本轮不做（本项目也没有对应设置项），与上游默认一致
+      extendToSubwords: false,
+    });
+  } catch (err) {
+    // 引擎对畸形输入会抛错（它自己认为不该出现的情形，例如两侧行数极度悬殊）。
+    // 拿不到行内区间只是少一层高亮，不该把整份 diff 一起搭进去
+    return spans;
+  }
+
+  // 超时的结果不能用：引擎在这种情形下会把整块算作一处改动，于是块内每一行都被整行高亮——
+  // 逐词的信息一点没多，节点数却按行数翻倍，正好把合并同类行那项优化抵消掉。
+  // 退回整行着色才是这种规模该有的样子
+  if (result.hitTimeout) return spans;
+
+  const changes = result.changes;
+  for (const ch of changes) {
+    for (const ic of ch.innerChanges || []) {
+      spreadInnerRange(spans.del, delLines, ic.originalRange);
+      spreadInnerRange(spans.add, addLines, ic.modifiedRange);
+    }
+  }
+  spans.del = spans.del.map(mergeSpans);
+  spans.add = spans.add.map(mergeSpans);
+  return spans;
+}
+
+// spreadInnerRange 把引擎给出的一处区间摊到它覆盖的每一行上。
+// 区间可能横跨多行（整段重写就是这种形状），此时中间那些整行都要算进来
+function spreadInnerRange(perLine, lines, range) {
+  for (let n = range.startLineNumber; n <= range.endLineNumber; n++) {
+    const line = lines[n - 1];
+    // 行号越界一律跳过：宁可少标一处高亮，也不能把高亮标到别的行上
+    if (line === undefined) continue;
+    // 列号 1 起算、末列不含。首行从引擎给的起列开始，末行到引擎给的止列为止，
+    // 中间的行则是整行
+    const start = n === range.startLineNumber ? Math.max(range.startColumn - 1, 0) : 0;
+    const end = n === range.endLineNumber ? Math.min(range.endColumn - 1, line.length) : line.length;
+    // 起止相等表示“就在这个位置插入或删除”，没有任何字符可以着色；留着它会产出一个
+    // 空的高亮元素，看不见也选不中
+    if (end > start) (perLine[n - 1] || (perLine[n - 1] = [])).push([start, end]);
+  }
+}
+
+// mergeSpans 把一行内的区间按起点排序，并合并重叠或首尾相接的部分。
+// 引擎会把同一处改动拆成几段相邻区间，不合并就会产出多个紧邻的高亮元素——视觉一样，节点多一份
+function mergeSpans(list) {
+  if (!list || !list.length) return null;
+  if (list.length === 1) return list;
+  list.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const out = [list[0]];
+  for (let i = 1; i < list.length; i++) {
+    const last = out[out.length - 1];
+    if (list[i][0] <= last[1]) {
+      if (list[i][1] > last[1]) last[1] = list[i][1];
+      continue;
+    }
+    out.push(list[i]);
+  }
+  return out;
+}
+
+// hlLineHTML 造一行带行内高亮的 HTML。
+//
+// 入参是这一行的正文（剥掉行首标记之后的内容，见 diffLineBody），区间也按同一个下标算——
+// 传给引擎的正是这段正文，两边口径一致
+function hlLineHTML(line, spans) {
+  let html = '';
+  let pos = 0;
+  for (const [start, end] of spans) {
+    // 把起止夹回 pos 与行尾之间：引擎原则上不会给出越界值，但高亮错位比少一处高亮难查得多
+    const s = Math.min(Math.max(start, pos), line.length);
+    const e = Math.min(Math.max(end, s), line.length);
+    if (s > pos) html += esc(line.slice(pos, s));
+    if (e > s) html += '<span class="hl">' + esc(line.slice(s, e)) + '</span>';
+    pos = e;
+  }
+  if (pos < line.length) html += esc(line.slice(pos));
+  return html;
+}
+
+// diffHTML 把一份统一 diff 转成用于 <pre> 的 HTML：剥掉每行行首的标记字符、按类别给增删行
+// 铺底色、把行内变化的字符再压深一档，并把连续同类且没有行内高亮的行合并进同一个元素。
 //
 // 为什么合并：一次忘记写 .gitignore 就能产生几万行新增，按行建元素会让浏览器为几万个节点
-// 排版（本视图没有虚拟滚动）。合并后典型的增删块只有个位数节点，而视觉上完全一致
+// 排版（本视图没有虚拟滚动）。合并后典型的增删块只有个位数节点，而视觉上完全一致；
+// 只有带行内高亮的行必须独占一个元素（它内部还有子元素），这类行的数量由改动块的规模决定，
+// 与文件总行数无关
 function diffHTML(text, allAdded) {
   const lines = text.split('\n');
   // 统一 diff 与文件正文都以换行结尾，split 会多出一个空串；不去掉它，末尾就会多出一条空行
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
+  // allAdded 用于未跟踪文件：那边拿到的是文件正文而不是 diff，每一行都是新增，
+  // 也就没有对面那一侧可比，行内区间恒为空
+  const classes = lines.map((line) => (allAdded ? 'add' : diffLineClass(line)));
+  // 未跟踪文件拿到的是文件正文而不是 diff，行首本来就没有标记，剥了就是白丢一个字符
+  const body = allAdded ? lines : lines.map((line, i) => diffLineBody(classes[i], line));
+  const spans = diffLineSpans(body, classes);
+
   const groups = [];
-  for (const line of lines) {
-    // allAdded 用于未跟踪文件：那边拿到的是文件正文而不是 diff，每一行都是新增
-    const cls = allAdded ? 'add' : diffLineClass(line);
+  for (let i = 0; i < body.length; i++) {
+    const cls = classes[i];
     const last = groups[groups.length - 1];
-    if (last && last.cls === cls) last.lines.push(line);
-    else groups.push({ cls: cls, lines: [line] });
+    if (spans[i]) {
+      groups.push({ cls: cls, html: hlLineHTML(body[i], spans[i]) });
+      continue;
+    }
+    if (last && last.cls === cls && last.html === undefined) last.lines.push(body[i]);
+    else groups.push({ cls: cls, lines: [body[i]] });
   }
 
   return groups
-    .map((g) => '<span class="dl' + (g.cls ? ' ' + g.cls : '') + '">' + esc(g.lines.join('\n')) + '</span>')
+    .map(
+      (g) =>
+        '<span class="dl' +
+        (g.cls ? ' ' + g.cls : '') +
+        '">' +
+        (g.html === undefined ? esc(g.lines.join('\n')) : g.html) +
+        '</span>',
+    )
     .join('');
 }
 

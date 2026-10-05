@@ -374,6 +374,186 @@ await report.acrossViewports(async (preset) => {
       if (paths.length !== 2) throw new Error(`按第一个父提交应当是 2 个文件，实得 ${JSON.stringify(paths)}`)
     })
 
+    // 行内高亮是这一层最容易悄悄失效的地方：引擎挂在另一个脚本上、改动块要自己切，
+    // 任何一环出问题都不会报错，只是回到整行着色——所以必须有断言盯住“具体是哪几个字符变了”
+    await report.check('行内高亮标出具体改了哪几个字符', async () => {
+      await openCommitRow(1, 0)
+      await page.locator('#graph-popup .open-diff').click()
+      await page.waitForSelector('#diff-body .diff-file', { timeout: 10000 })
+
+      const texts = await page.locator('#diff-body .hl').allTextContents()
+      if (texts.length === 0) throw new Error('正文里一处行内高亮都没有')
+
+      // two → two 二：高亮范围应当只是插入的那两个字符，不能是整行
+      if (!texts.includes(' 二')) {
+        throw new Error(`没有把行尾插入的两个字符单独标出：${JSON.stringify(texts)}`)
+      }
+
+      // three → THREE：整行内容都变了，此时高亮注定盖满整行，但也要确实存在
+      if (!texts.some((s) => s === 'three' || s === 'THREE')) {
+        throw new Error(`没有标出大小写改写：${JSON.stringify(texts)}`)
+      }
+
+      // 词级高亮与整行底色必须不是同一个颜色，否则“这一行里是哪几个词变了”又看不出来了
+      const pair = await page.evaluate(() => {
+        const hl = document.querySelector('#diff-body .dl.add .hl, #diff-body .dl.del .hl')
+        if (!hl) return null
+        return { hl: getComputedStyle(hl).backgroundColor, row: getComputedStyle(hl.closest('.dl')).backgroundColor }
+      })
+      if (!pair) throw new Error('正文里找不到带行内高亮的元素')
+      if (pair.hl === pair.row) throw new Error(`行内高亮与整行底色同色，等于没标：${pair.hl}`)
+      report.note(`行内高亮 ${pair.hl}，所在行的底色 ${pair.row}`)
+    })
+
+    // 行首那一个 + / - 是统一 diff 的标记，不是代码的一部分：代码本身以这两个字符开头时
+    // （Markdown 列表项、diff 的 diff）会与标记连成 "+- item"，分不清哪一段是内容。
+    // 页面改成整行底色加左侧色条来表示增删，这条断言同时盯住“标记真的没了”和“色条真的画了”
+    await report.check('正文不再有行首标记，增删改用底色与左侧色条', async () => {
+      await openCommitRow(1, 0)
+      await page.locator('#graph-popup .open-diff').click()
+      await page.waitForSelector('#diff-body .diff-file', { timeout: 10000 })
+
+      // 测试素材里这几行：删掉 two 与 three，新增 two 二 与 THREE。按元素取文本，等于同时确认了
+      // 标记已剥掉（带标记时会多出一列）与合并路径仍然按行给出内容
+      const added = await page.locator('#diff-body .dl.add').allTextContents()
+      const deleted = await page.locator('#diff-body .dl.del').allTextContents()
+      if (!added.includes('two 二') || !added.includes('THREE')) {
+        throw new Error(`新增行的正文里还留着 + 标记：${JSON.stringify(added)}`)
+      }
+      if (!deleted.includes('two') || !deleted.includes('three')) {
+        throw new Error(`删除行的正文里还留着 - 标记：${JSON.stringify(deleted)}`)
+      }
+
+      // 色条与底色都来自主题令牌，但断言不能去读“有没有写渐变”“两个令牌是否相等”这类写法：
+      // 那挡不住“色条与底色在屏幕上其实看不出差别”这种失效——这一版之前正是那样
+      // （用同一个令牌画 3 像素，或者把色条挡在底色之外）。所以按实际叠色算观感再比
+      const colors = await page.evaluate(() => {
+        const pick = (sel) => {
+          const el = document.querySelector(sel)
+          if (!el) return null
+          const s = getComputedStyle(el)
+          return { bg: s.backgroundColor, rail: s.borderLeftColor, width: s.borderLeftWidth, clip: s.backgroundClip }
+        }
+        return {
+          add: pick('#diff-body .dl.add'),
+          del: pick('#diff-body .dl.del'),
+          first: pick('#diff-body .dl'),
+          card: getComputedStyle(document.querySelector('#diff-body pre.diff')).backgroundColor,
+        }
+      })
+      const transparent = (c) => !c || c === 'transparent' || /rgba\(0, 0, 0, 0\)/.test(c)
+      // 把半透明色叠到下层上：色条压在整行底色之上，整行底色又压在卡片底色之上。
+      // 下层既可能是 CSS 颜色串，也可能是上一步算出来的结果，两种都收
+      const over = (fg, bg) => {
+        const parse = (c) => {
+          if (typeof c !== 'string') return c
+          const n = c.match(/[\d.]+/g).map(Number)
+          return { r: n[0], g: n[1], b: n[2], a: n.length > 3 ? n[3] : 1 }
+        }
+        const f = parse(fg)
+        const b = parse(bg)
+        return { r: f.a * f.r + (1 - f.a) * b.r, g: f.a * f.g + (1 - f.a) * b.g, b: f.a * f.b + (1 - f.a) * b.b }
+      }
+      const diff = (a, b) => Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b)
+      const rgb = (c) => `rgb(${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)})`
+
+      for (const [name, c] of [['新增行', colors.add], ['删除行', colors.del]]) {
+        if (!c) throw new Error(`正文里找不到${name}`)
+        if (transparent(c.bg)) throw new Error(`${name}没有整行底色：${c.bg}`)
+        if (transparent(c.rail)) throw new Error(`${name}没有左侧色条：${c.rail}`)
+        // 底色必须铺到色条之下（border-box）。浏览器没有提供“读出屏幕上实际像素”的接口，
+        // 下面那段叠色是按这个前提推算的，因此把这个前提本身也一起确认下来——否则色条被挡在底色之外时，
+        // 推算值照样漂亮，屏幕上却什么都看不出来（实测那种写法的色阶差只有 13）
+        if (c.clip !== 'border-box') {
+          throw new Error(`${name}的底色没有铺到色条之下（background-clip: ${c.clip}），色条会看不见`)
+        }
+        const row = over(c.bg, colors.card)
+        const rail = over(c.rail, row)
+        // 20 是实测出来的下限：三通道差值之和低于它就已经看不出边界了。把色条挡在底色之外
+        // 的那种写法只有 13，现在的写法是 70 左右，取 20 恰好能把前者挡在门外
+        if (diff(rail, row) < 20) {
+          throw new Error(`${name}的色条与底色看不出差别（色阶差 ${Math.round(diff(rail, row))}）：色条 ${c.rail}，底色 ${c.bg}`)
+        }
+        report.note(`${name}：底色观感 ${rgb(row)}，色条观感 ${rgb(rail)}`)
+      }
+      // 上下文行不染色，但必须给色条让出同样的宽度，否则它的正文会比增删行靠左 3 像素
+      if (colors.first && colors.first.width !== colors.add.width) {
+        throw new Error(`上下文行没给色条让出同样的宽度：${colors.first.width} 对 ${colors.add.width}`)
+      }
+
+      // 上面那条只管住了边框宽度，管不住内边距与行内高亮各自带来的位移——正文左端是否真的对齐
+      // 只有量出来才算数（截图上看，增删行里的文字像是比上下文行右移了一点）
+      const lefts = await page.evaluate(() => {
+        const textLeft = (el) => {
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+          while (walker.nextNode()) {
+            const node = walker.currentNode
+            if (node.textContent.trim() === '') continue
+            const range = document.createRange()
+            range.selectNodeContents(node)
+            const r = range.getBoundingClientRect()
+            if (r.width === 0 && r.height === 0) continue
+            return r.left
+          }
+          return null
+        }
+        const rows = [...document.querySelectorAll('#diff-body .dl')]
+        return {
+          add: rows.filter((r) => r.classList.contains('add')).map(textLeft),
+          del: rows.filter((r) => r.classList.contains('del')).map(textLeft),
+          ctx: rows.filter((r) => r.className.trim() === 'dl').map(textLeft),
+        }
+      })
+      const base = lefts.ctx.find((v) => v !== null)
+      // 三种行都必须真的量到：量不到就落进下面的循环等于没查（undefined 与数字比较恒为假），
+      // 那正是“断言悄悄变成空转”的写法
+      if (base === undefined || lefts.add.length === 0 || lefts.del.length === 0) {
+        throw new Error(`没有量到三种行的正文位置：上下文 ${lefts.ctx}，新增 ${lefts.add}，删除 ${lefts.del}`)
+      }
+      if (lefts.add.includes(null) || lefts.del.includes(null)) {
+        throw new Error(`有增删行量不出正文位置：新增 ${lefts.add}，删除 ${lefts.del}`)
+      }
+      for (const [name, list] of [['新增行', lefts.add], ['删除行', lefts.del]]) {
+        for (const left of list) {
+          if (Math.abs(left - base) > 0.5) {
+            throw new Error(`${name}的正文左端与上下文行差了 ${(left - base).toFixed(1)} 像素（${left} 对 ${base}）`)
+          }
+        }
+      }
+      report.note(`正文左端：上下文 ${base}，新增 ${lefts.add.join('、')}，删除 ${lefts.del.join('、')}`)
+    })
+
+    // 单个改动块的耗时随内容而变（实测每行几十字符的数字表格比批量改名慢一倍多），
+    // 上限附近最容易碰到超时那条线，而超时的结果会被整份丢掉；这一条盯的就是这个上界。
+    // 它不点界面：测试素材里造不出“两侧各 100 行且彼此高度相似”的内容，直接在页面里调这一层，
+    // 跑的是同一个函数、同一份引擎
+    await report.check('接近规模上限的改动块也能拿到行内高亮', async () => {
+      const out = await page.evaluate(() => {
+        const side = (prefix, bump) => {
+          const rows = []
+          for (let i = 0; i < 100; i++) {
+            const nums = []
+            for (let j = 0; j < 8; j++) nums.push(String(i * 8 + j + bump))
+            rows.push(prefix + nums.join('\t'))
+          }
+          return rows
+        }
+        const text = '@@ -1,100 +1,100 @@\n' + side('-', 0).join('\n') + '\n' + side('+', 1).join('\n')
+        const t0 = performance.now()
+        const html = window.diffHTML(text, false)
+        const ms = Math.round(performance.now() - t0)
+
+        // 两行四十万字符：行数上限挡不住它，由字符上限当场判掉，不该白等一次超时
+        const freak = '@@ -1,2 +1,2 @@\n-' + 'x'.repeat(400000) + '\n+' + 'y'.repeat(400000)
+        const t1 = performance.now()
+        const freakHl = (window.diffHTML(freak, false).match(/class="hl"/g) || []).length
+        return { ms, hl: (html.match(/class="hl"/g) || []).length, gateMs: Math.round(performance.now() - t1), freakHl }
+      })
+      report.note(`规模上限的块：${out.ms}ms、${out.hl} 处高亮；两行四十万字符的块：${out.gateMs}ms、${out.freakHl} 处高亮`)
+      if (out.hl === 0) throw new Error(`规模上限的改动块一处行内高亮都没有，耗时 ${out.ms}ms`)
+      if (out.freakHl !== 0) throw new Error(`超长行的块不该做行内比对，实得 ${out.freakHl} 处高亮`)
+    })
+
     // ——— 整仓 diff 的文件级分段 ———
 
     // openWholeRepoDiff 从看板进到整仓 diff
@@ -421,6 +601,34 @@ await report.acrossViewports(async (preset) => {
       // 管道信息不该出现在正文里：路径已经在标题上了
       const body = await page.locator('#diff-body').textContent()
       if (body.includes('diff --git ')) throw new Error('正文里还留着 diff --git 那一行')
+    })
+
+    // 行内高亮要逐行建元素，这与“连续同类行合并成一个元素”存在直接冲突：
+    // 一旦合并失效，几百行的改动就会变成几百个节点，正是当初合并要避免的情形。
+    // 因此这条断言盯的不是好不好看，而是元素数有没有随行数一起涨
+    await report.check('几百行的改动仍然是合并过的少量元素', async () => {
+      await openWholeRepoDiff()
+
+      // 已暂存那份 normal.txt 是整段替换：400 行新增加 3 行删除。
+      // 这个规模超过行内比对的上限，因此整段都该走合并路径
+      const section = page
+        .locator('#diff-body .diff-file')
+        .filter({ has: page.locator('.diff-file-path', { hasText: 'normal.txt' }) })
+        .filter({ hasText: '已暂存的改动' })
+        .first()
+      const pre = section.locator('pre.diff')
+      const lines = (await pre.textContent()).split('\n').length
+      if (lines < 400) throw new Error(`这段只有 ${lines} 行，不再是 400 行那一份，断言失去意义`)
+
+      const nodes = await pre.locator('.dl').count()
+      if (nodes > 20) {
+        throw new Error(`${lines} 行的改动被拆成 ${nodes} 个元素，合并同类行没有生效`)
+      }
+
+      const total = await page.locator('#diff-body .hl').count()
+      if (total !== 0) {
+        throw new Error(`超过上限的整段替换不该有行内高亮，实得 ${total} 处`)
+      }
     })
 
     await report.check('滚动到文件中部时标题贴住顶部', async () => {
