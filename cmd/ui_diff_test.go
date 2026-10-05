@@ -91,7 +91,6 @@ func initDiffTestRepo(t *testing.T) string {
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=ggt", "GIT_AUTHOR_EMAIL=ggt@example.com",
 			"GIT_COMMITTER_NAME=ggt", "GIT_COMMITTER_EMAIL=ggt@example.com",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 		)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v 失败：%v（%s）", args, err, out)
@@ -221,7 +220,8 @@ func TestHandleDiffCommitMode(t *testing.T) {
 }
 
 // gitOut 在指定仓库里跑一条 git 命令并返回标准输出。
-// 测试素材里的仓库由 initDiffTestRepo 造好，环境变量与它保持一致（不读全局配置）
+// 测试素材里的仓库由 initDiffTestRepo 造好，身份变量与它保持一致；
+// 至于不读使用者的全局 git 配置，由本包的 TestMain 统一负责
 func gitOut(t *testing.T, repo string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -229,7 +229,6 @@ func gitOut(t *testing.T, repo string, args ...string) string {
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=ggt", "GIT_AUTHOR_EMAIL=ggt@example.com",
 		"GIT_COMMITTER_NAME=ggt", "GIT_COMMITTER_EMAIL=ggt@example.com",
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 	)
 	out, err := cmd.Output()
 	if err != nil {

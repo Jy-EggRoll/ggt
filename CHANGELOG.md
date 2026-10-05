@@ -25,6 +25,7 @@
 - ✨ 抽出多仓库状态采集层（`internal/git/status.go`）：改用 `git status --porcelain=v2 -z --branch`，终端与看板共用同一份结论。原实现从给人看的 `--short` 文本反推——数非空行判断有无变更、`strings.Contains` 判断有无待推送提交，用户一旦配了 `status.relativePaths` 或 `color.status`，判断会静默失效：不报错，只是所有仓库的结论一起变错
 - 前端为原生 HTML/CSS/JS + go:embed，无构建链；token 门禁与 Host 允许清单复用共享库 eggokit 的 webui 基座，不在本项目重复实现
 - ✨ 点开仓库或文件即可看 diff：整页覆盖层，分“已暂存的改动”与“未暂存的改动”两段，只按行首 +/- 着色（不做语法高亮），长行折行；未跟踪文件整份按新增展示，二进制只给提示，超过 2 MiB 的输出截断并标注
+- 🐛 整仓 diff 正文里的中文路径不再显示成八进制串：git 默认把非 ASCII 路径输出成 `"\346\226\207"` 这种形态，而分段标题走的那份清单是用 `-z` 取的、里面已经是中文，同一次 diff 里两处写法对不上。现在由 ggt 自己固定这一项，不再取决于使用者本机的 `core.quotepath` 设置
 - ✨ 网页上可直接暂存 / 取消暂存文件、写提交信息并提交、推送当前分支（`/api/stage`、`/api/unstage`、`/api/commit`、`/api/push`）。仓库与文件都必须命中页面已看到的状态快照；失败时透出 git 的原话而不是“操作失败”这类笼统提示；没有 upstream 时不替用户建立跟踪。未合并的文件不提供暂存按钮——那等于把冲突标记当成分辨结果提交进去
 - ✨ 新增“拉取全部”按钮：对所有仓库并发跑 `git fetch --all --prune`（autofetch 暂不实现，先给手动入口）
 - ✨ 配色改用 VSCode 主题：看板只使用 CSS 变量，颜色全部来自一套主题文档。把任意合法的 VSCode 主题 JSON 丢进配置目录就能在设置面板里选中它；内置 VSCode 官方 8 套与 Catppuccin 4 套，另有“跟随系统”。主题文件按 VSCode 自己的规则解析——JSONC 注释与尾逗号、`include` 链逐层合并、缺失令牌回落到颜色注册表默认值——因此观感与 VSCode 一致。内置主题文件逐字取自上游（均 MIT，许可随文件放在 `internal/theme/builtin/*/LICENSE.txt`）

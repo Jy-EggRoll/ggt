@@ -31,6 +31,24 @@ func IsRepo(path string) bool {
 // 本地操作（status/rev-parse）也能在超时前完成。
 const defaultTimeout = 120 * time.Second
 
+// baseArgs 是所有 git 调用共享的前置参数，与 GIT_TERMINAL_PROMPT=0 那套环境变量同一个用意：
+// 把 ggt 需要的 git 行为固定在命令行上，不受使用者的配置影响。
+//
+// core.quotepath=false 关掉非 ASCII 路径的八进制转义。git 默认把中文路径输出成
+// "\346\226\207" 这种形态，那是给终端与旧工具看的；ggt 要把路径显示在网页上，而解析层
+// 不做反解——status 与 numstat 靠 -z 规避（-z 下路径以 NUL 原样分隔），diff 正文没有
+// -z 可用。留给使用者的配置去决定，就会出现同一次 diff 里“分段标题是中文、正文却是
+// 八进制串”的自相矛盾，而且本机与 CI 的 git 配置不同还会让测试一边绿一边红
+var baseArgs = []string{"-c", "core.quotepath=false"}
+
+// gitCmd 构造一条 git 命令，统一补上前置参数。
+//
+// 所有 git 调用都应当经由本函数：别处直接 exec.CommandContext("git", ...) 会绕过
+// baseArgs 这层约定，而漏掉的后果在正常路径上根本看不出来
+func gitCmd(ctx context.Context, args []string) *exec.Cmd {
+	return exec.CommandContext(ctx, "git", append(append([]string{}, baseArgs...), args...)...)
+}
+
 // Run 在指定仓库路径下执行 git 命令，返回标准输出。
 // 参数 repoPath 为仓库根目录，args 为 git 子命令及其参数。
 // 调用方只需关心字符串输出，无需处理 Context 和超时；
@@ -86,7 +104,7 @@ func runWithOutput(ctx context.Context, repoPath string, args ...string) (string
 // 自行拼 cmd.Env，是为了保住“所有 git 调用共享同一套基础环境”这条前提——
 // 一旦有人绕过本函数，GIT_TERMINAL_PROMPT=0 这类防止卡死的设置就会漏掉。
 func runWithOutputEnv(ctx context.Context, repoPath string, extraEnv []string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := gitCmd(ctx, args)
 	cmd.Dir = repoPath
 	// GIT_TERMINAL_PROMPT=0 禁止 git 弹出交互式凭据提示，
 	// 避免在脚本/批量操作中卡住等待用户输入。
@@ -117,7 +135,7 @@ func runWithOutputEnv(ctx context.Context, repoPath string, extraEnv []string, a
 // 一个 32KB 的读取块可能一次装进上千条短记录，不裁的话返回的条目数会明显多于上限，
 // 界面上显示的数量就和“上限”这个说法对不上了。
 func runWithRecordLimit(ctx context.Context, repoPath string, extraEnv []string, limit int, args ...string) (string, bool, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := gitCmd(ctx, args)
 	cmd.Dir = repoPath
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), extraEnv...)
 
@@ -181,7 +199,7 @@ func trimNulRecords(buf []byte, limit int) []byte {
 
 // runWithCombinedOutput 执行 git 命令并捕获 stdout + stderr。
 func runWithCombinedOutput(ctx context.Context, repoPath string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := gitCmd(ctx, args)
 	cmd.Dir = repoPath
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	output, err := cmd.CombinedOutput()
