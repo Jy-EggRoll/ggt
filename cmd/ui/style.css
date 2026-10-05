@@ -46,8 +46,10 @@
 :root {
   /* ——— 尺度变量 ———
    * 上游没有间距、圆角、动效这三类令牌（已核 colors/*.ts），因此下面这几组的取值是本项目自拟的：
-   * 间距按 4px 基准取 VSCode 界面里实际出现的档位，圆角按“越小越方正”排五档，
-   * 动效统一成三条各有唯一职责的时长 */
+   * 间距按 4px 基准取 VSCode 界面里实际出现的档位，动效统一成三条各有唯一职责的时长。
+   * 圆角档位对齐 Fluent 2 的官方规范（fluent2.microsoft.design/shapes）：控件 4px、
+   * 大型组件（看板卡片）8px、超大型组件（浮层）12px；xs 与 pill 是规范外的两端补档 */
+
   --sp-1: 4px;
   --sp-2: 6px;
   --sp-3: 8px;
@@ -90,12 +92,14 @@
 
   --radius-xs: 3px;
   --radius-sm: 4px;
-  --radius-md: 7px;
-  --radius-lg: 8px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
   --radius-pill: 999px;
 
-  /* 浮层留白与层级刻度：一次排开，避免以后再出现“两层用同一个 z-index” */
-  --overlay-inset: 18px;
+  /* 浮层留白与层级刻度：一次排开，避免以后再出现“两层用同一个 z-index”。
+     留白取 24px 而不是与 --page-pad 相等的 16px——两者相等时浮层边线与看板卡片边线会
+     糊成一条，反而看不出层次；18px 曾用，加大到 24px 后浮层更像一张“浮起来的卡片” */
+  --overlay-inset: 24px;
   /* 底栏排在两层浮层之上、浮动之物（详情卡与通知）之下：底栏上的铃铛要在卡片或 diff 开着时
      也能点到，而详情卡与通知本来就该压在最上面 */
   --z-statusbar: 11;
@@ -128,6 +132,27 @@
   /* 遮罩：底色与模糊都在这里，两层浮层共用同一个值 */
   --scrim-bg: color-mix(in srgb, var(--bg) 55%, transparent);
   --scrim-blur: 2px;
+
+  /* ——— 阴影（Fluent 2 质感层的核心） ———
+   * 档位与结构出自官方规范（fluent2.microsoft.design/elevation）：
+   * 阴影由两层合成——锐利的直射层（key，向下偏移、模糊小）与柔和的环境层（ambient，四周扩散），
+   * 模糊半径即档位名：卡片用 shadow4 档，通知与悬浮卡用 shadow16 档，浮层对话框用 shadow64 档。
+   * 规范另有一条“Windows 用描边勾勒边缘而不是直射阴影”——本看板的卡片与浮层本来就有边框，
+   * 与之天然一致，因此直射层都写得很轻。
+   *
+   * 色源只有一个：--widget-shadow（服务端从主题解析注入，浅色 16% 黑、深色 36% 黑，
+   * 与规范的浓度同档），本文件因此仍然没有颜色字面量；换主题时阴影跟着主题走。
+   *
+   * 看板卡片的阴影拆成方位三段（--shadow-card-*）而不是一整条 box-shadow：
+   * 一张卡片是多行 .row 拼出来的，每行各自画阴影，若用整圈阴影，行与行之间会互相渗色。
+   * 方位拆分后左右两侧用负收缩把垂直方向的扩散收为零，行间无缝，上沿只由 .row.head 画、
+   * 下沿只由 .row.foot 画 */
+  --shadow-key: var(--widget-shadow, transparent);
+  --shadow-card-x: 8px 0 10px -8px var(--shadow-key), -8px 0 10px -8px var(--shadow-key);
+  --shadow-card-top: 0 -4px 8px -6px var(--shadow-key);
+  --shadow-card-bottom: 0 6px 10px -6px var(--shadow-key);
+  --shadow-pop: 0 2px 6px var(--shadow-key), 0 8px 16px -4px var(--shadow-key);
+  --shadow-dialog: 0 4px 14px var(--shadow-key), 0 28px 56px -12px var(--shadow-key);
 }
 
 /*
@@ -217,6 +242,9 @@
 .btn--primary {
   background: var(--btn-bg);
   color: var(--btn-fg);
+  /* 顶部一道内侧高光：Fluent 2 按钮的标志性细节，让按钮微微“鼓”出平面。
+     高光色从按钮前景令牌（通常是白）派生而不是写字面量，换主题时高光跟着按钮配色走 */
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--btn-fg) 22%, transparent);
 }
 .btn--primary:hover { background: var(--btn-hover-bg, color-mix(in srgb, var(--btn-bg) 88%, var(--text))); }
 .btn--secondary {
@@ -252,12 +280,22 @@
   background: var(--panel-bg, var(--bg));
   border: 1px solid var(--editor-widget-border, var(--card-border));
   border-radius: var(--radius-lg);
-  /* widget.shadow 是 VSCode 给浮层用的阴影令牌 */
-  box-shadow: 0 8px 32px var(--widget-shadow, transparent);
+  /* 浮层对话框用 shadow64 档（档位与双层结构见 :root 的阴影段注释） */
+  box-shadow: var(--shadow-dialog);
   /* 圆角要真的裁掉子元素（标题栏与正文都是直角），否则四角会露出内容 */
   overflow: hidden;
 }
-.overlay.open { display: flex; }
+.overlay.open {
+  display: flex;
+  /* 入场动效：淡入加极轻微的放大，是 Fluent 浮层打开的标志性观感；
+     时长与曲线与行位移同一条（--dur-move / --ease-decel），页面里不会出现第二种时间感。
+     display 从 none 切到 flex 会重启动画，因此每次打开都会播一次，无需额外的类来触发 */
+  animation: overlay-in var(--dur-move) var(--ease-decel);
+}
+@keyframes overlay-in {
+  from { opacity: 0; transform: scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
 .overlay > header {
   flex: none;
   display: flex;
@@ -356,7 +394,15 @@ body {
   background: var(--card-bg);
   border-left: 1px solid var(--card-border);
   border-right: 1px solid var(--card-border);
-  transition: transform var(--dur-move) var(--ease-decel);
+  /* 卡片阴影拆方位画：每行只画左右两侧（负收缩把垂直扩散收为零，行间才不互相渗色），
+     上沿与下沿分别由 .row.head 与 .row.foot 补上，拼起来正好是一整张卡片的一圈柔和阴影
+     （shadow4 档，理由见 :root 的阴影段注释） */
+  box-shadow: var(--shadow-card-x);
+  /* background-color 也在过渡列表里：hover 高亮（见 .row:hover）从硬切换变成 100ms 的渐变，
+     鼠标扫过一列时不再是一道道生硬的亮条 */
+  transition:
+    transform var(--dur-move) var(--ease-decel),
+    background-color var(--dur-fast) ease;
   will-change: transform;
 }
 
@@ -389,6 +435,8 @@ body {
   gap: var(--sp-2);
   overflow: hidden;
   white-space: nowrap;
+  /* 卡片上沿的阴影只由头行画（拼行阴影的方位拆分，见 .row 处注释） */
+  box-shadow: var(--shadow-card-x), var(--shadow-card-top);
 }
 
 /* 卡片的最后一行：圆角与下边框。跨列被切断的卡片，其上一段的末行没有这个类，
@@ -398,6 +446,13 @@ body {
   border-bottom: 1px solid var(--card-border);
   border-end-start-radius: var(--radius-md);
   border-end-end-radius: var(--radius-md);
+  /* 卡片下沿的阴影只由末行画；box-shadow 没有逻辑属性可拆，与 .row.head 的规则是
+     “整条覆盖”的关系，因此单行卡片（既是 head 又是 foot）要靠下面那条组合规则补全 */
+  box-shadow: var(--shadow-card-x), var(--shadow-card-bottom);
+}
+/* 单行卡片：上沿、下沿、左右四段阴影一起画（head 与 foot 的规则会互相覆盖，必须组合） */
+.row.head.foot {
+  box-shadow: var(--shadow-card-x), var(--shadow-card-top), var(--shadow-card-bottom);
 }
 
 /* 仓库名与分支名都要能被截断：仓库名过长时不能把计数徽标挤出行外 */
@@ -662,7 +717,13 @@ body {
   align-items: center;
   gap: var(--sp-3);
   padding: 0 var(--sp-4);
-  background: var(--card-bg);
+  /* 亚克力材质（Fluent 的 Acrylic）：半透明底色叠背景模糊，看板从底栏下面滚过时
+     会隐约透上来，底栏因此有了“浮在内容之上”的层次。不透明度取 82%——再低，
+     滚到正下方的卡片上的彩色状态字会干扰底栏文字的可读性；模糊 14px 配合 saturate
+     是亚克力的经典配方（先模糊化再提饱和，透上来的颜色不发灰）。
+     底栏上只有文字与小图标，没有大片密排文本，是整页最适合做半透明的一层 */
+  background: color-mix(in srgb, var(--card-bg) 82%, transparent);
+  backdrop-filter: blur(14px) saturate(1.4);
   border-top: 1px solid var(--card-border);
 }
 #fetch-btn:disabled { cursor: default; }
@@ -843,7 +904,7 @@ body {
   color: var(--text);
   font-size: var(--fs-sm);
   line-height: var(--line-tight);
-  box-shadow: 0 2px var(--sp-3) var(--widget-shadow, transparent);
+  box-shadow: var(--shadow-pop);
   animation: notif-in var(--dur-move) var(--ease-decel);
 }
 .notif-icon {
@@ -890,7 +951,7 @@ body {
   background: var(--panel-bg, var(--bg));
   border: 1px solid var(--editor-widget-border, var(--card-border));
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px var(--widget-shadow, transparent);
+  box-shadow: var(--shadow-pop);
   font-size: var(--fs-sm);
   line-height: var(--line-tight);
 }
@@ -949,6 +1010,8 @@ body {
   .row, .cont { transition: none; }
   /* 通知的入场位移也在这里关掉：这类用户对位移动画敏感，通知又是“随时可能冒出来”的东西 */
   .notif { animation: none; }
+  /* 浮层的入场缩放同理：打开设置面板、diff 这类大浮层时，缩放动画对前庭敏感的用户最不友好 */
+  .overlay.open { animation: none; }
 }
 
 /*
@@ -1334,7 +1397,7 @@ pre.diff .meta { color: var(--text-dim); }
   background: var(--panel-bg, var(--bg));
   border: 1px solid var(--editor-widget-border, var(--card-border));
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px var(--widget-shadow, transparent);
+  box-shadow: var(--shadow-pop);
   font-size: var(--fs-sm);
   line-height: var(--line-relaxed);
   /* 出现只做淡入、不做位移：跟手的卡片一旦有位移，快速划过一排提交时会看起来在抖 */
