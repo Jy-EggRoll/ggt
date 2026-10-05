@@ -52,6 +52,10 @@ type Config struct {
 	// 对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme
 	ThemeDark  string `mapstructure:"theme_dark" json:"theme_dark"`
 	ThemeLight string `mapstructure:"theme_light" json:"theme_light"`
+	// FontUI / FontMono 是页面两片区域各自的字体栈，空串表示用样式表内置的那套
+	// （与 Theme 同理，空串是有意义的零值，applyConfigDefaults 不需要补值）
+	FontUI   string `mapstructure:"font_ui" json:"font_ui"`
+	FontMono string `mapstructure:"font_mono" json:"font_mono"`
 	// NotifyTimeout 是网页通知自动消失的秒数。0 表示不自动消失，也就是零值即默认，
 	// 因此 applyConfigDefaults 同样不需要为它补值
 	NotifyTimeout int `mapstructure:"notify_timeout" json:"notify_timeout"`

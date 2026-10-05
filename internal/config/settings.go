@@ -17,6 +17,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
@@ -243,6 +244,31 @@ var settings = []Setting{
 		Options:  themePreferenceOptions,
 	},
 	{
+		// 字体按“区域”分成两项，而不是给一个全局字体：同一个页面上，界面文字与等宽文字
+		// （diff 正文、提交号、设置面板里的配置键名）本来就该是两套，一个全局值只能二选一。
+		// 分区的边界取样式表里已有的两处落点，不新造概念（见 cmd/ui/style.css 的 --font-ui / --font-mono）
+		Key:   "font_ui",
+		Title: l10n.T("Interface font", nil),
+		Kind:  KindString,
+		// 空串 = 用样式表里内置的那套字体栈。这是“有意义的零值”，因此 applyConfigDefaults 不需要补值
+		Default:  "",
+		Expected: l10n.T("a font-family list, or empty for the built-in stack", nil),
+		Parse:    parseFontFamily,
+		Options:  uiFontOptions,
+		// 本机装了什么字体只有用户自己知道，候选取的是几档常见选择，写别的同样合法
+		AllowCustom: true,
+	},
+	{
+		Key:         "font_mono",
+		Title:       l10n.T("Monospace font", nil),
+		Kind:        KindString,
+		Default:     "",
+		Expected:    l10n.T("a font-family list, or empty for the built-in stack", nil),
+		Parse:       parseFontFamily,
+		Options:     monoFontOptions,
+		AllowCustom: true,
+	},
+	{
 		// 通知自动消失的时长，秒。0 表示不自动消失——这也是默认值：
 		// 默认让提示留着，比默认把用户还没看完的提示收走更安全
 		Key:      "notify_timeout",
@@ -418,6 +444,39 @@ func availableThemeOptions() []Option {
 	return out
 }
 
+// uiFontOptions 与 monoFontOptions 是两片区域各自的常见选择。
+//
+// 每项都是一整条字体栈，而不是一个字体名：本机没装第一个时浏览器会顺着往下找，
+// 于是“选了一个这台机器上没装的字体”不至于让整片文字变成浏览器的默认字体
+//
+// 候选不给显示名：这一项在面板上是“输入框 + 候选清单”（AllowCustom），而那个控件只把候选的
+// 值列出来，显示名用不上；何况字体栈本身就说明了它是什么，不像主题 id（builtin:dark-plus）
+// 那样离了显示名就没法读。清单里也不放空值项（主题清单里那个“跟随系统”是另一回事：
+// 主题是严格下拉框，能清空这件事只能由清单表达），留空用内置字体栈这件事在说明文字里写着，
+// 面板上每一项还都有“恢复默认”按钮
+//
+// 刻意不做“本机已装字体”的枚举：枚举要按平台各写一套（Linux 靠 fontconfig 的 fc-list、
+// Windows 靠注册表、macOS 靠 system_profiler），代价远大于收益；AllowCustom 本来就允许
+// 把任何字体名写进去，候选清单只是省去打字
+func uiFontOptions() []Option {
+	return []Option{
+		{Value: `"Noto Sans CJK SC", "Source Han Sans SC", system-ui, sans-serif`},
+		{Value: `Inter, system-ui, sans-serif`},
+		{Value: `"Noto Serif CJK SC", "Source Han Serif SC", Georgia, serif`},
+	}
+}
+
+// monoFontOptions 是等宽区域的常见选择：前三个是带连字的编程字体，
+// 最后一个是中英文等宽的字体——表格与中文注释要对齐就得靠它
+func monoFontOptions() []Option {
+	return []Option{
+		{Value: `"JetBrains Mono", ui-monospace, monospace`},
+		{Value: `"Fira Code", ui-monospace, monospace`},
+		{Value: `"Cascadia Code", ui-monospace, monospace`},
+		{Value: `"Noto Sans Mono CJK SC", ui-monospace, monospace`},
+	}
+}
+
 // parseLanguage 解析输出语言。
 //
 // 必须用 l10n.IsSupported 而不是 l10n.Normalize：后者对不认识的输入回退默认语言，
@@ -440,6 +499,59 @@ func parseLanguage(s string) (any, error) {
 // 也可以是外部主题文件的绝对路径
 func parseTheme(s string) (any, error) {
 	return strings.TrimSpace(s), nil
+}
+
+// fontFamilyMaxLen 是字体栈的长度上限（按字符数，不是字节数——中文名字按字数算才符合直觉）。
+//
+// 上限不是洁癖：这个值会被拼进每一份首页的 <style> 里，几万字符的取值等于让每个请求都带上它；
+// 而正常字体栈十几个名字也就一两百字符
+const fontFamilyMaxLen = 200
+
+// ValidFontFamily 判定一个字体栈取值能不能用，并返回规整后的形态（去掉首尾空白）。
+// 空串合法，含义是“用样式表内置的那套”而不是“没有字体”
+//
+// 为什么要限定字符集：这个值最终会被原样拼进样式表，分号能就地起一条新声明、花括号能闭合
+// 整个 :root 块、反斜杠与尖括号是各种解析器的转义口子。而字体栈真正需要的东西很少——
+// 字母（含中文）、数字、空格、逗号、连字符、下划线、点、单双引号，仅此而已
+//
+// 写入时（parseFontFamily）与渲染时（cmd/ui_theme.go 的 fontBlock）各用一次：注册表的 Parse
+// 只在写入时跑，而渲染读的是配置文件里的原始值，“手改配置文件”那条路完全绕过 Parse，
+// 只把校验放在写入侧等于没防住渲染
+func ValidFontFamily(s string) (string, bool) {
+	v := strings.TrimSpace(s)
+	if v == "" {
+		return "", true
+	}
+	if len([]rune(v)) > fontFamilyMaxLen {
+		return "", false
+	}
+	quotes := 0
+	for _, r := range v {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+		case r == ' ' || r == ',' || r == '-' || r == '_' || r == '.':
+		case r == '"' || r == '\'':
+			quotes++
+		default:
+			return "", false
+		}
+	}
+	// 引号必须成对：落单的引号会把后面的字体名一起吞进同一个字符串里，页面上表现为
+	// “字体忽然全变了”，而浏览器与 ggt 都不会报任何错
+	if quotes%2 != 0 {
+		return "", false
+	}
+	return v, true
+}
+
+// parseFontFamily 解析界面字体与等宽字体。合法取值的判断只有 ValidFontFamily 一处：
+// 写入侧与渲染侧各写一套的话，“能写进配置文件、渲染时却被当成非法值丢掉”迟早会发生
+func parseFontFamily(s string) (any, error) {
+	v, ok := ValidFontFamily(s)
+	if !ok {
+		return nil, ErrInvalidValue
+	}
+	return v, nil
 }
 
 // parseLogLevel 解析诊断日志级别。

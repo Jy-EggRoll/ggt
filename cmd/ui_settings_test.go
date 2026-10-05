@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,6 +31,7 @@ func TestRenderIndexHTMLInjectsEveryPlaceholder(t *testing.T) {
 	// __GGT_SETTINGS__ 本来就带这个前缀，那种断言会把它们一起算成残留
 	for _, placeholder := range []string{
 		"__GGT_HTML_LANG__", "__GGT_LANG_VALUE__", "__GGT_SETTINGS_JSON__", "__GGT_THEME_CSS__",
+		"__GGT_FONT_CSS__",
 	} {
 		if strings.Contains(out, placeholder) {
 			t.Errorf("首页仍留有占位符 %s", placeholder)
@@ -244,5 +246,58 @@ func TestUIReloadKeysExist(t *testing.T) {
 		if _, ok := config.Lookup(key); !ok {
 			t.Errorf("uiReloadKeys 里的 %q 在注册表里不存在", key)
 		}
+	}
+}
+
+// writeRawConfig 直接往配置文件落一份内容，绕过 SetFromTextAt 那条写入校验，
+// 用来模拟“用户自己动手编辑配置文件”这种情形
+func writeRawConfig(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("建配置目录失败：%v", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("写配置文件失败：%v", err)
+	}
+}
+
+// TestFontBlockFollowsConfig 断言字体覆盖规则只由配置决定，并且写坏的取值进不了样式表。
+//
+// 这一条盯的是“手改配置文件”那条路：注册表的 Parse 只在写入时跑，渲染读的是文件里的原始值，
+// 非法取值必须在这里被挡下（回退到样式表内置的那套字体栈），而不是原样拼进 <style>——
+// 分号能就地起一条新声明、花括号能闭合整个 :root 块
+func TestFontBlockFollowsConfig(t *testing.T) {
+	// 隔离配置：fontBlock 读的是默认配置路径，不能碰开发者自己的那一份
+	t.Setenv("HOME", t.TempDir())
+	path := config.GetDefaultConfigPath()
+
+	if got := fontBlock(); got != "" {
+		t.Fatalf("两项都没配置时应返回空串（样式表内置的字体栈继续生效），实得 %q", got)
+	}
+
+	writeRawConfig(t, path, `{"font_ui":"Inter, system-ui, sans-serif","font_mono":"Foo;} body{display:none}"}`)
+	got := fontBlock()
+	if want := ":root{--font-ui:Inter, system-ui, sans-serif;}"; got != want {
+		t.Errorf("字体覆盖规则应为 %q，实得 %q", want, got)
+	}
+	if strings.Contains(got, "display:none") {
+		t.Error("非法的字体栈被原样拼进了样式表")
+	}
+
+	// 整页渲染时它必须落进那条专用的 <style id="fonts">：混进主题那条规则里的话，
+	// “配色解析失败”会连带丢掉字体覆盖
+	indexHTML, err := fs.ReadFile(uiAssets, "ui/index.html")
+	if err != nil {
+		t.Fatalf("读取首页模板失败：%v", err)
+	}
+	out := string(renderIndexHTML(indexHTML, "en"))
+	if !strings.Contains(out, `<style id="fonts">:root{--font-ui:Inter, system-ui, sans-serif;}</style>`) {
+		t.Error("渲染后的首页里找不到注入好的字体规则")
+	}
+
+	// 清空之后必须回到内置：空串表示“用样式表那套”，不能留下 --font-ui: 这种空声明
+	writeRawConfig(t, path, `{"font_ui":"","font_mono":""}`)
+	if got := fontBlock(); got != "" {
+		t.Errorf("清空字体后应不再注入任何规则，实得 %q", got)
 	}
 }

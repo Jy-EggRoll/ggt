@@ -1,4 +1,6 @@
-// 本文件是看板主题的 ggt 侧：把某套 VSCode 主题解析成页面要的那组 CSS 变量。
+// 本文件是看板主题的 ggt 侧：把某套 VSCode 主题解析成页面要的那组 CSS 变量，
+// 并按配置生成页面字体的覆盖规则。字体与配色放同一处，是因为两者都是“服务端在渲染
+// 首页时现算”的页面外观设置：同一份配置两次读取、两个注入点，改完都要刷新页面才生效
 //
 // 通用部分——JSONC 规整、include 链、type 判定、VSCode 颜色注册表默认值、内置主题文件——
 // 全在 internal/theme，本文件只负责 ggt 自己的两件事：要哪些颜色 id，以及 VSCode 里没有
@@ -201,6 +203,60 @@ func resolveTheme() string {
 		return systemThemeCSS(dark, light)
 	}
 	return themeBlock(resolved)
+}
+
+// 字体相关的两个配置键，与样式表里的两个变量一一对应：
+//
+//	font_ui   -> --font-ui    界面文字：看板的仓库名与提交信息、设置面板的说明文字
+//	font_mono -> --font-mono  等宽文字：diff 正文、提交号、设置面板里的配置键名
+//
+// 它们不是主题令牌：VSCode 里字体与配色分属两个设置项（editor.fontFamily 与
+// workbench.colorTheme），颜色注册表里也没有任何字体项可映射，因此这里直接读配置
+const (
+	fontUIKey   = "font_ui"
+	fontMonoKey = "font_mono"
+)
+
+// fontBlock 生成本次页面渲染该用的字体覆盖规则，没有可覆盖的项时返回空串。
+//
+// 取值由用户提供、最终原样拼进样式表，所以这里对文件里的值再过一次合法性判定
+// （config.ValidFontFamily）：注册表的 Parse 只在写入时把关，而渲染读的是配置文件里的
+// 原始值，手改配置文件那条路绕过 Parse。不合法时回退到内置字体栈并记日志——
+// 页面不该因为配置里写坏一个字体就整片换成浏览器默认字体，而“字体悄悄变了”必须留下痕迹
+//
+// 空串表示“用样式表内置的那套”，此时不输出：写出 --font-ui: 这种空声明虽然会被浏览器丢掉、
+// 级联也会继续用样式表里的值，但依赖这种回退行为不如显式跳过
+func fontBlock() string {
+	var b strings.Builder
+	for _, it := range []struct{ key, name string }{
+		{fontUIKey, "--font-ui"},
+		{fontMonoKey, "--font-mono"},
+	} {
+		v, err := config.EffectiveAt(config.GetDefaultConfigPath(), it.key)
+		if err != nil {
+			continue
+		}
+		raw, _ := v.(string)
+		family, ok := config.ValidFontFamily(raw)
+		if !ok {
+			logger.Warn(l10n.T("Ignoring a font family in the configuration that is not a plain font list", nil),
+				"key", it.key, "value", raw)
+			continue
+		}
+		if family == "" {
+			continue
+		}
+		b.WriteString(it.name)
+		b.WriteString(":")
+		b.WriteString(family)
+		b.WriteString(";")
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	// 与主题那条规则同样只写变量、不写任何颜色或字体字面量：样式表里只有变量的使用者，
+	// 这里的值就是唯一来源
+	return ":root{" + b.String() + "}"
 }
 
 // systemThemeCSS 是“跟随系统”时的样式：把深、浅两套都写进去，浅色那份套在

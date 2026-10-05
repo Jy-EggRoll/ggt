@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -290,3 +291,50 @@ func TestLoadConfigAt(t *testing.T) {
 }
 
 // 写入测试配置内容一律复用 store_test.go 的 writeFile，本文件不再重复定义。
+
+// TestValidFontFamily 验证字体栈取值的字符集、长度与引号配对判定。
+//
+// 这一项的值会被原样拼进页面的 <style> 里（见 cmd/ui_theme.go 的 fontBlock），因此分号、
+// 花括号、反斜杠、尖括号以及落单的引号都必须挡住：前几个能就地起一条新声明或闭合整个
+// :root 块，落单的引号则会把后面的字体名一起吞进同一个字符串，页面上表现为字体忽然全变了
+func TestValidFontFamily(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+		ok   bool
+	}{
+		{"空串表示用内置字体栈", "", "", true},
+		{"普通字体栈", "Inter, system-ui, sans-serif", "Inter, system-ui, sans-serif", true},
+		{"带引号与中文名", `"Noto Sans CJK SC", 思源黑体, monospace`, `"Noto Sans CJK SC", 思源黑体, monospace`, true},
+		{"首尾空白被去掉", "  Inter  ", "Inter", true},
+		{"分号能就地起一条新声明", "Foo;} body{display:none", "", false},
+		{"花括号能闭合 :root", "Foo} :root{--bg:red", "", false},
+		{"反斜杠是转义口子", `Foo\26 bar`, "", false},
+		{"尖括号是标签口子", "Foo<script>", "", false},
+		{"单引号落单", "Foo'", "", false},
+		{"双引号落单", `"Foo`, "", false},
+		{"超长", strings.Repeat("a", fontFamilyMaxLen+1), "", false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := ValidFontFamily(c.in)
+			if ok != c.ok {
+				t.Fatalf("合法判定应为 %v，实得 %v（规整值 %q）", c.ok, ok, got)
+			}
+			if got != c.want {
+				t.Errorf("规整值应为 %q，实得 %q", c.want, got)
+			}
+			// 注册表的解析器必须与它给出一致的结论：写入侧与渲染侧各判一套时，
+			// 表现为“能写进配置文件、渲染时却被丢掉”，而那种矛盾没有任何东西能提前发现
+			v, err := parseFontFamily(c.in)
+			if c.ok != (err == nil) {
+				t.Fatalf("parseFontFamily 的结论与 ValidFontFamily 不一致：err=%v", err)
+			}
+			if c.ok && v != c.want {
+				t.Errorf("parseFontFamily 应返回 %q，实得 %v", c.want, v)
+			}
+		})
+	}
+}

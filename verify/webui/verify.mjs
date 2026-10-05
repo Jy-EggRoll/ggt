@@ -206,6 +206,167 @@ await report.acrossViewports(async (preset) => {
       if (out.reload !== true) throw new Error(`期望 reload 为真，实得 ${JSON.stringify(out.reload)}`)
     }, { viewports: ['desktop'] })
 
+    // ——— 按区域换字体：注册表新增两项，服务端渲染时注入一条 :root 规则 ———
+
+    // 这一条从界面走完整个来回，而不是直接调接口：新加的两项要在面板上看得见、改得动、改完刷新页面
+    // 就生效，三处里断掉任何一处，用户在界面上看到的结果都是“字体没变”。
+    // 断言分两层：一层是浏览器解析出来的字体栈（接线对不对），一层是同一段文字按两套字体栈渲染的
+    // 宽度（浏览器真的换到了另一套字体）——只查前者的话，把取值写成一个本机没有的字体名也能通过，
+    // 而页面上什么都没变
+    await report.check('设置面板里能换字体，保存并刷新后真的生效', async () => {
+      // 面板每次打开都是先清空、再按接口返回的内容重画，而重画要等一次接口往返：
+      // 打开之后立刻取元素，取到的很可能还是上一版留在页面上的控件，随后那次重画会把它换掉
+      // （在这之后填进去的值属于已经被换下的控件，保存按钮也就不会启用）。
+      // 这里的办法是先记住当前那一行，等它变成另一个节点，确认看到的是本次打开画出来的那一版
+      const openPanel = async () => {
+        const stale = await page.$('#settings .setting-row[data-key="font_mono"]')
+        await page.locator('#settings-btn').click()
+        await page.waitForSelector('#settings.open', { timeout: 5000 })
+        if (!stale) return
+        await page.waitForFunction(
+          (old) => {
+            const now = document.querySelector('#settings .setting-row[data-key="font_mono"]')
+            return !!now && now !== old
+          },
+          stale,
+          { timeout: 5000 },
+        )
+      }
+      await openPanel()
+
+      // 两片区域都要在面板上，且带候选清单：控件是“输入框 + 候选清单”，候选值就是整条字体栈
+      for (const key of ['font_ui', 'font_mono']) {
+        const row = page.locator(`#settings .setting-row[data-key="${key}"]`)
+        // 用 waitFor 而不是 count：面板每次打开都是先清空再按接口返回的内容重画，
+        // 清空与重画之间有一小段什么都没有的空窗期，count 正好落在空窗期里就会误判成“没有这一项”
+        await row.waitFor({ state: 'attached', timeout: 5000 })
+        const options = await row.locator('datalist option').evaluateAll((els) => els.map((e) => e.value))
+        if (options.length === 0) throw new Error(`${key} 没有候选清单`)
+      }
+      const defaultMono = await page.evaluate(
+        () => getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim(),
+      )
+
+      // 量宽度的办法：往页面里临时插一个元素，让它按给定的字体栈渲染同一段文字。
+      // 两套字体栈渲染同一段文字的宽度不同，配合下面“元素解析出来的字体栈”就能确认页面上的字
+      // 真的换了字形。用临时元素而不是量界面上那个键名：面板内容是异步重画的，
+      // 等它、取它、再量它，中间随时可能被重画打断，量出来的宽度也就不作数了
+      const keyEl = page.locator('#settings .setting-row[data-key="log_level"] .setting-key')
+      const familyOf = async () => {
+        await keyEl.waitFor({ state: 'visible', timeout: 5000 })
+        return keyEl.evaluate((el) => getComputedStyle(el).fontFamily)
+      }
+      const textWidth = (family) => page.evaluate((fam) => {
+        const span = document.createElement('span')
+        span.style.cssText = `position:absolute;left:-9999px;top:0;white-space:pre;font-size:13px;font-family:${fam}`
+        // 这个字符串里有下划线与小写字母：等宽字体与比例字体在它们身上的宽度差最明显
+        span.textContent = 'font_mono_iii'
+        document.body.appendChild(span)
+        const width = span.getBoundingClientRect().width
+        span.remove()
+        return width
+      }, family)
+
+      const builtinFamily = await familyOf()
+      const builtinWidth = await textWidth(builtinFamily)
+      if (!(builtinWidth > 0)) throw new Error(`量不到内置字体栈下这段文字的宽度：${builtinWidth}`)
+
+      const monoInput = page.locator('#settings .setting-row[data-key="font_mono"] input')
+      await monoInput.fill('serif')
+      // 填完再确认一次：填进去的若是已被换下的那个控件，保存按钮不会启用，
+      // 那样后面点保存就会一直等一个永远不启用的按钮，报错也说不清是哪一步出的问题
+      const filled = await page.evaluate(() => {
+        const input = document.querySelector('#settings .setting-row[data-key="font_mono"] input')
+        return input?.value === 'serif' && !document.querySelector('#settings-save').disabled
+      })
+      if (!filled) throw new Error('填进 font_mono 的取值没有落到当前控件上')
+      // 这一项属于“页面已经烧进去”的清单，保存会整页刷新；刷新前留一个标记，刷新后它就不在了，
+      // 否则后面的断言可能读到的还是刷新前那份页面（宽度一样，换了也看不出来）
+      await page.evaluate(() => { window.__fontSaved = true })
+      await page.locator('#settings-save').click()
+      await page.waitForFunction(() => window.__fontSaved === undefined, null, { timeout: 10000 })
+
+      const cfg = readConfig()
+      if (cfg.font_mono !== 'serif') throw new Error(`配置里的 font_mono 不是 serif：${JSON.stringify(cfg.font_mono)}`)
+      const applied = await page.evaluate(
+        () => getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim(),
+      )
+      if (applied !== 'serif') throw new Error(`注入的 --font-mono 不是 serif：${JSON.stringify(applied)}`)
+
+      await openPanel()
+      const changedFamily = await familyOf()
+      const changedWidth = await textWidth(changedFamily)
+      report.note(`等宽字体：默认 ${builtinFamily}；换成 ${changedFamily} 后同一段文字由 ${builtinWidth.toFixed(1)}px 变成 ${changedWidth.toFixed(1)}px`)
+      if (changedFamily !== 'serif') {
+        throw new Error(`配置键名解析出来的字体栈不是 serif：${JSON.stringify(changedFamily)}`)
+      }
+      if (Math.abs(changedWidth - builtinWidth) < 1) {
+        throw new Error(`改成 serif 后文字宽度没变（${builtinWidth} → ${changedWidth}），页面上的字体没有真的换`)
+      }
+
+      // 恢复默认：键从配置文件里删掉，页面回到内置字体栈（宽度也要回到换字体之前）
+      await page.evaluate(() => { window.__fontReset = true })
+      await page.locator('#settings .setting-row[data-key="font_mono"] button.setting-reset').click()
+      await page.waitForFunction(() => window.__fontReset === undefined, null, { timeout: 10000 })
+
+      if ('font_mono' in readConfig()) throw new Error('恢复默认后配置里仍有 font_mono')
+      const back = await page.evaluate(
+        () => getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim(),
+      )
+      if (back !== defaultMono) throw new Error(`恢复默认后 --font-mono 应为 ${defaultMono}，实得 ${back}`)
+
+      await openPanel()
+      const restoredFamily = await familyOf()
+      const restoredWidth = await textWidth(restoredFamily)
+      report.note(`恢复默认后字体栈回到 ${restoredFamily}，同一段文字的宽度回到 ${restoredWidth.toFixed(1)}px`)
+      if (restoredFamily !== builtinFamily) {
+        throw new Error(`恢复默认后字体栈应为 ${builtinFamily}，实得 ${restoredFamily}`)
+      }
+      if (Math.abs(restoredWidth - builtinWidth) > 0.5) {
+        throw new Error(`恢复默认后文字宽度没有回到原值（${builtinWidth} → ${restoredWidth}）`)
+      }
+
+      // 收尾把新增的两项滚到看得见的位置：这条检查的截图里就能直接看到它们，
+      // 不必再去翻面板下面还藏着什么
+      await page.locator('#settings .setting-row[data-key="font_ui"]').scrollIntoViewIfNeeded()
+    }, { viewports: ['desktop'] })
+
+    // ——— 重画把正在编辑的控件换掉时，旧控件上的改动不该算进待保存清单 ———
+
+    // 这一条针对一条真实发生过的竞态：面板的重画要等一次接口往返，而重画可能正好夹在
+    // “聚焦输入框”与“把值写进去并派发 input”之间（连续操作时窗口只有几毫秒，偶发命中）。
+    // 命中之后，被换下的那个输入框虽然已经不在页面上，它的监听器仍然连着模块级的待保存集合，
+    // 于是按自己那个控件的值记了一笔；保存时读到的却是新控件（此刻还是服务端那份，输入框为空），
+    // 配置文件里就此多出一个用户从没输入过的空值。
+    // 这里把那次交错拆开、稳定重演：先让这一次取数慢下来（重画必须在派发 input 之前完成），
+    // 再等在页面上把那一行换掉，最后在换下来的输入框上派发一次 input
+    await report.check('重画换下的控件不会把改动算成待保存项', async () => {
+      const staleInput = await page.$('#settings .setting-row[data-key="font_mono"] input')
+      if (!staleInput) throw new Error('font_mono 那一行不在页面上，重演这次交错的前提不成立')
+      await page.route('**/api/settings', async (route) => {
+        if (route.request().method() === 'GET') await new Promise((r) => setTimeout(r, 300))
+        await route.continue()
+      })
+      await page.locator('#settings-btn').click()
+      await page.waitForFunction(
+        (old) => document.querySelector('#settings .setting-row[data-key="font_mono"] input') !== old,
+        staleInput,
+        { timeout: 5000 },
+      )
+      await staleInput.evaluate((el) => {
+        el.value = 'serif'
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      const state = await page.evaluate(() => ({
+        value: document.querySelector('#settings .setting-row[data-key="font_mono"] input')?.value,
+        saveDisabled: document.querySelector('#settings-save').disabled,
+      }))
+      await page.unroute('**/api/settings')
+      if (!state.saveDisabled) {
+        throw new Error(`旧控件上的改动被算成了待保存项，保存会写下一个用户没输入过的值（当前控件里是 ${JSON.stringify(state.value)}）`)
+      }
+    }, { viewports: ['desktop'] })
+
     // ——— 通知自动消失：配合配置项 notify_timeout，页面上看得到效果 ———
 
     // setNotifyTimeout 直接调接口改这一项（面板改要通过界面点，这里只关心效果），

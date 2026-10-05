@@ -1044,7 +1044,7 @@ Examples:
 	return c
 }
 
-// renderIndexHTML 把语言、主题配色与设置快照注入首页模板。
+// renderIndexHTML 把语言、主题配色、字体与设置快照注入首页模板。
 //
 // 从 runUI 里抽出来是为了能在测试里把注入结果整体看一遍：占位符与它所在的表达式同名时
 // （例如 window.__X__ = __X__），ReplaceAll 会把赋值左边也一起换掉，生成一段语法错误的
@@ -1053,11 +1053,16 @@ Examples:
 // 注入设置快照是给“页面行为”读用的（当前只有通知自动消失的时长）。注入整份而不只注入
 // 用得到的那一项：占位符是“每加一项配置就要改一次渲染函数”的写法，而这份快照按注册表
 // 生成，将来页面再多读一项也不必改这里
+//
+// 配色与字体各占一个占位符、各进一条 <style>，而不是挤在同一条规则里：两者来源不同
+// （配色来自主题文件，字体来自两个配置项），分开之后“配色解析失败”不会连带丢掉字体覆盖，
+// 页面里哪一段 CSS 是谁注入的也一目了然
 func renderIndexHTML(indexHTML []byte, lang string) []byte {
 	out := bytes.ReplaceAll(indexHTML, []byte("__GGT_HTML_LANG__"), []byte(lang))
 	out = bytes.ReplaceAll(out, []byte("__GGT_LANG_VALUE__"), []byte(lang))
 	out = bytes.ReplaceAll(out, []byte("__GGT_SETTINGS_JSON__"), uiSettingsJSON(config.GetDefaultConfigPath()))
-	return bytes.ReplaceAll(out, []byte("__GGT_THEME_CSS__"), []byte(resolveTheme()))
+	out = bytes.ReplaceAll(out, []byte("__GGT_THEME_CSS__"), []byte(resolveTheme()))
+	return bytes.ReplaceAll(out, []byte("__GGT_FONT_CSS__"), []byte(fontBlock()))
 }
 
 // runUI 组装并启动 WebUI 服务，阻塞到服务结束。

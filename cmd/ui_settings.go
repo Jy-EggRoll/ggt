@@ -51,11 +51,15 @@ type uiSettingsResult struct {
 // uiReloadKeys 列出“改完必须刷新页面才生效”的配置项。
 //
 // 这几个键的值由服务端在渲染首页时注入（见 runUI 里的 renderIndex：主题解析成 CSS 写进
-// __GGT_THEME_CSS__，其余设置整份写进 __GGT_SETTINGS__ 供页面行为读用）。页面拿到的那份
-// HTML 已经是旧值，只改配置文件不会反映到当前页面上，所以要在保存后提示刷新
+// __GGT_THEME_CSS__，字体拼成 CSS 写进 __GGT_FONT_CSS__，其余设置整份写进 __GGT_SETTINGS__
+// 供页面行为读用）。页面拿到的那份 HTML 已经是旧值，只改配置文件不会反映到当前页面上，
+// 所以要在保存后提示刷新
 //
 // notify_timeout 也在这里，理由不那么直观：页面把它读成一个常量（通知倒计时的时长），
 // 常量在页面加载时就定下了，改完不刷新的话，用户接下来看到的通知仍按旧时长消失
+//
+// font_ui / font_mono 在列表末尾，理由与主题一模一样：它们是两条 <style> 里现算出来的变量值，
+// 改完只改得动配置文件，页面上那两套字体栈要等下一次请求才会跟着变
 //
 // 语言刻意不在这里：Go 进程的语言在启动时由 l10n.Init 定下，刷新页面也还是旧语言，
 // 它需要的是重启 ggt。那件事由 settingNote 用一句话说清，不需要页面做任何动作
@@ -63,7 +67,7 @@ type uiSettingsResult struct {
 // 这是一份“页面已经烧进去”的键名清单，看起来与注册表分家了。之所以不放进注册表：
 // 它描述的不是配置项自身的性质，而是本页面的渲染方式（哪些值被写死进了 HTML）。
 // 测试断言这里每个键都真实存在，删配置项不会留下悬空的名字
-var uiReloadKeys = []string{"theme", "theme_dark", "theme_light", "notify_timeout"}
+var uiReloadKeys = []string{"theme", "theme_dark", "theme_light", "notify_timeout", "font_ui", "font_mono"}
 
 // uiSettingsJSON 把设置面板那份视图序列化进首页，供页面行为读用。
 //

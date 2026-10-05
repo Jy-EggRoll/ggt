@@ -55,9 +55,13 @@
   --sp-5: 16px;
   --sp-6: 24px;
 
-  /* 等宽字体族：diff 正文、提交号、设置面板里的配置键名共用一份。
-     同一份字体栈原先在样式表里抄了两遍，而且两遍还不一致（一处带 DejaVu Sans Mono，
-     一处不带）——收成一个令牌之后只有一处定义，也就不存在“改了一处忘了另一处” */
+  /* 两套字体栈各管一片区域，是页面上字体族的唯一来源：界面文字（看板、面板、提示）走
+     --font-ui，等宽文字（diff 正文、提交号、配置键名）走 --font-mono。
+     两者都能在设置面板里换（配置项 font_ui / font_mono，服务端渲染时注入同名变量覆盖它们），
+     因此这里的值既是默认值、也是“取值为空或写坏”时的回退。
+     等宽这份原先在样式表里抄了两遍，而且两遍还不一致（一处带 DejaVu Sans Mono、一处不带），
+     收成一个令牌之后只有一处定义，也就不存在“改了一处忘了另一处” */
+  --font-ui: system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
 
   /* --page-pad / --statusbar-h 是页面上唯一的一份“留白与底栏高度”：app.js 算列高时从计算样式
