@@ -2078,9 +2078,10 @@ function stopPolling() {
 }
 
 // 窗口尺寸变化会改变列高，必须重新布局（不重新取数）。
-// 覆盖层打开期间不重排：看板尺寸没变，重排要量行高、纯属白花，且此刻没人看得到结果
+// 浮层打开期间不重排：面板盖住看板时尺寸变化根本看不到，重排还要量一遍行高、纯属白花；
+// 关掉浮层时各自会走 resume → refresh，布局在那时补上。判据走 anyOverlayOpen
 window.addEventListener('resize', () => {
-  if (!diffOpen && !cardOpen && lastSpecs.length > 0) layout(lastEls, lastSpecs);
+  if (!anyOverlayOpen() && lastSpecs.length > 0) layout(lastEls, lastSpecs);
 });
 
 // 系统明暗主题切换时图标表要换一套（Seti 的浅色段是另一份平行表），因此重画一次；
