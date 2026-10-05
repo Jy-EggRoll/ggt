@@ -85,3 +85,4 @@
 - ✨ 模块路径由 `ggt` 改为 `github.com/jy-eggroll/ggt`：此前 README 里的 `go install github.com/Jy-EggRoll/ggt@latest` 与 go.mod 的模块名对不上，实际装不上，现已真正可用
 - 抽公共代码到共享库，与 flk 共用同一份实现：国际化（`l10n`）与 JSON 序列化（`jsonfile`）改由 `github.com/jy-eggroll/eggokit` 提供。ggt 自己的文案仍按原来的方式维护，库自带的文案（升级、日志）在运行期自动叠加，无需抄进本项目
 - 🐛 修掉发布构建丢弃标签版本号的问题：构建脚本里用 `date` 定义的 `VERSION` 会盖住同名环境变量，CI 传进来的标签版本因此被无声丢弃，发布出去的二进制一律自报一个时间戳版本。`ggt upgrade` 靠版本号与上游 Release 比较大小，时间戳无法参与比较，自升级会因此失效——现在 `VERSION` 改为“先取环境变量、取不到才回退时间戳”，CI 传什么版本，二进制就报什么版本
+- 📝 删掉 `docs/` 下两份过时的开发文档（`ggt sync` 的输出改造提案、GitHub 限流调研），其中仍然有效的结论已经并进代码：sync 的分类汇总按提案的思路实现，其余视觉改造（彩色标签、fetch spinner）明确不做；并发上限的来龙去脉写进 `internal/config/settings.go` 的注释与 README 的配置表——GitHub 并未公布 git 协议的并发限制，社区经验值不足以拿来收窄默认行为

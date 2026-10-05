@@ -102,7 +102,7 @@ ggt config validate            # 体检配置文件
 | --- | --- | --- | --- |
 | `repo_paths` | string[] | 空 | 直接登记的仓库绝对路径列表 |
 | `parent_paths` | string[] | 空 | 父目录列表，运行时扫描其中的 git 仓库 |
-| `concurrency` | string | `CPUHalf` | 并发数。可取语义值 `CPUHalf`/`CPUFull`/`CPUQuarter`，或显式数字串（如 `"8"`）。命令行 `-c` 仅当大于 0 时覆盖此项 |
+| `concurrency` | string | `CPUHalf` | 并发数。可取语义值 `CPUHalf`/`CPUFull`/`CPUQuarter`，或显式数字串（如 `"8"`）。命令行 `-c` 仅当大于 0 时覆盖此项。上限 1024 只是内存安全边界，不是平台限流值：GitHub 并未公布 git 协议的并发限制，社区经验是控制在 10 以内，仓库很多时自行下调 |
 | `ignore_submodules` | bool | `false` | 为 `true` 时在所有功能中忽略子模块；默认 `false`（包含子模块） |
 | `size_bucket_low_mb` | int | `500` | `size` 命令分桶的下界阈值（MB） |
 | `size_bucket_high_mb` | int | `800` | `size` 命令分桶的上界阈值（MB） |
