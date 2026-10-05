@@ -63,7 +63,7 @@ func parseRaw(data []byte) (map[string]any, error) {
 
 // WriteRawAt 以原子方式写回配置。
 //
-// 写法是"同目录临时文件 + rename"：直接覆写的话，进程写到一半崩溃就会留下半截 JSON，
+// 写法是“同目录临时文件 + rename”：直接覆写的话，进程写到一半崩溃就会留下半截 JSON，
 // 而此后任何命令都因解析失败而不可用。
 func WriteRawAt(path string, raw map[string]any) error {
 	normalized, err := normalizeKeys(raw)
@@ -200,7 +200,7 @@ func resolveSymlink(path string) (string, error) {
 	return filepath.EvalSymlinks(path)
 }
 
-// writeFileAtomic 通过"同目录临时文件 + rename"原子替换目标文件。
+// writeFileAtomic 通过“同目录临时文件 + rename”原子替换目标文件。
 //
 // 同目录是必须的：跨卷 rename 会失败。
 // 刻意不 fsync 目录：Windows 不支持打开目录做 Sync，加了会导致跨平台运行失败。

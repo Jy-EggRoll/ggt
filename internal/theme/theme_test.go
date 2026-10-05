@@ -85,7 +85,7 @@ func TestOfficialThemesResolve(t *testing.T) {
 }
 
 // TestResolveFallsBackToRegistryDefaults 主题只写了一个令牌时，其余全部回落到注册表默认值。
-// 这条同时锁住"官方主题没写 gitDecoration.*，靠的就是回落"这件事
+// 这条同时锁住“官方主题没写 gitDecoration.*，靠的就是回落”这件事
 func TestResolveFallsBackToRegistryDefaults(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "only-bg.json")

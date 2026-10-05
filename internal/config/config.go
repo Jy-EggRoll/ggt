@@ -137,7 +137,7 @@ func LoadConfig() (*Config, error) {
 //   - 容错能力实际来自 mapstructure 的 WeaklyTypedInput，直接用 mapstructure 即可，
 //     不必为此引入一整层配置框架
 //
-// 取值规则是"以 settings 登记的默认值为准，再用文件里的键覆盖"，于是默认值只有
+// 取值规则是“以 settings 登记的默认值为准，再用文件里的键覆盖”，于是默认值只有
 // settings 一处真相，与 config show / config get 的取值完全同源。
 //
 // 配置文件不存在时返回全默认配置（不报错，首次运行属正常状态）；
@@ -249,7 +249,7 @@ func defaultIntOf(key string) int {
 	return v
 }
 
-// 关于"把整份 Config 写回文件"的能力：本项目刻意不提供。
+// 关于“把整份 Config 写回文件”的能力：本项目刻意不提供。
 // 键名清单在 json/mapstructure tag、settings[].Key 之外本就已经足够多，再让一个
 // Config→raw 的转换器抄一遍键名，就会出现“加了字段却永远写不进文件”且无人报错的死角。
 // 需要落盘时一律走 store.go 的单键写入（SetKeyAt / UnsetKeyAt），只动调用方真正

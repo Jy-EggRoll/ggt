@@ -38,12 +38,12 @@ Examples:
 Repository paths are managed by "ggt repo" instead of "ggt config set".`, nil),
 		RunE: showConfig,
 		// 遮蔽 root 的 PersistentPreRunE。root 的实现在所有子命令前跑 LoadConfig，
-		// 而它对损坏的配置文件直接返回 error —— 于是"最该报出问题的 validate"和
-		// "唯一能救命的 reset --all"都会在 RunE 之前被挡下，用户只能手动 rm。
+		// 而它对损坏的配置文件直接返回 error —— 于是“最该报出问题的 validate”和
+		// “唯一能救命的 reset --all”都会在 RunE 之前被挡下，用户只能手动 rm。
 		// cobra 只执行向上找到的第一个 PersistentPreRunE，挂个空实现即可遮蔽。
 		//
 		// 代价是这些命令里全局 cfg 为 nil，一律不得调用 GetConfig()——
-		// 这与"只读原始 JSON"的设计本就一致。
+		// 这与“只读原始 JSON”的设计本就一致。
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error { return nil },
 	}
 	c.AddCommand(
@@ -213,7 +213,7 @@ Examples:
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// key 与 --all 必须恰有其一。两者都给或都不给都属语义不明，直接拒绝，
-			// 避免"我明明指定了 key，怎么把整个配置删了"这类误解
+			// 避免“我明明指定了 key，怎么把整个配置删了”这类误解
 			if all == (len(args) == 1) {
 				return errors.New(l10n.T("Specify either a key or --all, but not both", nil))
 			}
@@ -371,7 +371,7 @@ var errSilent = errors.New("error already reported")
 func settingNote(key string) string {
 	if key == "language" {
 		// 语言在进程启动时就由 l10n.Init 定下了，改配置不会影响当前这次输出。
-		// 刻意不在这里重新 Init：那会违反 i18n 包"Init 之后状态只读"的契约
+		// 刻意不在这里重新 Init：那会违反 i18n 包“Init 之后状态只读”的契约
 		return l10n.T("The new language takes effect on the next run", nil)
 	}
 	return ""

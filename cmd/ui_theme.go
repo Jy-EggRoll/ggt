@@ -20,7 +20,7 @@ import (
 //
 // 变量名沿用 style.css 里既有的短名（--git-modified 这些），而不是照抄 VSCode 的长名
 // （--vscode-gitDecoration-modifiedResourceForeground 那种）：短名在样式表里读得更清楚，
-// 而"哪个变量对应哪个 VSCode 令牌"看这张表就一目了然，映射关系不会因此变模糊
+// 而“哪个变量对应哪个 VSCode 令牌”看这张表就一目了然，映射关系不会因此变模糊
 var cssVarNames = map[string]string{
 	"editor.background":     "bg",
 	"sideBar.background":    "card-bg",
@@ -148,7 +148,7 @@ func currentThemeID() string {
 //	theme_dark   <- workbench.preferredDarkColorTheme
 //	theme_light  <- workbench.preferredLightColorTheme
 //
-// 为什么是“一个显式指定 + 两个偏好”而不是"跟随/指定开关 + 一个 id"：VSCode 的模型正是前者——
+// 为什么是“一个显式指定 + 两个偏好”而不是“跟随/指定开关 + 一个 id”：VSCode 的模型正是前者——
 // 自动检测开着时用的不是某一套写死的主题，而是用户分别指定的深、浅两套；关掉之后才由
 // colorTheme 说了算。照抄它意味着“跟随系统”也能定制，而不是只能用内置的那两套
 const (
@@ -200,8 +200,8 @@ func resolveTheme() string {
 // prefers-color-scheme 里，由浏览器自己按系统设置挑——服务端问不到你的系统是深是浅。
 //
 // 哪一套是深、哪一套是浅由**角色**决定（theme_dark 进基础规则、theme_light 进浅色媒体查询），
-// 不看主题自己声明的明暗类型：这是 VSCode 的语义——preferredDarkColorTheme 说的是"系统是深色时
-// 用哪套"，用户可以真的把一套浅色主题填进去，那时它照样只在系统为深色时生效。
+// 不看主题自己声明的明暗类型：这是 VSCode 的语义——preferredDarkColorTheme 说的是“系统是深色时
+// 用哪套”，用户可以真的把一套浅色主题填进去，那时它照样只在系统为深色时生效。
 // 主题自己的 type 仍然决定它的自有令牌取哪一档（见 themeOwnVars），两件事互不干扰。
 //
 // 配置里的 id 指到不存在或解析不了的主题时回落到内置默认并记日志：与“选中的主题解析失败”
@@ -307,8 +307,8 @@ func themeBlock(r *theme.Resolved) string {
 	// 另外它只用在边框上、从不当前景，所以不进 contrastPairs，对比度回退不会碰它
 	vars["card-border"] = "color-mix(in srgb, var(--text) 12%, var(--card-bg))"
 
-	// 配色被我们动过就必须留痕：不留的话，用户看到"按钮文字比 VSCode 里深一点"会以为是主题
-	// 自己的问题，而这条日志正是"为什么和你看到的 VSCode 不一样"的唯一线索
+	// 配色被我们动过就必须留痕：不留的话，用户看到“按钮文字比 VSCode 里深一点”会以为是主题
+	// 自己的问题，而这条日志正是“为什么和你看到的 VSCode 不一样”的唯一线索
 	if n := applyContrastFixes(vars); n > 0 {
 		logger.Debug(l10n.T("Adjusted theme colors for contrast", nil), "theme", r.ID, "count", n)
 	}

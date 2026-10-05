@@ -24,7 +24,7 @@ import (
 // TestDiffSectionsAlignWithNumstat 用真实仓库验“清单与分段按序对齐”这个假设。
 //
 // 页面是靠下标把第 i 段文本与第 i 条清单对上的（见 app.js 的 diffSections）。
-// 一旦 git 这两样东西的顺序不再一致，页面上会出现"标题写着 A 文件、内容却是 B 文件"，
+// 一旦 git 这两样东西的顺序不再一致，页面上会出现“标题写着 A 文件、内容却是 B 文件”，
 // 而这种错位不会有任何报错
 func TestDiffSectionsAlignWithNumstat(t *testing.T) {
 	repo := initDiffTestRepo(t)

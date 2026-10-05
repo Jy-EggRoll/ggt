@@ -5,7 +5,7 @@
 //
 // 为什么单独测这三个：它们位于 ggt 所有遍历型命令（status/size/sync/fetch...）的入口，
 // 而 repos_test.go 只钉死了它们内部依赖的两个纯函数（parseGitmodules / isSubmoduleInitialized）。
-// 剩下这三层语义——“递归时相对路径怎么拼”"展开后顺序与 IsSubmodule 标记对不对"
+// 剩下这三层语义——“递归时相对路径怎么拼”“展开后顺序与 IsSubmodule 标记对不对”
 // “父目录下什么才算仓库”——一旦写错，错误会静默扩散到每一条命令，且从终端输出很难看出
 // 是哪一层错的。因此这里按层补测，不重复已被覆盖的纯函数。
 //
@@ -61,7 +61,7 @@ func writeGitmodules(t *testing.T, repoPath, body string) {
 // 注意里面刻意把 .git 写成**文件**（内容形如 gitdir: ...）：真实子模块的 .git 就是指向
 // 父仓库 .git/modules/... 的 gitdir 文件而非目录，所以这里照原样复刻——
 // 这既让 isSubmoduleInitialized 判定它已初始化，也说明子模块的“已初始化”与 git.IsRepo
-// 要求的".git 必须是目录"是两套口径（后者不认这种目录）
+// 要求的“.git 必须是目录”是两套口径（后者不认这种目录）
 func writeSubmoduleDir(t *testing.T, repoPath, rel string) {
 	t.Helper()
 	dir := filepath.Join(repoPath, rel)

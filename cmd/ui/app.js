@@ -752,7 +752,7 @@ function layout(els, specs) {
   const contH = cssVar('--cont-h', 22);
   // 列高 = 视口高 − 页面上下留白 − 底栏高度。三个数字都从 CSS 变量读（cssVar 见上），
   // 不在这里自己写死：底栏是后加的，硬编码的话它一出现就会压住最下面一行卡片，
-  // 而"JS 里一份、CSS 里一份"的数字迟早会漂移
+  // 而“JS 里一份、CSS 里一份”的数字迟早会漂移
   // 视口高走 viewportSize 而不是 window.innerHeight：内容溢出时后者会被撑大，而看板的高度又是
   // 按它算出来写回元素的，那正是“看板把自己撑高”的循环（见 viewportSize 的注释）
   const colH = viewportSize().h - cssVar('--page-pad', 16) * 2 - cssVar('--statusbar-h', 30);
@@ -933,7 +933,7 @@ function diffSectionTitle(kind, spec) {
 }
 
 // diffFileStat 造一段文件头右侧的增删行数。
-// 二进制显示“二进制”而不是 +0 −0：那两个 0 是"git 数不出来"，不是“没改”。
+// 二进制显示“二进制”而不是 +0 −0：那两个 0 是“git 数不出来”，不是“没改”。
 // 字段名与提交卡的文件行一致（都来自 git 的 --numstat），两处不必各记一套
 function diffFileStat(f) {
   if (!f) return '';
@@ -1321,8 +1321,8 @@ function stopToastCountdown(item) {
   }
 }
 
-// startToastCountdown 给一条提示装上倒计时。三条规则都由"提示是给人看的，不该在没看完时
-// 消失"这条推出来：
+// startToastCountdown 给一条提示装上倒计时。三条规则都由“提示是给人看的，不该在没看完时
+// 消失”这条推出来：
 //   - 时长 0 表示不自动消失（默认就是 0）
 //   - error 档不倒计时：错误提示多半要人去处理（拉取失败、提交被拒），
 //     正读到一半、或去别处处理完再回来时它已经没了，等于把线索藏起来
@@ -1589,7 +1589,7 @@ let settingsFocusReturn = null;
 
 // wrapControl 把控件放进一个容器里再返回。
 //
-// 为什么要多这一层：面板的样式表按 ".setting-control 里的输入框"这条后代选择器统一给外观，
+// 为什么要多这一层：面板的样式表按 “.setting-control 里的输入框”这条后代选择器统一给外观，
 // 而把 setting-control 直接挂在控件自己身上时，那条选择器匹配不到（控件与 .setting-control
 // 是同一个元素），表现是下拉框与数字框还留着浏览器的原生外观，跟卡片里的控件不是一套
 function wrapControl(el) {
@@ -1951,7 +1951,7 @@ async function commitFromUI() {
   await loadGraph(false);
 }
 
-// pushFromUI 推送当前分支。推送不改动图的内容，但会把"领先 N"这类状态清掉，
+// pushFromUI 推送当前分支。推送不改动图的内容，但会把“领先 N”这类状态清掉，
 // 因此看板的快照在 runWrite 里已重取，这里只把卡片头部与图也刷新一次
 async function pushFromUI() {
   const out = await runWrite('/api/push', { repo: currentRepo().path }, notifFromResult);
@@ -2249,7 +2249,7 @@ function graphCircle(index, radius, strokeWidth, color) {
   // 描边颜色，都交给 CSS：这两个颜色必须等于“这一行当前的实际底色”，而底色会随 hover 与
   // 选中变化，写进 JS 就固定成了初始底色，hover 时会露出一圈不跟着变的色边。上游把这两件
   // 事也放在样式表里（scm.css 的 .graph > circle 与 circle:last-child 规则，含 hover 与
-  // 选中三组变体），此前这里的注释把那段误读成"上游不设填充（SVG 默认黑）"，于是把填充
+  // 选中三组变体），此前这里的注释把那段误读成“上游不设填充（SVG 默认黑）”，于是把填充
   // 硬编码成了 --bg（editor.background），而这一行真正坐在 --panel-bg（editorWidget.background）
   // 上，两者本就不是同一个颜色，见 style.css 里那段圆点规则
   if (color) c.style.fill = color;
@@ -2268,7 +2268,7 @@ function findLastNodeIndex(nodes, id) {
 }
 
 // renderGraphRow 画一行的泳道：连线 + 圆点。逐行移植上游 renderSCMHistoryItemGraph，
-// 只把"颜色 id → CSS 变量"这一步换成接口已经翻好的变量名
+// 只把“颜色 id → CSS 变量”这一步换成接口已经翻好的变量名
 function renderGraphRow(vm, laneColumnWidth) {
   const svg = svgNode('svg', { height: SWIMLANE_HEIGHT, width: laneColumnWidth });
   const item = vm.item;
@@ -2651,7 +2651,7 @@ function closeRepoCard() {
 
 graphBackEl.addEventListener('click', closeRepoCard);
 
-// 滚到底续取：判据是"已经滚到最后 120px 以内"，不用 IntersectionObserver——
+// 滚到底续取：判据是“已经滚到最后 120px 以内”，不用 IntersectionObserver——
 // 这里只有一个哨兵，滚动事件本身很便宜
 graphListEl.addEventListener('scroll', () => {
   if (!cardOpen) return;
@@ -2846,7 +2846,7 @@ function renderCommitCard(vm, files, pinned) {
   return box;
 }
 
-// 指针位置要随时记着：hideCommitCard 收起卡片时拿它当"哪一次 mouseover 该被忽略"的基准
+// 指针位置要随时记着：hideCommitCard 收起卡片时拿它当“哪一次 mouseover 该被忽略”的基准
 document.addEventListener('mousemove', (e) => {
   lastPointer = { x: e.clientX, y: e.clientY };
 });

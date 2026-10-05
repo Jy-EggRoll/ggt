@@ -18,7 +18,7 @@ import (
 // gitdir 文件，那种情况由子模块发现逻辑单独处理（见 cmd/repos.go）。
 //
 // 本函数被运行期的仓库发现与 ggt config validate 的体检共用。两处若各写一套口径，
-// 就会出现"validate 说不是仓库、ggt 却能跑"这类自相矛盾的提示。
+// 就会出现“validate 说不是仓库、ggt 却能跑”这类自相矛盾的提示。
 func IsRepo(path string) bool {
 	info, err := os.Stat(filepath.Join(path, ".git"))
 	if err != nil {
@@ -83,7 +83,7 @@ func runWithOutput(ctx context.Context, repoPath string, args ...string) (string
 //
 // 存在的意义是让特定调用在通用环境之外再收紧行为，典型是 RunStatus 需要
 // GIT_OPTIONAL_LOCKS=0 来禁止 git status 写 index。把追加项做成参数、而不是让各调用点
-// 自行拼 cmd.Env，是为了保住"所有 git 调用共享同一套基础环境"这条前提——
+// 自行拼 cmd.Env，是为了保住“所有 git 调用共享同一套基础环境”这条前提——
 // 一旦有人绕过本函数，GIT_TERMINAL_PROMPT=0 这类防止卡死的设置就会漏掉。
 func runWithOutputEnv(ctx context.Context, repoPath string, extraEnv []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)

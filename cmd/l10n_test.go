@@ -141,7 +141,7 @@ func TestNoUntranslatedTextInCommandTree(t *testing.T) {
 }
 
 // hasNonASCIILetter 判断字符串是否含非 ASCII 字母。
-// 判据用 IsLetter 而非"非 ASCII 字符"：分隔线 "─"、"↔" 这类排版符号是界面骨架，
+// 判据用 IsLetter 而非“非 ASCII 字符”：分隔线 "─"、"↔" 这类排版符号是界面骨架，
 // 不属于需要翻译的文字。
 func hasNonASCIILetter(s string) bool {
 	for _, r := range s {

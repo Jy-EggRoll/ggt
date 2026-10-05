@@ -121,7 +121,7 @@ func Execute() {
 	// 会污染管道（pterm 默认写 stdout，这里显式改掉）
 	pterm.Error.Writer = os.Stderr
 	// 关掉 cobra 自己的错误输出。否则同一条错误会被 cobra（"Error: ..." 到 stderr）
-	// 和下面的分支（"ERROR 执行失败: ..."）各打印一次
+	// 和下面的分支（“ERROR 执行失败: ...”）各打印一次
 	root.SilenceErrors = true
 
 	if err := root.Execute(); err != nil {
@@ -136,8 +136,8 @@ func Execute() {
 
 // 关于文案：本包不提供 T 的薄封装，各命令一律直接调用 l10n.T(“英文原文”, data)。
 //
-// 这不是风格偏好，而是提取工具的硬性要求：github.com/jy-eggroll/eggokit/l10n/scan 规定"消息调用的首个参数必须是
-// 字符串字面量才能确定消息 id"。任何一层透传封装都必然以变量为参转发
+// 这不是风格偏好，而是提取工具的硬性要求：github.com/jy-eggroll/eggokit/l10n/scan 规定“消息调用的首个参数必须是
+// 字符串字面量才能确定消息 id”。任何一层透传封装都必然以变量为参转发
 // （func T(msg string, ...) { return l10n.T(msg, ...) }），会被提取器判为违规。
 // 去掉封装后规则全仓一致、无需任何例外，代价只是调用点多写一个包名前缀。
 //
@@ -204,7 +204,7 @@ func NewDebugTimer(label string) *DebugTimer {
 // Done 以 debug 级日志输出本阶段耗时。
 //
 // 调用点无需判级：logger 自己按当前级别过滤，未启用 debug 时这里几乎零开销。
-// 这也是它取代原先"直调 pterm 打印灰色计时行"的原因——那版把展示策略硬编码在了
+// 这也是它取代原先“直调 pterm 打印灰色计时行”的原因——那版把展示策略硬编码在了
 // 业务命令里，还要靠一个全局布尔决定要不要打
 func (t *DebugTimer) Done() {
 	logger.Debug(t.label, "duration", time.Since(t.start))

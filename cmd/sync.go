@@ -174,7 +174,7 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 	}
 }
 
-// syncAction 是"三方 commit 关系分析"得出结论后应当采取的动作。
+// syncAction 是“三方 commit 关系分析”得出结论后应当采取的动作。
 type syncAction int
 
 const (

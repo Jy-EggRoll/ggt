@@ -240,7 +240,7 @@ func (c *uiCache) handleRepos(w http.ResponseWriter, _ *http.Request) {
 	// 被缓存后页面会一直看到过期的变更列表，而它恰恰是用来替代手动刷新的
 	w.Header().Set("Cache-Control", "no-store")
 
-	// 文件路径里可能含 < > &："把 HTML 转义关掉，否则中文与符号路径会被写成 \u003c 这类转义，
+	// 文件路径里可能含 < > &：关掉 HTML 转义，否则中文与符号路径会被写成 \u003c 这类转义，
 	// 前端虽然能解析，但排查接口时看到的 JSON 会难以阅读
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
@@ -730,7 +730,7 @@ type uiWriteResult struct {
 }
 
 // handleWrite 是所有写操作的公共骨架：方法校验 -> 取仓库 -> 跑具体动作 -> 失效快照 -> 回响应。
-// 各端点只负责"跑哪条 git 命令"，路径校验与响应形状都收敛在这里
+// 各端点只负责“跑哪条 git 命令”，路径校验与响应形状都收敛在这里
 func (c *uiCache) handleWrite(w http.ResponseWriter, r *http.Request, run func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error)) {
 	// 只认 POST：写操作挂在 GET 上会被基座的同源校验直接放过，那正是 CSRF 想利用的形状
 	if r.Method != http.MethodPost {
@@ -758,8 +758,8 @@ func (c *uiCache) handleWrite(w http.ResponseWriter, r *http.Request, run func(c
 
 	if err != nil {
 		// git 的说明在 output 里（RunCombinedContext 即使非零退出也返回它），而 err 只是
-		// "exit status 128" 这种毫无信息量的包装。对用户来说，"没有 upstream 分支""没有
-		// 可提交的内容"这类原话才是他判断该做什么的依据，因此有 output 就用 output
+		// "exit status 128" 这种毫无信息量的包装。对用户来说，“没有 upstream 分支”“没有
+		// 可提交的内容”这类原话才是他判断该做什么的依据，因此有 output 就用 output
 		msg := strings.TrimSpace(out)
 		if msg == "" {
 			msg = err.Error()
@@ -796,7 +796,7 @@ func (c *uiCache) handleStage(w http.ResponseWriter, r *http.Request) {
 // handleUnstage 取消暂存一个文件。
 //
 // 用 reset HEAD -- 而不是 restore --staged：实测在“尚无提交”的仓库上 restore 会直接失败
-// （fatal: could not resolve HEAD），而"刚 add 完、还没第一次提交就想撤回"恰恰是最需要
+// （fatal: could not resolve HEAD），而“刚 add 完、还没第一次提交就想撤回”恰恰是最需要
 // 这个按钮的时候；reset HEAD -- 在那种仓库上正常工作
 func (c *uiCache) handleUnstage(w http.ResponseWriter, r *http.Request) {
 	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error) {

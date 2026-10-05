@@ -5,7 +5,7 @@
 //
 // 刻意用 `//go:build !race` 把自己排除在 -race 之外：端到端每个断言都要新起一个子进程，
 // 而子进程就是同一份被竞态插桩的测试二进制，启动代价极高——同构的测试在姊妹项目 flk 上
-// 实测为“非 race 1.0s / race 68.3s”，被放大了 67 倍。而竞态检测对"子进程驱动的 CLI 断言"
+// 实测为“非 race 1.0s / race 68.3s”，被放大了 67 倍。而竞态检测对“子进程驱动的 CLI 断言”
 // 几乎不产生价值：真正并发的代码在 internal/worker 里有各自的单测覆盖。
 // 代价是 -race 那一轮不再重复验证 CLI 契约，换来的是反馈时间从一分钟以上回到一两秒
 //
@@ -15,7 +15,7 @@
 // 这些只有把编译产物当黑盒、以子进程方式驱动才能覆盖
 //
 // 骨架与姊妹项目 flk 的 main_test.go 同源（那是同类测试的成熟范本），
-// 采用"helper 进程"模式：测试二进制自身即被测程序。TestCLIHelperProcess 在设置了
+// 采用“helper 进程”模式：测试二进制自身即被测程序。TestCLIHelperProcess 在设置了
 // GGT_CLI_HELPER_PROCESS 的子进程里把命令行交给 cmd.Execute，从而每个用例都跑在
 // 一个全新的进程里——Cobra 的 flag 状态、全局 cfg、logger 与 pterm writer 都不会
 // 在多次执行之间相互污染（这正是同进程内反复 Execute 做不到的）
@@ -156,7 +156,7 @@ func hasHanText(text string) bool {
 
 // initGitRepo 在给定目录里初始化一个真实的 git 仓库
 //
-// 刻意用真实 git 而非"手动建一个 .git 目录"：ggt 的 status / size 会真正执行
+// 刻意用真实 git 而非“手动建一个 .git 目录”：ggt 的 status / size 会真正执行
 // git 子进程，假仓库会让这些命令失败，测不出真实行为
 func initGitRepo(t *testing.T, path string) {
 	t.Helper()
@@ -470,7 +470,7 @@ func TestCLIStatusAndSizeOnControlledRepos(t *testing.T) {
 // TestCLIBadInvocationContract 覆盖两类“调用方式不对”的场景
 //
 //   - 未知子命令：Cobra 必须报 unknown command 并以非零码退出
-//   - 无参数：Cobra 对"没有 Run 的父命令"会打印帮助并返回 nil，因此退出码是 0
+//   - 无参数：Cobra 对“没有 Run 的父命令”会打印帮助并返回 nil，因此退出码是 0
 //
 // 这里如实反映了 ggt 当前的行为：无参数不是错误，而是打印用法。
 // （任务描述期望“无参数非零”，与实测不符，已在交付报告中说明；
@@ -498,7 +498,7 @@ func TestCLIBadInvocationContract(t *testing.T) {
 // 因为静默降级会让用户以为设置生效了，而“日志怎么变少了”极难自查
 //
 // 关于告警的落点：ggt 的 WarnMsg 走 pterm.Warning，其默认 Writer 是 stdout
-// （root.go 只把 pterm.Error.Writer 改成了 stderr）。因此相比"只看 stderr"，
+// （root.go 只把 pterm.Error.Writer 改成了 stderr）。因此相比“只看 stderr”，
 // 这里断言合并输出更贴合实现；用例同时确认退出码为 0，即该告警不影响命令成败
 func TestCLIInvalidLogLevelWarning(t *testing.T) {
 	home := t.TempDir()

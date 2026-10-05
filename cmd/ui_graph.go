@@ -92,7 +92,7 @@ func cssVarOf(colorID string) string {
 
 // handleLog 返回一段提交历史与它的泳道。
 //
-// 分页是"把 limit 加大再取一次"，不是 skip：泳道是逐行递推出来的，只取第二页的话第一行的
+// 分页是“把 limit 加大再取一次”，不是 skip：泳道是逐行递推出来的，只取第二页的话第一行的
 // 输入泳道无从得知，整页的线都会从最左边重新开始。VSCode 的做法也是每次对“已加载的全部提交”
 // 重算一遍（toISCMHistoryItemViewModelArray），因此这里每次都从第一条开始算，limit 只增不减——
 // 代价是 O(已加载条数)，而这也正是前面那条“前缀稳定”单测守住的契约

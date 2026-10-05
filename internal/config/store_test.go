@@ -313,7 +313,7 @@ func TestValidateAtReportsProblems(t *testing.T) {
 }
 
 // TestValidateAtDetectsBOM 断言能识别 UTF-8 BOM。
-// Windows 记事本"另存为 UTF-8"默认会写 BOM，而报错信息完全看不出是它引起的。
+// Windows 记事本“另存为 UTF-8”默认会写 BOM，而报错信息完全看不出是它引起的。
 func TestValidateAtDetectsBOM(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
 	content := append([]byte{0xEF, 0xBB, 0xBF}, []byte(`{"concurrency": "CPUFull"}`)...)
@@ -444,8 +444,8 @@ func TestManagedKeysHaveNoParse(t *testing.T) {
 // TestSettingMetadataIsComplete 断言注册表里的元数据自洽。
 //
 // 为什么必须有这条测试：候选清单、整数边界这些元数据都不是编译期能检查的东西，漏填或填错时
-// 构建与其余测试全部通过，问题要到用户打开设置面板时才暴露——表现为"页面上能选，提交后却被
-// 拒收""页面允许填 0，解析器只收正整数"这类自相矛盾。这里遍历全部注册项一次守住，
+// 构建与其余测试全部通过，问题要到用户打开设置面板时才暴露——表现为“页面上能选，提交后却被
+// 拒收”“页面允许填 0，解析器只收正整数”这类自相矛盾。这里遍历全部注册项一次守住，
 // 加新配置项时不需要再补测试用例
 func TestSettingMetadataIsComplete(t *testing.T) {
 	for _, s := range Settings() {
@@ -514,7 +514,7 @@ func TestSettingMetadataIsComplete(t *testing.T) {
 // TestLanguageOptionsCoverSupported 断言语言项的候选取值就是随二进制发布的语言，且都带显示名。
 //
 // 它守的不是注册表自洽，而是注册表与 locales 包之间的一致性：语言清单若在两处各写一份，
-// 会出现"l10n 认得一种语言、页面里却选不到"这种没有任何编译错误、也没人会发现的错位
+// 会出现“l10n 认得一种语言、页面里却选不到”这种没有任何编译错误、也没人会发现的错位
 func TestLanguageOptionsCoverSupported(t *testing.T) {
 	s, ok := Lookup("language")
 	if !ok {

@@ -6,7 +6,7 @@ import "testing"
 // （TestNormalize / TestIsSupported）。本文件只覆盖 cmd 侧的预扫描。
 
 // TestScanLangFlag 验证命令行语言参数的预扫描。
-// 预扫描必须支持 pflag 的全部等价写法，并正确处理"未知 flag 的取值"与“-- 终止符”
+// 预扫描必须支持 pflag 的全部等价写法，并正确处理“未知 flag 的取值”与“-- 终止符”
 // 这两个容易误判的场景。
 func TestScanLangFlag(t *testing.T) {
 	cases := []struct {

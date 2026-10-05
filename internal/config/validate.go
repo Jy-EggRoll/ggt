@@ -51,7 +51,7 @@ func ValidateAt(path string) ([]Issue, error) {
 	}
 
 	var issues []Issue
-	// UTF-8 BOM：Windows 记事本"另存为 UTF-8"默认会写。带 BOM 的文件 Go 的
+	// UTF-8 BOM：Windows 记事本“另存为 UTF-8”默认会写。带 BOM 的文件 Go 的
 	// encoding/json 与 viper 都会解析失败，而报错信息完全看不出是 BOM 引起的，
 	// 属于极难自查的一类，必须单独指出来
 	if bytes.HasPrefix(data, utf8BOM) {
@@ -168,7 +168,7 @@ func validateBuckets(raw map[string]any) []Issue {
 
 // validatePaths 检查仓库路径与父目录的可达性。
 //
-// 判定口径必须与运行期一致（git.IsRepo），否则会出现"体检说不合法、ggt 却能跑"的错位。
+// 判定口径必须与运行期一致（git.IsRepo），否则会出现“体检说不合法、ggt 却能跑”的错位。
 func validatePaths(raw map[string]any) []Issue {
 	var issues []Issue
 	issues = append(issues, checkPathList("repo_paths", raw["repo_paths"], true)...)

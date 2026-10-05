@@ -160,7 +160,7 @@ func TestLayoutHistoryDeterministic(t *testing.T) {
 	}
 }
 
-// TestLayoutHistoryPrefixStable 分页的做法是"把 limit 加大再取一次"，因此前 N 行的泳道必须与
+// TestLayoutHistoryPrefixStable 分页的做法是“把 limit 加大再取一次”，因此前 N 行的泳道必须与
 // 只取 N 行时完全一致——否则用户一滚到底部，上面已经画好的线会整体错位
 func TestLayoutHistoryPrefixStable(t *testing.T) {
 	items := []HistoryItem{

@@ -2,7 +2,7 @@
 //
 // get / set / reset / validate 四个操作共用这一份声明，避免四处各写一套
 // “这个键叫什么、什么类型、默认值是多少、什么算合法”——那种重复迟早会漂移成
-// "set 能写进去、validate 说它非法"这类自相矛盾。
+// “set 能写进去、validate 说它非法”这类自相矛盾。
 //
 // 新增配置项时：在这里加一条，并在 Config 结构体上加同名的 json tag。
 // 两处不一致会被 TestSettingsMatchConfigFields 的反射断言拦下。
@@ -216,7 +216,7 @@ var settings = []Setting{
 	{
 		// 这两个键对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme：
 		// “跟随系统”时深色用哪套、浅色用哪套，各自可选。它们只在 theme 为空（跟随系统）时生效，
-		// 与 VSCode 里"自动检测关闭时 preferred* 被忽略"是同一个模型
+		// 与 VSCode 里“自动检测关闭时 preferred* 被忽略”是同一个模型
 		Key:      "theme_dark",
 		Title:    l10n.T("Dark theme", nil),
 		Kind:     KindString,
@@ -313,7 +313,7 @@ func parseBool(s string) (any, error) {
 	return nil, ErrInvalidValue
 }
 
-// parseIntInRange 返回一个"整数且落在 [min, max] 内"的解析器。
+// parseIntInRange 返回一个“整数且落在 [min, max] 内”的解析器。
 //
 // 下界做成参数而不是固定为 1，是因为有的项 0 是合法取值：通知自动消失的时长用 0 表示
 // “不自动消失”，而分桶阈值必须为正，传 1 即可——两种语义共用一处实现，
@@ -328,7 +328,7 @@ func parseIntInRange(min, max int) func(string) (any, error) {
 	}
 }
 
-// parsePositiveInt 返回一个"正整数且不超过 max"的解析器。
+// parsePositiveInt 返回一个“正整数且不超过 max”的解析器。
 func parsePositiveInt(max int) func(string) (any, error) {
 	return parseIntInRange(1, max)
 }
@@ -369,7 +369,7 @@ func sizeUnitOptions() []Option {
 }
 
 // languageOptions 返回随二进制发布的语言，清单与显示名都取自 locales 包。
-// 注册表再抄一份语言列表，就会出现"l10n 支持三种语言、页面上只列两种"这种没人会发现的错位
+// 注册表再抄一份语言列表，就会出现“l10n 支持三种语言、页面上只列两种”这种没人会发现的错位
 func languageOptions() []Option {
 	tags := locales.Supported()
 	out := make([]Option, 0, len(tags))
@@ -382,7 +382,7 @@ func languageOptions() []Option {
 // logLevelOptions 是诊断日志的四个级别。
 //
 // 合法取值的真相在 eggokit/logger（parseLogLevel 把判定直接交给它），而它没有导出级别清单，
-// 因此这里手写一份，由 TestSettingMetadataIsComplete 断言"清单里每个值都能被 Parse 接受"
+// 因此这里手写一份，由 TestSettingMetadataIsComplete 断言“清单里每个值都能被 Parse 接受”
 // 来防漂移——为拿到清单去改依赖库，代价比一条测试大得多
 func logLevelOptions() []Option {
 	return []Option{{Value: "debug"}, {Value: "info"}, {Value: "warn"}, {Value: "error"}}

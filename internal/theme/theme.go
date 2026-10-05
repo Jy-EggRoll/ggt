@@ -10,7 +10,7 @@
 //  2. 主题文件的 include 链，从最底层往上覆盖（2026-dark -> dark_modern -> dark_plus -> dark_vs）
 //  3. 主题文件自身的 colors
 //
-// 第 1 层是"与 VSCode 视觉一致"的关键：gitDecoration.*、diffEditor.* 这些颜色本来就不在主题
+// 第 1 层是“与 VSCode 视觉一致”的关键：gitDecoration.*、diffEditor.* 这些颜色本来就不在主题
 // 文件里，而在颜色注册表的默认值里——官方主题没写它们，VSCode 用的就是那些默认值。
 //
 // 内置的主题文件是逐字内嵌的上游文件（含 MIT 许可，见 builtin/*/LICENSE.txt），与用户自己
@@ -228,7 +228,7 @@ func Resolve(id string) (*Resolved, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 以注册表默认值为准，主题链里写的覆盖它——这是"与 VSCode 视觉一致"的关键一步：
+	// 以注册表默认值为准，主题链里写的覆盖它——这是“与 VSCode 视觉一致”的关键一步：
 	// 例如 2026-light 就没有写 diffEditor.*LineBackground，VSCode 用的正是注册表默认值
 	merged := make(map[string]string, len(base)+len(colors))
 	for id, v := range base {

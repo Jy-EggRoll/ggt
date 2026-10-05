@@ -77,8 +77,8 @@ type Status struct {
 	// Files 是全部变更条目，顺序与 git 输出一致（git 自身按路径排序）
 	Files []StatusFile
 	// LimitHit 表示本次采集因为条目数超过 statusLimit 而被提前截断，Files 只是前面一段。
-	// 之所以要把这件事报出来：截断本身是静默的，界面若不提示，用户会以为"这个仓库就这么多
-	// 改动"。上游同样把 didHitLimit 一路报到界面（git.ts:2793）
+	// 之所以要把这件事报出来：截断本身是静默的，界面若不提示，用户会以为“这个仓库就这么多
+	// 改动”。上游同样把 didHitLimit 一路报到界面（git.ts:2793）
 	LimitHit bool
 }
 

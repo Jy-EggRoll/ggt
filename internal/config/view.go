@@ -1,7 +1,7 @@
 // view.go 把注册表投影成网页设置面板要的形状，并提供写入的共享入口。
 //
-// 为什么要投影而不是让页面直接读注册表：注册表是 Go 结构体，页面拿不到；而"页面自己知道
-// 有哪些配置项"恰恰是要避免的——那意味着每加一项配置都要同步改页面。这一层因此只做搬运：
+// 为什么要投影而不是让页面直接读注册表：注册表是 Go 结构体，页面拿不到；而“页面自己知道
+// 有哪些配置项”恰恰是要避免的——那意味着每加一项配置都要同步改页面。这一层因此只做搬运：
 // 注册表里有什么，页面就画什么，页面不需要认识任何一个具体的键
 package config
 
@@ -150,8 +150,8 @@ func choiceIn(opts []Option, text string) bool {
 // 路径是合法用法，候选只是“能直接点的那几个”
 //
 // 取值的边界（Min/Max）刻意不在这里判：每个配置项的 Parse 已经把自己那套边界写死了
-// （parsePositiveInt 之类），在这里再判一遍就有了两个真相源。测试断言"边界外一号的值
-// 必须被 Parse 拒绝"，因此这份元数据只是给页面用的提示，不会与解析器脱节
+// （parsePositiveInt 之类），在这里再判一遍就有了两个真相源。测试断言“边界外一号的值
+// 必须被 Parse 拒绝”，因此这份元数据只是给页面用的提示，不会与解析器脱节
 func SetFromTextAt(path, key, text string, strict bool) (string, error) {
 	s, ok := Lookup(key)
 	if !ok {
@@ -161,7 +161,7 @@ func SetFromTextAt(path, key, text string, strict bool) (string, error) {
 		return "", err
 	}
 	if s.Parse == nil {
-		// 注册表约定是"Parse 与 ManagedBy 恰有其一"，上面已经按 ManagedBy 拒绝过一次，
+		// 注册表约定是“Parse 与 ManagedBy 恰有其一”，上面已经按 ManagedBy 拒绝过一次，
 		// 走到这里说明有人往注册表里加了项却两样都没填（约定由 TestSettingMetadataIsComplete 守着）
 		return "", fmt.Errorf("config: setting %q has neither Parse nor ManagedBy", s.Key)
 	}

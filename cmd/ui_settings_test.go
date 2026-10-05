@@ -26,7 +26,7 @@ func TestRenderIndexHTMLInjectsEveryPlaceholder(t *testing.T) {
 	}
 
 	out := string(renderIndexHTML(indexHTML, "zh-CN"))
-	// 逐个点名而不是断言"没有 __GGT_ 这样的子串"：页面里的变量名 __GGT_LANG__ 与
+	// 逐个点名而不是断言“没有 __GGT_ 这样的子串”：页面里的变量名 __GGT_LANG__ 与
 	// __GGT_SETTINGS__ 本来就带这个前缀，那种断言会把它们一起算成残留
 	for _, placeholder := range []string{
 		"__GGT_HTML_LANG__", "__GGT_LANG_VALUE__", "__GGT_SETTINGS_JSON__", "__GGT_THEME_CSS__",

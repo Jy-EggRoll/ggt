@@ -58,8 +58,8 @@ var displayNames = map[string]string{
 // DisplayName 返回语言标签的显示名，缺项时退回标签本身。
 //
 // 为什么把这张表放在 Supported 旁边，而不是让调用方（配置项注册表）自己写一份：
-// 那张表的键必须与 Supported 完全对应，两者分处不同文件时，漂移表现为"页面上少了一个
-// 语言选项"且没有任何编译错误；放在同一个文件里，改语言列表的人一眼能看见它要一起改
+// 那张表的键必须与 Supported 完全对应，两者分处不同文件时，漂移表现为“页面上少了一个
+// 语言选项”且没有任何编译错误；放在同一个文件里，改语言列表的人一眼能看见它要一起改
 func DisplayName(tag string) string {
 	if name, ok := displayNames[tag]; ok {
 		return name
