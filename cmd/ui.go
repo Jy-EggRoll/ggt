@@ -522,7 +522,7 @@ func diffText(ctx context.Context, repoPath string, staged bool, paths []string)
 func numstatOrWarn(ctx context.Context, repoPath string, staged bool, paths []string) []git.CommitFile {
 	files, err := git.DiffNumstat(ctx, repoPath, staged, paths)
 	if err != nil {
-		logger.Warn("取 diff 的文件级增删行数失败", "repo", repoPath, "staged", staged, "err", err)
+		logger.Warn(l10n.T("Failed to count the file-level changes for the diff", nil), "repo", repoPath, "staged", staged, "err", err)
 		return nil
 	}
 	return files

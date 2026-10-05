@@ -73,7 +73,7 @@ var uiReloadKeys = []string{"theme", "theme_dark", "theme_light", "notify_timeou
 func uiSettingsJSON(path string) []byte {
 	b, err := json.Marshal(config.SettingsViewAt(path))
 	if err != nil {
-		logger.Warn("序列化设置快照失败", "err", err)
+		logger.Warn(l10n.T("Failed to serialize the settings snapshot", nil), "err", err)
 		return []byte("[]")
 	}
 	return b
