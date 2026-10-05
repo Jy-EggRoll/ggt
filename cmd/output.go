@@ -184,11 +184,6 @@ func InfoStrLn(s string) string    { return pterm.Info.Sprint(s + "\n") }
 func ErrorStrLn(s string) string   { return pterm.Error.Sprint(s + "\n") }
 func SuccessStrLn(s string) string { return pterm.Success.Sprint(s + "\n") }
 
-// DoneBanner 打印一条完成类收尾横幅（成功绿），统一各命令的结尾提示样式。
-func DoneBanner(msg string) {
-	pterm.Success.Println(msg)
-}
-
 // PrintProtocolSwitch 打印远程协议切换结果：仓库标签 + 灰色旧协议 → 绿色新协议。
 // 仓库标签统一经 RepoLabel 着色，子模块自动带 [子] 前缀。
 // 此前 remote 直接内联 FgRed/FgGreen，现已统一到一处封装。
