@@ -59,10 +59,17 @@
      --font-ui，等宽文字（diff 正文、提交号、配置键名）走 --font-mono。
      两者都能在设置面板里换（配置项 font_ui / font_mono，服务端渲染时注入同名变量覆盖它们），
      因此这里的值既是默认值、也是“取值为空或写坏”时的回退。
+
+     默认值只写“特性”，不写任何字体名：本机装了什么字体只有使用者自己知道，样式表里替人挑
+     一套（哪怕是 Inter、Segoe UI 这种看着很稳的选择），在没装它的机器上会静默落空——浏览器
+     只会往下找下一个候选，不报任何错——装了也等于把别人的偏好强加到这台机器上。于是界面区取
+     sans-serif（无衬线）、等宽区取 monospace（等宽），具体落到哪一个字体交给浏览器按它自己的
+     设置去回退。要指定字体名就写进配置项：那是使用者自己的选择，不是我们预设的
+
      等宽这份原先在样式表里抄了两遍，而且两遍还不一致（一处带 DejaVu Sans Mono、一处不带），
      收成一个令牌之后只有一处定义，也就不存在“改了一处忘了另一处” */
-  --font-ui: system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --font-ui: sans-serif;
+  --font-mono: monospace;
 
   /* --page-pad / --statusbar-h 是页面上唯一的一份“留白与底栏高度”：app.js 算列高时从计算样式
      里读它们（cssVar），而不是在 JS 里再写一遍数字——底栏是后加的，硬编码的话它一出现就会

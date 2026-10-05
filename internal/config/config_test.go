@@ -304,7 +304,7 @@ func TestValidFontFamily(t *testing.T) {
 		want string
 		ok   bool
 	}{
-		{"空串表示用内置字体栈", "", "", true},
+		{"空串表示不指定字体", "", "", true},
 		{"普通字体栈", "Inter, system-ui, sans-serif", "Inter, system-ui, sans-serif", true},
 		{"带引号与中文名", `"Noto Sans CJK SC", 思源黑体, monospace`, `"Noto Sans CJK SC", 思源黑体, monospace`, true},
 		{"首尾空白被去掉", "  Inter  ", "Inter", true},

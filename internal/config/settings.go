@@ -250,23 +250,25 @@ var settings = []Setting{
 		Key:   "font_ui",
 		Title: l10n.T("Interface font", nil),
 		Kind:  KindString,
-		// 空串 = 用样式表里内置的那套字体栈。这是“有意义的零值”，因此 applyConfigDefaults 不需要补值
+		// 空串 = 不指定字体：页面那层只声明“特性”（界面区 sans-serif、等宽区 monospace），
+		// 具体落到哪个字体由浏览器按自己的设置回退决定。这是“有意义的零值”，
+		// 因此 applyConfigDefaults 不需要补值
 		Default:  "",
-		Expected: l10n.T("a font-family list, or empty for the built-in stack", nil),
+		Expected: l10n.T("a font-family list, or empty to leave the font to the browser", nil),
 		Parse:    parseFontFamily,
-		Options:  uiFontOptions,
-		// 本机装了什么字体只有用户自己知道，候选取的是几档常见选择，写别的同样合法
-		AllowCustom: true,
+		// 刻意不给候选清单：本机装了什么字体只有使用者自己知道，内置一份清单等于替人预设审美，
+		// 而清单里写到的字体在别人机器上多半没装。也不去枚举本机已装字体：三平台各要一套实现
+		// （Linux 靠 fc-list、Windows 靠注册表、macOS 靠 system_profiler），代价远大于收益。
+		// 面板因此是一个普通输入框，写什么字体栈由使用者决定，字面里出现字体名是使用者自己的选择
 	},
 	{
-		Key:         "font_mono",
-		Title:       l10n.T("Monospace font", nil),
-		Kind:        KindString,
-		Default:     "",
-		Expected:    l10n.T("a font-family list, or empty for the built-in stack", nil),
-		Parse:       parseFontFamily,
-		Options:     monoFontOptions,
-		AllowCustom: true,
+		// 与 font_ui 同一套口径：不给候选清单，留空则由浏览器挑一个等宽字体
+		Key:      "font_mono",
+		Title:    l10n.T("Code font", nil),
+		Kind:     KindString,
+		Default:  "",
+		Expected: l10n.T("a font-family list, or empty for the browser's monospace font", nil),
+		Parse:    parseFontFamily,
 	},
 	{
 		// 通知自动消失的时长，秒。0 表示不自动消失——这也是默认值：
@@ -444,39 +446,6 @@ func availableThemeOptions() []Option {
 	return out
 }
 
-// uiFontOptions 与 monoFontOptions 是两片区域各自的常见选择。
-//
-// 每项都是一整条字体栈，而不是一个字体名：本机没装第一个时浏览器会顺着往下找，
-// 于是“选了一个这台机器上没装的字体”不至于让整片文字变成浏览器的默认字体
-//
-// 候选不给显示名：这一项在面板上是“输入框 + 候选清单”（AllowCustom），而那个控件只把候选的
-// 值列出来，显示名用不上；何况字体栈本身就说明了它是什么，不像主题 id（builtin:dark-plus）
-// 那样离了显示名就没法读。清单里也不放空值项（主题清单里那个“跟随系统”是另一回事：
-// 主题是严格下拉框，能清空这件事只能由清单表达），留空用内置字体栈这件事在说明文字里写着，
-// 面板上每一项还都有“恢复默认”按钮
-//
-// 刻意不做“本机已装字体”的枚举：枚举要按平台各写一套（Linux 靠 fontconfig 的 fc-list、
-// Windows 靠注册表、macOS 靠 system_profiler），代价远大于收益；AllowCustom 本来就允许
-// 把任何字体名写进去，候选清单只是省去打字
-func uiFontOptions() []Option {
-	return []Option{
-		{Value: `"Noto Sans CJK SC", "Source Han Sans SC", system-ui, sans-serif`},
-		{Value: `Inter, system-ui, sans-serif`},
-		{Value: `"Noto Serif CJK SC", "Source Han Serif SC", Georgia, serif`},
-	}
-}
-
-// monoFontOptions 是等宽区域的常见选择：前三个是带连字的编程字体，
-// 最后一个是中英文等宽的字体——表格与中文注释要对齐就得靠它
-func monoFontOptions() []Option {
-	return []Option{
-		{Value: `"JetBrains Mono", ui-monospace, monospace`},
-		{Value: `"Fira Code", ui-monospace, monospace`},
-		{Value: `"Cascadia Code", ui-monospace, monospace`},
-		{Value: `"Noto Sans Mono CJK SC", ui-monospace, monospace`},
-	}
-}
-
 // parseLanguage 解析输出语言。
 //
 // 必须用 l10n.IsSupported 而不是 l10n.Normalize：后者对不认识的输入回退默认语言，
@@ -508,7 +477,7 @@ func parseTheme(s string) (any, error) {
 const fontFamilyMaxLen = 200
 
 // ValidFontFamily 判定一个字体栈取值能不能用，并返回规整后的形态（去掉首尾空白）。
-// 空串合法，含义是“用样式表内置的那套”而不是“没有字体”
+// 空串合法，含义是“不指定字体，交给浏览器”而不是“没有字体”
 //
 // 为什么要限定字符集：这个值最终会被原样拼进样式表，分号能就地起一条新声明、花括号能闭合
 // 整个 :root 块、反斜杠与尖括号是各种解析器的转义口子。而字体栈真正需要的东西很少——

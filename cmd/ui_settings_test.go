@@ -264,7 +264,7 @@ func writeRawConfig(t *testing.T, path, body string) {
 // TestFontBlockFollowsConfig 断言字体覆盖规则只由配置决定，并且写坏的取值进不了样式表。
 //
 // 这一条盯的是“手改配置文件”那条路：注册表的 Parse 只在写入时跑，渲染读的是文件里的原始值，
-// 非法取值必须在这里被挡下（回退到样式表内置的那套字体栈），而不是原样拼进 <style>——
+// 非法取值必须在这里被挡下（丢掉这一项，页面回到“不指定字体”的默认状态），而不是原样拼进 <style>——
 // 分号能就地起一条新声明、花括号能闭合整个 :root 块
 func TestFontBlockFollowsConfig(t *testing.T) {
 	// 隔离配置：fontBlock 读的是默认配置路径，不能碰开发者自己的那一份

@@ -52,7 +52,8 @@ type Config struct {
 	// 对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme
 	ThemeDark  string `mapstructure:"theme_dark" json:"theme_dark"`
 	ThemeLight string `mapstructure:"theme_light" json:"theme_light"`
-	// FontUI / FontMono 是页面两片区域各自的字体栈，空串表示用样式表内置的那套
+	// FontUI / FontMono 是页面两片区域各自的字体栈，空串表示不指定字体：
+	// 页面那层只声明“特性”（界面区 sans-serif、等宽区 monospace），具体落到哪个字体由浏览器回退决定
 	// （与 Theme 同理，空串是有意义的零值，applyConfigDefaults 不需要补值）
 	FontUI   string `mapstructure:"font_ui" json:"font_ui"`
 	FontMono string `mapstructure:"font_mono" json:"font_mono"`

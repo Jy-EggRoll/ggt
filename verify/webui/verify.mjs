@@ -265,18 +265,44 @@ await report.acrossViewports(async (preset) => {
       }
       await openPanel()
 
-      // 两片区域都要在面板上，且带候选清单：控件是“输入框 + 候选清单”，候选值就是整条字体栈
+      // 两片区域都要在面板上，而且都不带候选清单：字体栈由使用者自己写，我们不预设任何一套
+      // （内置一份清单等于替人挑字体，而清单里写到的字体在别人机器上多半没装）
       for (const key of ['font_ui', 'font_mono']) {
         const row = page.locator(`#settings .setting-row[data-key="${key}"]`)
         // 用 waitFor 而不是 count：面板每次打开都是先清空再按接口返回的内容重画，
         // 清空与重画之间有一小段什么都没有的空窗期，count 正好落在空窗期里就会误判成“没有这一项”
         await row.waitFor({ state: 'attached', timeout: 5000 })
         const options = await row.locator('datalist option').evaluateAll((els) => els.map((e) => e.value))
-        if (options.length === 0) throw new Error(`${key} 没有候选清单`)
+        if (options.length !== 0) throw new Error(`${key} 不该再有候选清单，实得 ${JSON.stringify(options)}`)
+        if ((await row.locator('input[list]').count()) !== 0) throw new Error(`${key} 的输入框不该再挂候选清单`)
       }
-      const defaultMono = await page.evaluate(
-        () => getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim(),
-      )
+      // 候选清单这套机制本身没被拆掉：并发数那一项仍然用它，只有字体两项不用
+      const concRow = page.locator('#settings .setting-row[data-key="concurrency"]')
+      await concRow.waitFor({ state: 'attached', timeout: 5000 })
+      if ((await concRow.locator('datalist option').count()) === 0) {
+        throw new Error('并发数的候选清单不见了：候选清单机制被误删')
+      }
+
+      // 默认只声明“特性”，不替使用者挑字体：界面区 sans-serif、等宽区 monospace，两处都是通用族
+      // 关键字而不是字体名，具体落到哪一个字体由浏览器回退决定（也正因如此，配置里留空时页面
+      // 在各平台都还是无衬线界面 + 等宽代码，不会随系统默认字体变样）。
+      // 读的是计算样式而不是源码：样式表里写坏一个值，浏览器会静默丢掉整条声明，只看源码看不出来
+      const defaults = await page.evaluate(() => {
+        const root = getComputedStyle(document.documentElement)
+        return {
+          ui: root.getPropertyValue('--font-ui').trim(),
+          mono: root.getPropertyValue('--font-mono').trim(),
+          bodyFamily: getComputedStyle(document.body).fontFamily,
+        }
+      })
+      if (defaults.ui !== 'sans-serif') throw new Error(`界面字体默认值应为 sans-serif，实得 ${JSON.stringify(defaults.ui)}`)
+      if (defaults.mono !== 'monospace') throw new Error(`等宽字体默认值应为 monospace，实得 ${JSON.stringify(defaults.mono)}`)
+      if (defaults.bodyFamily !== 'sans-serif') {
+        throw new Error(`界面区域不该指定具体字体，应停在 sans-serif，实得 ${JSON.stringify(defaults.bodyFamily)}`)
+      }
+      report.note(`默认字体：界面区 ${defaults.bodyFamily}，等宽区 ${defaults.mono}`)
+
+      const defaultMono = defaults.mono
 
       // 量宽度的办法：往页面里临时插一个元素，让它按给定的字体栈渲染同一段文字。
       // 两套字体栈渲染同一段文字的宽度不同，配合下面“元素解析出来的字体栈”就能确认页面上的字
