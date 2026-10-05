@@ -57,7 +57,7 @@
 
   /* 等宽字体族：diff 正文、提交号、设置面板里的配置键名共用一份。
      同一份字体栈原先在样式表里抄了两遍，而且两遍还不一致（一处带 DejaVu Sans Mono，
-     一处不带）——收成一个令牌之后只有一处定义，也就不存在"改了一处忘了另一处" */
+     一处不带）——收成一个令牌之后只有一处定义，也就不存在“改了一处忘了另一处” */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
 
   /* --page-pad / --statusbar-h 是页面上唯一的一份“留白与底栏高度”：app.js 算列高时从计算样式
@@ -93,7 +93,7 @@
   --z-diff: 10;
   --z-hover: 20;
   /* 通知压在所有浮层之上：刚做完一次写操作，结果不该被任何一层挡住。
-     分两档是因为通知中心是"用户主动点开、要停在上面看"的面板，而单条通知是它自己的内容 */
+     分两档是因为通知中心是“用户主动点开、要停在上面看”的面板，而单条通知是它自己的内容 */
   --z-toast: 21;
   --z-notif-center: 22;
 
@@ -105,7 +105,7 @@
 
   /* 动效三条时长各管一类：颜色 100ms、位移 180ms（与 app.js 滚轮的 180ms 同一时间感）、
      无限循环的进度类动画 900ms。曲线用近似的等减速——别拿 ease 做位移，它的加速段会让
-     "卡片滑到新位置"看起来犹豫 */
+     “卡片滑到新位置”看起来犹豫 */
   --dur-fast: 100ms;
   --dur-move: 180ms;
   --dur-slow: 900ms;
@@ -219,7 +219,7 @@
   display: none;
   flex-direction: column;
   /* 浮层底色取 editorWidget.background：VSCode 的浮层用它，比 editor.background 略亮，
-     正好把卡片从底下的看板里"抬"起来 */
+     正好把卡片从底下的看板里“抬”起来 */
   background: var(--panel-bg, var(--bg));
   border: 1px solid var(--editor-widget-border, var(--card-border));
   border-radius: var(--radius-lg);
@@ -240,10 +240,10 @@
   border-bottom: 1px solid var(--card-border);
 }
 
-/* 浮层背后的遮罩层：类由 app.js 的 syncScrollLock 切换（与滚动锁同一处，免得出现"层关了、
-   模糊还留着"）。放在 body 上而不是浮层内部：负 z-index 的后代会被父元素自己的背景盖住，
+/* 浮层背后的遮罩层：类由 app.js 的 syncScrollLock 切换（与滚动锁同一处，免得出现“层关了、
+   模糊还留着”）。放在 body 上而不是浮层内部：负 z-index 的后代会被父元素自己的背景盖住，
    backdrop-filter 模糊到的就是那块不透明的底色，等于没模糊；放在 body 上背后才是真正的看板。
-   模糊只给 2px：再强一点看板就被糊成一片色块，"透视"的意思就没了 */
+   模糊只给 2px：再强一点看板就被糊成一片色块，“透视”的意思就没了 */
 body.overlay-open::before {
   content: "";
   position: fixed;
@@ -514,7 +514,7 @@ body {
  */
 .row.file.st-modified { color: var(--git-modified); --tint: var(--git-modified); }
 /* 已暂存那一侧用 stage* 变体：这两个令牌此前映射了却从没被使用（样式表 0 处引用），
-   于是在所有主题下"已暂存的修改"和"未暂存的修改"都是同一个颜色。上游注册表里两者确实同值
+   于是在所有主题下“已暂存的修改”和“未暂存的修改”都是同一个颜色。上游注册表里两者确实同值
    （extensions/git/package.json 的 defaults 逐字如此），但主题写了它们时就该不同 */
 .row.file.st-stage-modified {
   color: var(--git-stage-modified, var(--git-modified));
@@ -535,8 +535,8 @@ body {
 /*
  * 行底色：每个状态各自的半透明色块，色源与它的文字色**同一个令牌**
  *
- * 为什么底色必须与文字同源：底色按“组”给（曾经是整组绿、整组黄）时，会出现"红字的删除行压在
- * 绿底上“这种搭配——既难读，也把”这个文件怎么了“和”它属于哪一组"两件事糊成一个颜色。
+ * 为什么底色必须与文字同源：底色按“组”给（曾经是整组绿、整组黄）时，会出现“红字的删除行压在
+ * 绿底上“这种搭配——既难读，也把”这个文件怎么了“和”它属于哪一组”两件事糊成一个颜色。
  * 现在两个维度各管一件事：
  *   st-* → 决定色相（这个文件是 M/A/D/U/!…，也就是 --tint 取哪个令牌）
  *   g-*  → 只决定同一色相下的深浅（它属于哪一组）
@@ -1061,8 +1061,8 @@ pre.diff {
   font-size: 12px;
   line-height: 1.5;
   /* 长行折行显示，不做横向滚动（早先是 white-space: pre + overflow-x: auto，已改）：
-     这一层本身就叠在一个横向滚动的看板之上，这里再套一个横向滚动条，会让"这一行到底
-     有多长"完全看不出来，读一行的动作变成先横向拖再纵向读。
+     这一层本身就叠在一个横向滚动的看板之上，这里再套一个横向滚动条，会让“这一行到底
+     有多长”完全看不出来，读一行的动作变成先横向拖再纵向读。
      折行之后整行底色天然铺满，.dl 也就不再需要 width: max-content 去撑宽度 */
   white-space: pre-wrap;
   /* 没有空格的超长行（打包产物、base64、单行 JSON）必须能强制断开，否则会顶破容器 */
@@ -1130,7 +1130,7 @@ pre.diff .meta { color: var(--text-dim); }
 /* 分组行头上的整组动作常亮：它们不是“鼠标移到这一行才出现”的行内动作，而是这一组的常设入口 */
 .act.always { visibility: visible; }
 /* 图标按钮的 hover 取 toolbar.hoverBackground：它才是“工具条上的动作”那个语义，
-   行的 list.hoverBackground 是"列表行"的语义 */
+   行的 list.hoverBackground 是“列表行”的语义 */
 .act:hover { background: var(--toolbar-hover-bg, var(--hover-bg)); color: var(--text); }
 
 /* 写操作进行中：禁止再点动作按钮（避免同一文件连点两次），并把光标换成进行中 */

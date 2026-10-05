@@ -129,8 +129,8 @@ tasks:
       - bash verify/webui/run.sh
 
   # build-all 不再逐个平台列 build:* 任务，而是交给 eggokit 的 buildall 按 release.json 构建，
-  # 平台清单从此只有一处真源，增删平台只改清单即可。这消除了旧实现里"Taskfile 列了平台、
-  # 升级器的 supportedPlatforms 又列一份"的漂移风险（两者一致性由 cmd 包里的测试把关）
+  # 平台清单从此只有一处，增删平台只改清单即可。这消除了旧实现里“Taskfile 列了平台、
+  # 升级器的 supportedPlatforms 又列一份”的不一致（两者一致性由 cmd 包里的测试把关）
   # 版本与构建时间经 --version/--build-time 显式传入，正是为了把 CI 传进来的标签版本号注入二进制
   build-all:
     desc: 按 release.json 构建所有平台二进制文件

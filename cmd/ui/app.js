@@ -399,7 +399,7 @@ function hasStaged(f) {
 
 function hasWork(f) {
   if (f.unmerged) return false;
-  if (f.untracked) return true; // 未跟踪文件的两位都是 '?'，按"只在未暂存这一组"处理
+  if (f.untracked) return true; // 未跟踪文件的两位都是 '?'，按“只在未暂存这一组”处理
   return (f.work || '.') !== '.';
 }
 
@@ -2208,7 +2208,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 
 let cardOpen = false;
 let cardSpec = null; // 当前仓库（来自看板快照）
-let graphItems = []; // 已加载的"提交 + 泳道"
+let graphItems = []; // 已加载的“提交 + 泳道”
 let graphTotal = 0;
 let graphLimit = 0; // 已请求的条数；滚到底翻倍
 let graphMaxLimit = 2000;
