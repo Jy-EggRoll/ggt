@@ -851,23 +851,30 @@ let diffScrollX = 0;
 let diffSeq = 0;
 
 // settingsOpen 为真表示设置面板正打开。
-// 它刻意与 diff、卡片这两个标志声明在一起：三者都是“整页覆盖 + 锁定滚动”的浮层，
-// 而“有没有浮层开着”这件事必须被同一处看到（见 syncScrollLock 与 resume），
-// 分散声明时最典型的漏法是新面板忘了并进去，表现为打开设置后背后还能滚动
+// 它刻意与 diff、卡片这两个标志声明在一起，并由下面的 anyOverlayOpen 统一汇总：
+// 三者都是“整页覆盖 + 锁滚动”的浮层，凡是要问“现在有没有浮层开着”的地方都该走那一个入口，
+// 散着写迟早漏一处——wheel 处理器就漏过设置面板，表现为面板正文用滚轮滚不动、只能拖滚动条
 let settingsOpen = false;
+
+// anyOverlayOpen 汇总“当前有没有浮层开着”。
+// 需要它的至少三处：锁住页面滚动、浮层关掉后恢复看板、以及判断纵向滚轮该不该让回浏览器。
+// 最后那处原先自己写了一遍三标志的判断且漏掉了设置面板，所以这里只留一个入口
+function anyOverlayOpen() {
+  return diffOpen || cardOpen || settingsOpen;
+}
 
 // syncScrollLock 统一决定要不要锁住页面滚动，并顺带切换遮罩层。
 // 遮罩与滚动锁由同一处决定：两件事都取决于“有没有浮层开着”，分头写迟早会出现
 // “层关了、模糊还在”这种半截状态
 function syncScrollLock() {
-  const overlayOpen = diffOpen || cardOpen || settingsOpen;
+  const overlayOpen = anyOverlayOpen();
   document.documentElement.style.overflow = overlayOpen ? 'hidden' : '';
   document.body.classList.toggle('overlay-open', overlayOpen);
 }
 
 // resume 在浮层都关掉之后恢复看板：补一次取数（期间工作区可能已经变了）并恢复轮询
 function resume() {
-  if (diffOpen || cardOpen || settingsOpen) return;
+  if (anyOverlayOpen()) return;
   refresh();
   startPolling();
 }
@@ -2150,9 +2157,9 @@ function stepScroll(now) {
 window.addEventListener(
   'wheel',
   (e) => {
-    // diff 覆盖层或仓库面板打开时把手势让回浏览器：那边要滚的是正文（纵向），
-    // 被本处理器抢去转横向会让正文完全滚不动
-    if (diffOpen || cardOpen) return;
+    // diff 覆盖层、仓库面板或设置面板打开时把手势让回浏览器：那边要滚的是正文（纵向），
+    // 被本处理器抢去转横向会让正文完全滚不动。判据走 anyOverlayOpen，别在这里另写一遍
+    if (anyOverlayOpen()) return;
     // 横向手势（触控板横扫、Shift+滚轮）交给浏览器原生处理：那条路自带缓动，手感最好
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.deltaY === 0) return;
     e.preventDefault();
@@ -2173,9 +2180,10 @@ document.addEventListener('visibilitychange', () => {
     stopPolling();
     return;
   }
-  // 覆盖层打开期间由 closeDiff / closeRepoPanel 统一恢复（它们会先 refresh 再 startPolling），
-  // 这里不能抢先启动，否则看板会在覆盖层后面偷偷刷新
-  if (diffOpen || cardOpen) return;
+  // 浮层打开期间由各自的关闭函数统一恢复（它们会先 refresh 再 startPolling），
+  // 这里不能抢先启动，否则看板会在浮层后面偷偷刷新。判据走 anyOverlayOpen：
+  // 原先这里自己拼了两个标志、漏掉设置面板，于是开着设置切走再回来会在面板后面刷新
+  if (anyOverlayOpen()) return;
   refresh();
   startPolling();
 });

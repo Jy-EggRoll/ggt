@@ -267,6 +267,23 @@ await report.acrossViewports(async (preset) => {
       if (value !== '0') throw new Error(`面板应显示默认值 0，实得 ${value}`)
     }, { viewports: ['desktop'] })
 
+    await report.check('设置面板里能用滚轮滚动正文', async () => {
+      // 这一条必须打真实滚轮。面板正文的滚轮先经过 window 上的处理器，那个处理器
+      // 把纵向滚轮改写成看板的横向滚动；它一旦没把设置面板排除掉，正文就完全滚不动，
+      // 而拖滚动条仍然有效——所以直接赋 scrollTop 的写法照不出这个问题
+      const box = page.locator('#settings-body')
+      const metrics = await box.evaluate((el) => ({ h: el.scrollHeight, c: el.clientHeight }))
+      if (metrics.h <= metrics.c) throw new Error('面板内容不够长，这条断言失去意义')
+
+      const r = await box.boundingBox()
+      await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2)
+      await page.mouse.wheel(0, 400)
+      await page.waitForTimeout(300)
+      if ((await box.evaluate((el) => el.scrollTop)) === 0) {
+        throw new Error('设置面板正文用滚轮滚不动，纵向手势被看板的横向滚动抢走了')
+      }
+    }, { viewports: ['desktop'] })
+
     // closeAllOverlays 逐层退回看板。
     // 不用"按几下 Esc"：层级是 diff → 提交卡 → 仓库卡片，Esc 由谁消费还取决于焦点，
     // 数次数迟早数错（实测差一层就让后面的用例点不到看板行）。这里每轮先看当前开着什么，再点它自己的出口
