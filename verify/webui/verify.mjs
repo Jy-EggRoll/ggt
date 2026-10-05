@@ -76,6 +76,37 @@ await report.acrossViewports(async (preset) => {
       if (injected !== 'undefined') throw new Error(`主题数据仍在注入页面：${injected}`)
     })
 
+    // 图标有没有居中，读代码看不出来：内联 SVG 落在文字基线上，基线下面还留着降部那段高度，
+    // 于是图标看着比按钮中心高。这条直接量几何中心，别等用户看出来了才发现
+    await report.check('底栏的设置齿轮与铃铛垂直居中', async () => {
+      const geom = await page.evaluate(() => {
+        const box = (sel) => {
+          const el = document.querySelector(sel)
+          if (!el) throw new Error(`找不到 ${sel}`)
+          const r = el.getBoundingClientRect()
+          return { cy: r.top + r.height / 2, h: r.height }
+        }
+        return {
+          gear: box('#settings-btn .settings-icon'),
+          bell: box('#bell .bell-icon'),
+          gearBtn: box('#settings-btn'),
+          bellBtn: box('#bell'),
+        }
+      })
+      // 两个图标各自的按钮同高、同在一行，因此它们的中心应当几乎相等
+      const between = Math.abs(geom.gear.cy - geom.bell.cy)
+      if (between > 0.5) {
+        throw new Error(`齿轮与铃铛的纵向中心相差 ${between.toFixed(2)}px（齿轮 ${geom.gear.cy}，铃铛 ${geom.bell.cy}）`)
+      }
+      for (const [name, icon, btn] of [
+        ['齿轮', geom.gear, geom.gearBtn],
+        ['铃铛', geom.bell, geom.bellBtn],
+      ]) {
+        const off = Math.abs(icon.cy - btn.cy)
+        if (off > 0.5) throw new Error(`${name}没在自己按钮里居中，偏离 ${off.toFixed(2)}px`)
+      }
+    })
+
     await report.check('点齿轮打开面板，列出全部配置项', async () => {
       await page.locator('#settings-btn').click()
       await page.waitForSelector('#settings.open', { timeout: 5000 })

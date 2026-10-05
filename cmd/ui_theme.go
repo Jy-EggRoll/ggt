@@ -114,6 +114,11 @@ var cssVarNames = map[string]string{
 	"scrollbarSlider.background":       "scrollbar",
 	"scrollbarSlider.hoverBackground":  "scrollbar-hover",
 	"scrollbarSlider.activeBackground": "scrollbar-active",
+	// 选中文字的底色：浏览器默认那层半透明蓝压在深色主题的暗底上几乎看不出选区，
+	// 而 diff 视图里最常见的动作就是选中一段代码再复制。取值照抄上游 editorColors.ts 的
+	// editorSelectionBackground 注册表默认值（浅 #ADD6FF / 深 #264F78，见 defaults.json），
+	// 只给底色、不设前景色——上游 editorSelectionForeground 的默认值就是 null（不改字色）
+	"editor.selectionBackground": "selection-bg",
 	// 浮层边框：上游默认是 null（深/浅两档都没值），因此它只做映射、不进 defaults.json——
 	// 样式表里写成 var(--editor-widget-border, var(--card-border))，缺值时自然回落到卡片边框
 	"editorWidget.border": "editor-widget-border",

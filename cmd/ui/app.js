@@ -755,7 +755,7 @@ function layout(els, specs) {
   // 而“JS 里一份、CSS 里一份”的数字迟早会对不上
   // 视口高走 viewportSize 而不是 window.innerHeight：内容溢出时后者会被撑大，而看板的高度又是
   // 按它算出来写回元素的，那正是“看板把自己撑高”的循环（见 viewportSize 的注释）
-  const colH = viewportSize().h - cssVar('--page-pad', 16) * 2 - cssVar('--statusbar-h', 30);
+  const colH = viewportSize().h - cssVar('--page-pad', 16) * 2 - cssVar('--statusbar-h', 32);
 
   // tailRows[i] 是第 i 条标题行之后、属于同一张卡片的内容行数，用来判断
   // “列尾还值不值得起一张新卡片”。
@@ -2009,6 +2009,14 @@ function settingsRow(item) {
   if (!ctl.readOnly) {
     // input 与 change 都听：文本框靠 input 即时反馈，下拉框与复选框只发 change
     const onChange = () => {
+      // 这一行可能已经被重画换掉：面板每次打开、每次保存成功、以及恢复某项默认都会重画，
+      // 而重画要等一次接口往返。用户连续操作时它可能正好夹在“聚焦这个输入框”与
+      // “把值写进去并派发 input”之间（实测窗口只有几毫秒，偶发命中），此时被换下的输入框
+      // 虽然已经不在页面上，它的监听器仍然连着模块级的待保存集合，于是按自己那个控件的值
+      // 记了一笔；而保存时读到的是刚造出来、还是服务端那份的新控件（输入框为空）——
+      // 配置文件里就此多出一个用户从没输入过的值。
+      // 因此先认出“我已经不是当前控件”，是就什么都不做
+      if (settingsControls.get(item.key) !== ctl) return;
       if (ctl.get() === item.value) settingsDirty.delete(item.key);
       else settingsDirty.add(item.key);
       row.classList.toggle('dirty', settingsDirty.has(item.key));

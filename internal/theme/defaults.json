@@ -1,6 +1,7 @@
 {
   "dark": {
     "editor.background": "#1e1e1e",
+    "editor.selectionBackground": "#264F78",
     "sideBar.background": "#252526",
     "foreground": "#cccccc",
     "descriptionForeground": "#ccccccb3",
@@ -55,6 +56,7 @@
   },
   "light": {
     "editor.background": "#ffffff",
+    "editor.selectionBackground": "#ADD6FF",
     "sideBar.background": "#f3f3f3",
     "foreground": "#616161",
     "descriptionForeground": "#717171",

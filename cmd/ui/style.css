@@ -133,6 +133,16 @@
 }
 
 /*
+ * 选中文字的底色：浏览器默认那层半透明蓝在浅色主题下还能看，压在深色主题的暗底上则几乎看不出
+ * 选区在哪，而 diff 视图里最常见的动作就是选中一段代码再复制。
+ * 取 editor.selectionBackground（浅 #ADD6FF / 深 #264F78，出处见 defaults.json），
+ * 只设底色不设前景色——上游 editorSelectionForeground 的默认值就是 null，即不改文字颜色
+ */
+::selection {
+  background: var(--selection-bg);
+}
+
+/*
  * 滚动条：VSCode 在深色主题下是半透明的灰滑块，浏览器默认滚动条则是浅色的——不映射的话
  * 深色主题里会横着一条亮色，是整页最一眼看出“不像 VSCode”的地方
  *
@@ -179,6 +189,12 @@
  */
 .btn {
   flex: none;
+  /* 图标按钮的居中：按钮里放内联 SVG 时，它落在文字的基线上，基线下面还留着降部那段高度，
+     于是图标看着比按钮中心高出一截（底栏的设置齿轮就比旁边的铃铛高）。
+     flex 居中不看基线，按钮里放图标还是放文字都不会歪，放在这一层统一兜住 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: var(--control-h);
   padding: 0 var(--sp-3);
   border: 1px solid transparent;
@@ -187,7 +203,9 @@
   cursor: pointer;
   transition:
     background-color var(--dur-fast) ease,
-    color var(--dur-fast) ease;
+    color var(--dur-fast) ease,
+    /* 次要态按钮有一道边框，禁用与恢复时它也会变，漏掉它那次变化是硬切换 */
+    border-color var(--dur-fast) ease;
 }
 .btn--primary {
   background: var(--btn-bg);
@@ -278,13 +296,18 @@ html {
 
 body {
   margin: 0;
-  /* 四边留白统一取 --page-pad；底栏那 30px 不在 padding 里让，而是在列高里让（见 app.js），
+  /* 四边留白统一取 --page-pad；底栏那 32px（--statusbar-h）不在 padding 里让，而是在列高里让（见 app.js），
      否则卡片的可用高度会比视口多算一截、最后一行被底栏压住 */
   padding: var(--page-pad);
   background: var(--bg);
   color: var(--text);
-  /* 13px 是 VSCode 工作台的默认界面字号；字体族按 Linux 上 VSCode 的实际取值排布 */
-  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif;
+  /* 13px 是 VSCode 工作台的默认界面字号。
+     这里刻意不写 font 简写：简写会把 font-family 一起重置成初值，覆盖掉服务端注入的
+     --font-ui；而且一旦这个变量在计算值阶段被判定无效（配置里写坏的字体栈），整条简写都会
+     失效、连字号一起退回浏览器默认的 16px，拆开写则只有字体族回落 */
+  font-size: var(--fs-md);
+  line-height: var(--line-tight);
+  font-family: var(--font-ui);
 }
 
 /*
@@ -349,14 +372,14 @@ body {
      用简写时后写的规则会整条覆盖前者，于是“只有一行”的干净仓库卡片
      （同一行同时是 head 与 foot）就会变成上面方、下面圆。
      逻辑属性各管各的角，天然叠加，不再互相覆盖 */
-  border-start-start-radius: 7px;
-  border-start-end-radius: 7px;
+  border-start-start-radius: var(--radius-md);
+  border-start-end-radius: var(--radius-md);
   /* 仓库名在 VSCode 里是加粗的默认前景色（scm.css 的 .monaco-highlighted-label），
      这里不额外配色：颜色全部让给变更状态，仓库层级的区分交给字重 */
   font-weight: 700;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   overflow: hidden;
   white-space: nowrap;
 }
@@ -366,8 +389,8 @@ body {
    圆角同样用逻辑属性写：只有一行时本行也是 .head，两组圆角必须能叠加（见 .row.head 处注释） */
 .row.foot {
   border-bottom: 1px solid var(--card-border);
-  border-end-start-radius: 7px;
-  border-end-end-radius: 7px;
+  border-end-start-radius: var(--radius-md);
+  border-end-end-radius: var(--radius-md);
 }
 
 /* 仓库名与分支名都要能被截断：仓库名过长时不能把计数徽标挤出行外 */
@@ -377,7 +400,7 @@ body {
 }
 .row.head .branch {
   font-weight: 400;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -421,7 +444,7 @@ body {
 .row.note {
   height: var(--row-h);
   line-height: var(--row-h);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -456,12 +479,12 @@ body {
 .row.group {
   height: var(--row-h);
   line-height: var(--row-h);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-dim);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   overflow: hidden;
   white-space: nowrap;
 }
@@ -488,7 +511,7 @@ body {
  */
 .row.file .letter {
   margin-left: auto;
-  padding-left: 8px;
+  padding-left: var(--sp-3);
   flex: none;
   opacity: 0.75;
   font-size: 90%;
@@ -566,12 +589,12 @@ body {
   height: var(--cont-h);
   line-height: var(--cont-h);
   padding: 0 10px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--cont-fg);
   background: var(--cont-bg);
   border-left: 1px dashed var(--card-border);
   border-right: 1px dashed var(--card-border);
-  border-radius: 7px 7px 0 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   transition: transform var(--dur-move) var(--ease-decel);
   will-change: transform;
   overflow: hidden;
@@ -753,7 +776,7 @@ body {
   max-width: min(60vw, 640px);
   max-height: 6em;
   overflow: auto;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   white-space: pre-wrap;
   color: var(--cont-fg);
@@ -775,11 +798,8 @@ body {
  * （status-info/warn/error，见 cmd/ui_theme.go），底色用 editorWidget.background
  * （panel-bg）、阴影用 widget.shadow、文字用 foreground，全部是令牌，本文件里没有颜色字面量
  */
-#bell {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
+/* 图标与徽标之间的间距。居中不再写在这里：.btn 已经统一做了 flex 居中 */
+#bell { gap: var(--sp-1); }
 /* 未读数为 0 时徽标靠 hidden 属性收起，但 .badge 自己声明了 display: inline-flex，
    作者样式一定压过浏览器默认表里的 [hidden]，不写这条的话铃铛上会一直挂着一个空徽标
    （实测就是这样：徽标里没有数字，却有一圈底色） */
@@ -974,24 +994,24 @@ kbd {
   /* 上方留白交给第一个子元素的上边距，而不是容器自己的上内边距：
      滚动容器会在这个内边距条里画出已经滚上去的正文，而粘性标题贴在内容盒上沿，
      于是标题上方会露出一条别的行。上内边距为零之后，两者上沿重合，缝就没了 */
-  padding: 0 12px 24px;
+  padding: 0 var(--sp-4) var(--sp-6);
 }
-#diff-body > :first-child { margin-top: 12px; }
+#diff-body > :first-child { margin-top: var(--sp-4); }
 
 #diff-body h2 {
-  margin: 0 0 6px;
-  font-size: 12px;
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-dim);
 }
 #diff-body .diff-note {
-  margin: 0 0 6px;
-  font-size: 12px;
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-sm);
   color: var(--cont-fg);
 }
 /* 段与段之间留白；提示在前、分段在后，所以两种相邻都要考虑 */
 #diff-body section + section,
-#diff-body .diff-note + section { margin-top: 16px; }
+#diff-body .diff-note + section { margin-top: var(--sp-5); }
 
 /*
  * 整仓 diff 里的一个文件。标题贴在滚动容器顶部（sticky），好让人滚到一个文件的中段时
@@ -1014,15 +1034,15 @@ kbd {
   z-index: 1;
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--sp-2);
   margin: 0;
-  padding: 4px 6px;
-  font-size: 12px;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-sm);
   font-weight: 600;
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-bottom: 0;
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 /* 长路径允许在任意位置断开：否则它会把右侧的增删行数挤出可视区 */
 .diff-file-path { overflow-wrap: anywhere; }
@@ -1042,7 +1062,7 @@ kbd {
   flex: 0 0 auto;
   margin-left: auto;
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   font-weight: 400;
   font-family: var(--font-mono);
 }
@@ -1051,7 +1071,7 @@ kbd {
 /* 标题与正文连成一张卡：标题带边框，正文只留左右下三边 */
 .diff-file-head + pre.diff {
   border-top: 0;
-  border-radius: 0 0 4px 4px;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
 
 /*
@@ -1060,9 +1080,9 @@ kbd {
  */
 pre.diff {
   margin: 0;
-  padding: 6px 0;
+  padding: var(--sp-2) 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   /* 长行折行显示，不做横向滚动（早先是 white-space: pre + overflow-x: auto，已改）：
      这一层本身就叠在一个横向滚动的看板之上，这里再套一个横向滚动条，会让“这一行到底
@@ -1073,7 +1093,7 @@ pre.diff {
   overflow-wrap: anywhere;
   background: var(--card-bg);
   border: 1px solid var(--card-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 /*
@@ -1155,7 +1175,7 @@ pre.diff .meta { color: var(--text-dim); }
   flex: none;
   display: flex;
   gap: 2px;
-  margin-left: 4px;
+  margin-left: var(--sp-1);
 }
 .act {
   visibility: hidden;
@@ -1165,8 +1185,12 @@ pre.diff .meta { color: var(--text-dim); }
   font: inherit;
   line-height: 1;
   padding: 0 3px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
+  /* 与 .btn 同一套时长：hover 与离开始终是硬切换的话，鼠标扫过一行按钮像在闪 */
+  transition:
+    background-color var(--dur-fast) ease,
+    color var(--dur-fast) ease;
 }
 .row:hover .act { visibility: visible; }
 /* 分组行头上的整组动作常亮：它们不是“鼠标移到这一行才出现”的行内动作，而是这一组的常设入口 */
@@ -1183,8 +1207,8 @@ pre.diff .meta { color: var(--text-dim); }
    而 textContent = '' 正好清空子节点） */
 #diff-op {
   margin: 0;
-  padding: 6px 12px;
-  font-size: 12px;
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-sm);
   line-height: 1.5;
   /* git 的输出是多行的（commit 摘要、push 进度），原样换行显示 */
   white-space: pre-wrap;
@@ -1349,6 +1373,10 @@ pre.diff .meta { color: var(--text-dim); }
   font-size: var(--fs-md);
   line-height: 1;
   cursor: pointer;
+  /* 与 .btn 同一套时长，理由见 .act */
+  transition:
+    background-color var(--dur-fast) ease,
+    color var(--dur-fast) ease;
 }
 .icon-btn:hover {
   background: var(--toolbar-hover-bg, var(--hover-bg));
