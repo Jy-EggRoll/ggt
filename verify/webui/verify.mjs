@@ -289,7 +289,7 @@ await report.acrossViewports(async (preset) => {
 
     // ——— 从提交卡看某次提交的改动 ———
 
-    // openCommitRow 打开第 i 个仓库的图，点第 j 行提交把详情卡钉住（点一下即钉住，
+    // openCommitRow 打开第 i 个仓库的图，点第 j 行提交把详情卡固定（点一下即固定，
     // 所以窄屏上也能走这条路；行尾是卡片的落点，点行首免得被卡片挡住）
     const openCommitRow = async (repoRow, commitRow) => {
       await closeAllOverlays()

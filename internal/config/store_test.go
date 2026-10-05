@@ -500,7 +500,7 @@ func TestSettingMetadataIsComplete(t *testing.T) {
 			}
 			seen[o.Value] = true
 
-			// 候选必须能通过自己的 Parse：这正是“页面能选、命令行却拒收”那道漂移的拦路测试
+			// 候选必须能通过自己的 Parse：这正是“页面能选、命令行却拒收”那道对不上的拦路测试
 			if s.Parse == nil {
 				continue
 			}

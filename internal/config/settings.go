@@ -1,7 +1,7 @@
 // settings.go 定义 ggt 配置项的注册表。
 //
 // get / set / reset / validate 四个操作共用这一份声明，避免四处各写一套
-// “这个键叫什么、什么类型、默认值是多少、什么算合法”——那种重复迟早会漂移成
+// “这个键叫什么、什么类型、默认值是多少、什么算合法”——那种重复迟早会变成
 // “set 能写进去、validate 说它非法”这类自相矛盾。
 //
 // 新增配置项时：在这里加一条，并在 Config 结构体上加同名的 json tag。
@@ -317,7 +317,7 @@ func parseBool(s string) (any, error) {
 //
 // 下界做成参数而不是固定为 1，是因为有的项 0 是合法取值：通知自动消失的时长用 0 表示
 // “不自动消失”，而分桶阈值必须为正，传 1 即可——两种语义共用一处实现，
-// 解析器与各项自己的 Min/Max 才不会各写一份、各自漂移
+// 解析器与各项自己的 Min/Max 才不会各写一份、各自对不上
 func parseIntInRange(min, max int) func(string) (any, error) {
 	return func(s string) (any, error) {
 		n, err := strconv.Atoi(strings.TrimSpace(s))
@@ -336,8 +336,8 @@ func parsePositiveInt(max int) func(string) (any, error) {
 // enumParser 由候选清单生成解析器：取值必须命中清单（大小写不敏感），
 // 写进文件的永远是清单里的规范形态
 //
-// 用生成而不是各写一个 switch：合法取值在 switch 与候选清单里各留一份，两处迟早漂移，
-// 而漂移的表现正是“页面上能选、命令行却拒收”这种自相矛盾
+// 用生成而不是各写一个 switch：合法取值在 switch 与候选清单里各留一份，两处迟早会对不上，
+// 而对不上的表现正是“页面上能选、命令行却拒收”这种自相矛盾
 func enumParser(options func() []Option) func(string) (any, error) {
 	return func(s string) (any, error) {
 		v := strings.TrimSpace(s)
@@ -383,7 +383,7 @@ func languageOptions() []Option {
 //
 // 合法取值的真相在 eggokit/logger（parseLogLevel 把判定直接交给它），而它没有导出级别清单，
 // 因此这里手写一份，由 TestSettingMetadataIsComplete 断言“清单里每个值都能被 Parse 接受”
-// 来防漂移——为拿到清单去改依赖库，代价比一条测试大得多
+// 来防这种对不上——为拿到清单去改依赖库，代价比一条测试大得多
 func logLevelOptions() []Option {
 	return []Option{{Value: "debug"}, {Value: "info"}, {Value: "warn"}, {Value: "error"}}
 }
@@ -439,7 +439,7 @@ func parseTheme(s string) (any, error) {
 // parseLogLevel 解析诊断日志级别。
 //
 // 合法取值的唯一真相刻意放在 eggokit/logger：这里复用它同时供“校验”与“运行期解析”用。
-// 若在注册表里另立一套判定，两处迟早漂移成“set 说能写进去、运行期却回退默认级别”，
+// 若在注册表里另立一套判定，两处迟早会对不上，表现为“set 说能写进去、运行期却回退默认级别”，
 // 而那种矛盾没有任何测试能提前拦住。
 //
 // 写入时归一化为小写规范形态：logger 的解析大小写不敏感，允许用户写 WARN，

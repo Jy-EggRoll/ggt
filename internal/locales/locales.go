@@ -5,7 +5,7 @@
 //
 // 文案分两层来源：本包 embed 的 *.json 只覆盖 ggt 自己的文案，随 eggokit 发布的
 // 库文案（自升级、分级日志）通过 ExtraLayers 叠加进来，因此这里**不该**再收录库的消息——
-// 收了就会随库升级而漂移，改了英文原文两边就对不上
+// 收了就会随库升级而变化，改了英文原文两边就对不上
 //
 // 本包的另一个用途是给 tools 侧当参数来源：Taskfile 里的 l10n 任务需要用同一份
 // 语言列表去扫描与校验，改动这里时要同步 Taskfile 的 --src/--dir 参数。
@@ -58,7 +58,7 @@ var displayNames = map[string]string{
 // DisplayName 返回语言标签的显示名，缺项时退回标签本身。
 //
 // 为什么把这张表放在 Supported 旁边，而不是让调用方（配置项注册表）自己写一份：
-// 那张表的键必须与 Supported 完全对应，两者分处不同文件时，漂移表现为“页面上少了一个
+// 那张表的键必须与 Supported 完全对应，两者分处不同文件时，对不上的表现是“页面上少了一个
 // 语言选项”且没有任何编译错误；放在同一个文件里，改语言列表的人一眼能看见它要一起改
 func DisplayName(tag string) string {
 	if name, ok := displayNames[tag]; ok {

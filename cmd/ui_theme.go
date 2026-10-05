@@ -36,7 +36,7 @@ var cssVarNames = map[string]string{
 	// button.background 是 #df8e1d。早期版本把 badge.background 当按钮底色的唯一样子、
 	// 文字又沿用 --text，于是“深灰字压重蓝底”只在个别主题上出现（2026 Light 的
 	// badge.background 恰好是重蓝 #0069CC，而它的 --text 是 #202020），排查时很难联想到
-	// 是令牌职责混用。拆开之后按钮的底色与前景来自同一组令牌，不会再各自漂移
+	// 是令牌职责混用。拆开之后按钮的底色与前景来自同一组令牌，不会再各自对不上
 	"button.background":               "btn-bg",
 	"button.foreground":               "btn-fg",
 	"button.hoverBackground":          "btn-hover-bg",

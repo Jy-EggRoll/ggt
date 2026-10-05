@@ -104,7 +104,7 @@ func buildSeparator(width int) string {
 }
 
 // RepoName 返回青色包裹的仓库名前缀 "[name]"，全仓统一仓库名着色。
-// 此前 status 用 FgYellow、size/summary/remote 用 FgCyan，同一语义三色并存，现收敛于此。
+// 此前 status 用 FgYellow、size/summary/remote 用 FgCyan，同一语义三色并存，现已统一到这里。
 func RepoName(name string) string {
 	return pterm.FgCyan.Sprintf("[%s]", name)
 }
@@ -191,7 +191,7 @@ func DoneBanner(msg string) {
 
 // PrintProtocolSwitch 打印远程协议切换结果：仓库标签 + 灰色旧协议 → 绿色新协议。
 // 仓库标签统一经 RepoLabel 着色，子模块自动带 [子] 前缀。
-// 此前 remote 直接内联 FgRed/FgGreen，现已收敛到统一封装。
+// 此前 remote 直接内联 FgRed/FgGreen，现已统一到一处封装。
 func PrintProtocolSwitch(name string, isSubmodule bool, oldProto, newProto string) {
 	pterm.Success.Printfln("%s %s → %s", RepoLabel(name, isSubmodule), Muted(oldProto), pterm.FgGreen.Sprint(newProto))
 }

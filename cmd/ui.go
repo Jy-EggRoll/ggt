@@ -106,7 +106,7 @@ type uiRepo struct {
 	// Error 非空表示这次采集失败，页面显示为异常状态而不是“干净”
 	Error string `json:"error,omitempty"`
 	// Group 是排序分组，由服务端算好，页面只按数组顺序渲染，不再自己排序——
-	// 排序规则只有一处实现，避免前后端各有一套而漂移
+	// 排序规则只有一处实现，避免前后端各有一套而慢慢对不上
 	Group int `json:"group"`
 }
 
@@ -466,7 +466,7 @@ func findCommitFile(files []git.CommitFile, path string) (git.CommitFile, bool) 
 //   - --diff-merges=first-parent 是为了合并提交：git 默认对合并提交用组合格式，那种格式
 //     一列里同时写“与父提交甲、父提交乙分别差什么”，页面认不出（它按行首单个 +/- 着色），
 //     读的人也分不清哪一行属于哪一次比较。统一成“相对第一个父提交”，页面上再注明这一点
-//   - --find-renames 与 --unified=3 是钉住取值：别让用户配置里的 diff.renames / diff.context
+//   - --find-renames 与 --unified=3 是固定取值：别让用户配置里的 diff.renames / diff.context
 //     改变页面上的显示（改名会被当成“删一个加一个”，上下文行数也会变得五花八门）
 func commitDiffText(ctx context.Context, repoPath, hash string, paths []string) (string, bool, error) {
 	args := []string{
@@ -617,7 +617,7 @@ func findUIFile(r *uiRepo, path string) (uiFile, bool) {
 //
 // 为什么要带状态码：同一份路径校验被读（/api/diff）与写（暂存、取消暂存）两条路径共用，
 // 而两条路径的失败码不同——读是 400/404，写更贴近 409。让校验处决定状态码、
-// 调用处只管回响应，就不会出现两处各自发挥、慢慢漂移的情况
+// 调用处只管回响应，就不会出现两处各自发挥、慢慢对不上的情况
 type uiParamError struct {
 	status int
 	msg    string
@@ -729,8 +729,8 @@ type uiWriteResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// handleWrite 是所有写操作的公共骨架：方法校验 -> 取仓库 -> 跑具体动作 -> 失效快照 -> 回响应。
-// 各端点只负责“跑哪条 git 命令”，路径校验与响应形状都收敛在这里
+// handleWrite 是所有写操作的公共流程：方法校验 -> 取仓库 -> 跑具体动作 -> 失效快照 -> 回响应。
+// 各端点只负责“跑哪条 git 命令”，路径校验与响应形状都统一在这里
 func (c *uiCache) handleWrite(w http.ResponseWriter, r *http.Request, run func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error)) {
 	// 只认 POST：写操作挂在 GET 上会被基座的同源校验直接放过，那正是 CSRF 想利用的形状
 	if r.Method != http.MethodPost {
@@ -927,7 +927,7 @@ func (c *uiCache) handleSync(w http.ResponseWriter, r *http.Request) {
 // 并发跑：与 ggt sync 共用 worker.Map 与同一个并发度设置。串行做几十个远程仓库要等到
 // 地老天荒，并发下总耗时约等于最慢的那一个
 //
-// 不复用 handleWrite 那套骨架：那个是“针对某一个仓库、且仓库必填”的（要从请求里取 repo、
+// 不复用 handleWrite 那套流程：那个是“针对某一个仓库、且仓库必填”的（要从请求里取 repo、
 // 校验文件），而这里允许对全部仓库跑，生搬硬套会让它多出一个“仓库为空即全部”的隐式约定
 func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

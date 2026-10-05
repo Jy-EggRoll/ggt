@@ -306,7 +306,7 @@ func TestRemoteURLRoundTrip(t *testing.T) {
 				t.Fatalf("二次切换回解析失败: %v", err)
 			}
 			if *back != *base {
-				t.Errorf("二次往返信息漂移: 原始 %+v, 二次往返 %+v", *base, *back)
+				t.Errorf("二次往返后信息变了: 原始 %+v, 二次往返 %+v", *base, *back)
 			}
 
 			// 协议判定要与构建出的形态自洽：这是 doSwitchRemote 判“已一致、无需切换”的依据，

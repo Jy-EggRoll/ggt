@@ -238,7 +238,7 @@ func jsonKeys(m map[string]json.RawMessage) []string {
 //
 // 注册表是包级变量，在 l10n.Init 之前就构造好了，里面存下的只是英文源串；视图层必须
 // 现查一次语言（Retranslate）。漏掉这一步的表现是“英文界面正常、中文界面上配置项名字
-// 却全是英文”，而这种中英混排只有人看得出来，因此在这里钉住。
+// 却全是英文”，而这种中英混排只有人看得出来，因此在这里固定下来。
 // 顺带覆盖报错里那句取值说明：它与视图里的说明同源，同样要跟着语言走
 func TestSettingsViewFollowsLanguage(t *testing.T) {
 	if err := l10n.Init("zh-CN", locales.Options()); err != nil {

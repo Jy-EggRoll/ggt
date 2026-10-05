@@ -264,7 +264,7 @@ const graphFetchEl = document.getElementById('graph-fetch');
 const graphSyncEl = document.getElementById('graph-sync');
 const graphPushEl = document.getElementById('graph-push');
 const graphDiffEl = document.getElementById('graph-diff');
-// 提交详情卡（悬浮即显，点一下钉住）
+// 提交详情卡（悬浮即显，点一下固定）
 const graphPopupEl = document.getElementById('graph-popup');
 const boardOpEl = document.getElementById('op');
 // 通知：右下角的堆叠区、底栏的铃铛与未读徽标、以及铃铛点开的历史面板
@@ -277,7 +277,7 @@ const notifClearAllEl = document.getElementById('notif-clear-all');
 const notifListEl = document.getElementById('notif-list');
 const notifEmptyEl = document.getElementById('notif-empty');
 
-// 返回按钮的文字在 JS 里填：它要跟随语言，而 index.html 是静态骨架、不参与翻译
+// 返回按钮的文字在 JS 里填：它要跟随语言，而 index.html 是静态结构、不参与翻译
 diffBackEl.textContent = '← ' + t('back');
 graphBackEl.textContent = '← ' + t('back');
 fetchBtnEl.textContent = t('fetch');
@@ -301,7 +301,7 @@ let lastRepos = [];
 let pollTimer = null;
 
 // cssVar 读取样式表里的长度变量并转成数字。
-// 布局参数只在一处定义（style.css 的 :root），JS 从这里读，避免两边各写一份数字后漂移
+// 布局参数只在一处定义（style.css 的 :root），JS 从这里读，避免两边各写一份数字后对不上
 function cssVar(name, fallback) {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name);
   const n = parseFloat(raw);
@@ -752,7 +752,7 @@ function layout(els, specs) {
   const contH = cssVar('--cont-h', 22);
   // 列高 = 视口高 − 页面上下留白 − 底栏高度。三个数字都从 CSS 变量读（cssVar 见上），
   // 不在这里自己写死：底栏是后加的，硬编码的话它一出现就会压住最下面一行卡片，
-  // 而“JS 里一份、CSS 里一份”的数字迟早会漂移
+  // 而“JS 里一份、CSS 里一份”的数字迟早会对不上
   // 视口高走 viewportSize 而不是 window.innerHeight：内容溢出时后者会被撑大，而看板的高度又是
   // 按它算出来写回元素的，那正是“看板把自己撑高”的循环（见 viewportSize 的注释）
   const colH = viewportSize().h - cssVar('--page-pad', 16) * 2 - cssVar('--statusbar-h', 30);
@@ -1926,7 +1926,7 @@ function closeSettings() {
   settingsFocusReturn = null;
 }
 
-// 面板里的固定文案与三个入口在加载时接好：文案要跟随语言，而 index.html 是静态骨架、不参与翻译
+// 面板里的固定文案与三个入口在加载时接好：文案要跟随语言，而 index.html 是静态结构、不参与翻译
 settingsTitleEl.textContent = t('settings');
 settingsBackEl.textContent = '← ' + t('back');
 settingsBtnEl.setAttribute('aria-label', t('settings'));
@@ -2011,7 +2011,7 @@ document.addEventListener('keydown', (e) => {
     closeDiff();
     return;
   }
-  // 钉住的提交详情先收，再收卡片：一层一层退，顺序与打开时相反
+  // 固定的提交详情先收，再收卡片：一层一层退，顺序与打开时相反
   if (cardPinned) {
     hideCommitCard(true);
     return;
@@ -2214,7 +2214,7 @@ let graphLimit = 0; // 已请求的条数；滚到底翻倍
 let graphMaxLimit = 2000;
 let graphAllRefs = true; // 默认跨全部分支与 tag
 let cardSeq = 0; // 作废过期响应（卡片被关掉、或换了仓库时）
-let cardSelected = ''; // 当前钉住详情的那条提交
+let cardSelected = ''; // 当前固定详情的那条提交
 
 // graphColor 把接口给的变量名包成 var(...)。变量名为空（主题没写那个令牌、也没默认值）时
 // 用回退色，而不是留一个空的 stroke——那会让线整条消失
@@ -2445,7 +2445,7 @@ function shortHash(hash) {
 function openCommitDiff(item, file) {
   if (!cardSpec) return;
   // 先收起提示卡：它停在所有浮层之上（提示类的东西不能盖在别的浮层底下），
-  // 不收起就会正好压住 diff 正文。被钉住的那条提交仍是选中态，退回图上看得见
+  // 不收起就会正好压住 diff 正文。被固定的那条提交仍是选中态，退回图上看得见
   hideCommitCard(true);
   openDiff({
     repo: cardSpec.repo,
@@ -2673,13 +2673,13 @@ graphAllRefsEl.addEventListener('change', () => {
   loadGraph(false);
 });
 
-/* ——— 提交详情卡：悬浮即显 + 点击钉住 ———
+/* ——— 提交详情卡：悬浮即显 + 点击固定 ———
  *
  * 为什么不做成侧栏常驻面板：泳道图占满整个卡片宽度才看得清分叉与合并，侧栏会一直占去一块宽度。
  * 但“只能靠悬浮”也不行——键盘用户根本触发不了 hover，而“点什么就出什么”是这次的要求。
  * 因此做成两级：
  *   - 鼠标移过某一行：立刻贴着光标弹出（元信息来自内存，文件清单异步补上并缓存）
- *   - 点一下（或按上下键 / 回车）：钉住，不再随鼠标移开消失，Esc 或点别处才收
+ *   - 点一下（或按上下键 / 回车）：固定，不再随鼠标移开消失，Esc 或点别处才收
  */
 const commitCardCache = new Map(); // 提交哈希 -> 文件清单：同一个提交反复划过时不重复请求
 let hoverSeq = 0;
@@ -2705,7 +2705,7 @@ function commitCardPosition(x, y) {
   let top = y + 14;
   if (left + box.width > vp.w - 8) left = x - box.width - 14;
   if (top + box.height > vp.h - 8) top = y - box.height - 14;
-  // 翻转只把卡片挪到锚点的另一侧，救不了“锚点本身就在视口外”这种情形：点击与键盘钉住都走
+  // 翻转只把卡片挪到锚点的另一侧，救不了“锚点本身就在视口外”这种情形：点击与键盘固定都走
   // pinCommitCard，锚点取自行尾（row.right − 40），而泳道图在窄屏下比视口宽（实测 390 的视口里
   // #graph-list 就有 986），行尾连同锚点都在屏幕外——实测卡片因此被摆到 x=795，连右上角那个
   // 关闭按钮都点不到。所以最后再夹一次：宁可叠在行上，也不能把这张卡唯一的可见出口挪出屏幕
@@ -2757,7 +2757,7 @@ function showCommitCard(vm, x, y, pinned) {
     });
 }
 
-// pinCommitCard 把某条提交钉住。键盘路径没有光标，因此贴着那一行定位
+// pinCommitCard 把某条提交固定住。键盘路径没有光标，因此贴着那一行定位
 function pinCommitCard(vm, row) {
   cardSelected = vm.item.hash;
   for (const r of graphListEl.children) {
@@ -2769,8 +2769,8 @@ function pinCommitCard(vm, row) {
 
 // renderCommitCard 画详情卡。files 为 null 时只画元信息与提交信息（文件清单随后补）
 //
-// pinned 为真时在顶部画一个关闭按钮：钉住之后卡片不再随鼠标移开而消失，若没有可见的出口，
-// 用户只能靠猜（Esc，或去点别的提交）才能把它收起来。按钮因此只在钉住态出现——悬浮预览态
+// pinned 为真时在顶部画一个关闭按钮：固定之后卡片不再随鼠标移开而消失，若没有可见的出口，
+// 用户只能靠猜（Esc，或去点别的提交）才能把它收起来。按钮因此只在固定态出现——悬浮预览态
 // 本来就跟着鼠标走，再放一个 × 反而是噪音。
 // 之所以放在这个函数里而不是 showCommitCard 里 append：文件清单是异步补上的，补上时会整卡
 // 重画一次（replaceChildren），按钮若在函数外挂就得在两处各挂一次，迟早漏掉一处
@@ -2888,7 +2888,7 @@ graphPopupEl.addEventListener('mouseleave', () => {
   hoverCardTimer = setTimeout(() => hideCommitCard(false), 120);
 });
 
-// 点一下即钉住：这条路径不依赖悬浮，鼠标停在别处也能把详情留在屏幕上
+// 点一下即固定：这条路径不依赖悬浮，鼠标停在别处也能把详情留在屏幕上
 graphListEl.addEventListener('click', (e) => {
   const row = e.target.closest('.g-row');
   if (!row) return;
@@ -2896,7 +2896,7 @@ graphListEl.addEventListener('click', (e) => {
   if (vm) pinCommitCard(vm, row);
 });
 
-// 键盘：上下键在提交之间移动并钉住详情，回车同样钉住当前这条。
+// 键盘：上下键在提交之间移动并固定详情，回车同样固定当前这条。
 // 没有这条路的话，键盘用户永远看不到提交详情
 graphListEl.addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;

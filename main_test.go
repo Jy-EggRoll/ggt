@@ -14,7 +14,7 @@
 // 损坏的配置文件是否会让命令直接崩、写入的键是不是真的落盘到了隔离 HOME 下。
 // 这些只有把编译产物当黑盒、以子进程方式驱动才能覆盖
 //
-// 骨架与姊妹项目 flk 的 main_test.go 同源（那是同类测试的成熟范本），
+// 结构与姊妹项目 flk 的 main_test.go 同源（那是同类测试的成熟范本），
 // 采用“helper 进程”模式：测试二进制自身即被测程序。TestCLIHelperProcess 在设置了
 // GGT_CLI_HELPER_PROCESS 的子进程里把命令行交给 cmd.Execute，从而每个用例都跑在
 // 一个全新的进程里——Cobra 的 flag 状态、全局 cfg、logger 与 pterm writer 都不会
@@ -188,7 +188,7 @@ func readConfigFile(t *testing.T, path string) map[string]any {
 
 // TestCLIVersionContract 验证 `ggt version` 会打印版本行，且 --lang 能切换成中文
 //
-// 断言口径与 flk 保持一致：不钉死具体措辞（版本号本身也随时会变），
+// 断言口径与 flk 保持一致：不固定具体措辞（版本号本身也随时会变），
 // 只要求英文输出含 "Version:"、zh-CN 输出含汉字，并额外要求两者不同——
 // 后者用于排除“两种语言其实是同一份输出”的假通过
 func TestCLIVersionContract(t *testing.T) {
@@ -432,7 +432,7 @@ func TestCLIRepoLifecycle(t *testing.T) {
 //
 // 两者都是“遍历型”命令（经 AllRepos 展开），是 ggt 的核心工作流。
 // 断言只要求退出码为 0 且输出里出现各仓库名——仓库名的着色前缀 [name] 是稳定的，
-// 而具体的状态行与大小会随 git 版本和仓库内容变化，钉死它们只会带来脆弱的用例
+// 而具体的状态行与大小会随 git 版本和仓库内容变化，固定它们只会带来脆弱的用例
 func TestCLIStatusAndSizeOnControlledRepos(t *testing.T) {
 	home := t.TempDir()
 	first := filepath.Join(home, "alpha-repo")

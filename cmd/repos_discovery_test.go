@@ -4,7 +4,7 @@
 //   - GetRepoList：合并配置里的 repo_paths 与 parent_paths 的扫描结果
 //
 // 为什么单独测这三个：它们位于 ggt 所有遍历型命令（status/size/sync/fetch...）的入口，
-// 而 repos_test.go 只钉死了它们内部依赖的两个纯函数（parseGitmodules / isSubmoduleInitialized）。
+// 而 repos_test.go 只固定住了它们内部依赖的两个纯函数（parseGitmodules / isSubmoduleInitialized）。
 // 剩下这三层语义——“递归时相对路径怎么拼”“展开后顺序与 IsSubmodule 标记对不对”
 // “父目录下什么才算仓库”——一旦写错，错误会静默扩散到每一条命令，且从终端输出很难看出
 // 是哪一层错的。因此这里按层补测，不重复已被覆盖的纯函数。
@@ -364,7 +364,7 @@ func TestExpand(t *testing.T) {
 			// 注意：这里锁定实际行为——expand 不对顶层路径去重。
 			// 若配置中 repo_paths 与 parent_paths 扫描结果出现同一个仓库（GetRepoList 不去重），
 			// 该仓库会被展开两次，后续批量命令就会对它执行两遍。
-			// 真实影响与修复建议在测试报告中单独列出，此处只按现状钉死行为
+			// 真实影响与修复建议在测试报告中单独列出，此处只按现状固定行为
 			name: "重复的顶层路径会各自展开产生重复条目（不去重）",
 			setup: func(t *testing.T, root string) ([]string, []RepoEntry) {
 				alpha := filepath.Join(root, "alpha")
@@ -392,7 +392,7 @@ func TestExpand(t *testing.T) {
 	}
 
 	// expand 只读顶层列表，不应就地修改调用方传入的切片
-	// 这一点值得单独钉住：调用方（AllRepos 等）之后可能还要复用同一个列表，
+	// 这一点值得单独固定下来：调用方（AllRepos 等）之后可能还要复用同一个列表，
 	// 若 expand 往里追加子模块路径，配置层的数据就被悄悄污染了
 	t.Run("不修改调用方传入的顶层路径切片", func(t *testing.T) {
 		withConfig(t, &config.Config{Concurrency: "2"})
