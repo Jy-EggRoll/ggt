@@ -119,6 +119,15 @@ tasks:
         fi
         actionlint .github/workflows/*.yml
 
+  # verify:webui 用真实浏览器跑一遍网页看板，四档视口各一遍，每条断言自动截图。
+  # 同样刻意不挂进 verify/default：它需要 Playwright 与本机 Chromium（缺了不该让日常 task 失败），
+  # 而且要现造临时仓库、起一个隔离的服务实例，比单测慢得多。前端接缝改动后按需跑一次
+  # 用法与产出的截图清单见 verify/webui/run.sh 的头部注释
+  verify:webui:
+    desc: 用真实浏览器验收网页看板（四档视口，需要 Playwright 与本机 Chromium）
+    cmds:
+      - bash verify/webui/run.sh
+
   # build-all 不再逐个平台列 build:* 任务，而是交给 eggokit 的 buildall 按 release.json 构建，
   # 平台清单从此只有一处真源，增删平台只改清单即可。这消除了旧实现里"Taskfile 列了平台、
   # 升级器的 supportedPlatforms 又列一份"的漂移风险（两者一致性由 cmd 包里的测试把关）

@@ -386,6 +386,12 @@ ggt 将子模块统一抽象为与普通仓库平级的条目，任何功能都�
 - 默认包含子模块；将配置 `ignore_submodules` 设为 `true` 可在所有功能中忽略它们
 - `remote` 的 `toggle` / `https` / `ssh` 以及 `--all` 都会辐射到子模块，并计入统计数量
 
+## 开发与验证
+
+- `task`：完整门禁——整理依赖、格式化检查、静态检查、语言文件校验、单元测试、竞态检测与全平台编译。发布前必须全绿
+- `task verify:webui`：用真实浏览器验收网页看板，桌面与大屏、平板、手机四档视口各跑一遍，每条断言自动截图并写成清单。它需要 Playwright 与本机 Chromium，因此不挂在 `task` 里；改过 `cmd/ui` 下的页面资产或相关接口后按需跑一次
+- 验收用的临时仓库与配置由 `verify/webui/setup.sh` 现造，被测服务以临时 `HOME` 启动，不会碰你本机的 `~/.config/go-git-ggt`
+
 ## 参考信源
 
 - [Cobra](https://github.com/spf13/cobra)
