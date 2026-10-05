@@ -14,7 +14,7 @@ func mustParse(t *testing.T, s string) rgba {
 	return c
 }
 
-// hueDiff 返回两个色相之间的最小夹角（0-180），用于判断"色系有没有变"
+// hueDiff 返回两个色相之间的最小夹角（0-180），用于判断“色系有没有变”
 func hueDiff(a, b rgba) float64 {
 	ha, _, _ := toHSL(a)
 	hb, _, _ := toHSL(b)
@@ -42,7 +42,7 @@ func TestContrastKnownValues(t *testing.T) {
 // TestLatteButtonPairIsUnreadable 记录一个事实：Catppuccin Latte 自带的按钮那一对读不出来。
 //
 // 取值直接来自内置主题文件（button.foreground #dce0e8 / button.background #df8e1d），
-// 这条断言同时是"为什么需要对比度兜底"的证据——把它删掉，兜底组件就没人记得为什么存在了
+// 这条断言同时是“为什么需要对比度回退”的证据——把它删掉，回退组件就没人记得为什么存在了
 func TestLatteButtonPairIsUnreadable(t *testing.T) {
 	got := Contrast("#dce0e8", "#df8e1d")
 	if got >= MinContrast {
@@ -75,7 +75,7 @@ func TestEnsureContrastAdjustsForegroundOnly(t *testing.T) {
 	}
 }
 
-// TestEnsureContrastKeepsReadablePairs 已经达标的一律不动：不能因为"能调"就把所有主题都调一遍
+// TestEnsureContrastKeepsReadablePairs 已经达标的一律不动：不能因为“能调”就把所有主题都调一遍
 func TestEnsureContrastKeepsReadablePairs(t *testing.T) {
 	out, changed := EnsureContrast("#ffffff", []string{"#0069cc"}, MinContrast)
 	if changed || out != "#ffffff" {
@@ -83,7 +83,7 @@ func TestEnsureContrastKeepsReadablePairs(t *testing.T) {
 	}
 }
 
-// TestEnsureContrastMultiBackgrounds 多个底色时按"最差的那一对"判定：
+// TestEnsureContrastMultiBackgrounds 多个底色时按“最差的那一对”判定：
 // 按钮前景既要压在常态底色上、也要压在 hover 底色上，只满足其中一个不算达标。
 //
 // 用例取真实形状：VSCode 的 button.hoverBackground 由 button.background 派生，两者明暗同族，
@@ -102,9 +102,9 @@ func TestEnsureContrastMultiBackgrounds(t *testing.T) {
 }
 
 // TestEnsureContrastContradictoryBackgrounds 底色一亮一暗时不存在能同时满足两者的前景色——
-// 这时交出"最差那一对能做到的最好一档"，并如实报告动过。
+// 这时交出“最差那一对能做到的最好一档”，并如实报告动过。
 //
-// 把边界写清楚的意义在于约束调用方：只能把"真的会同时出现"的前景/底色配对进来
+// 把边界写清楚的意义在于约束调用方：只能把“真的会同时出现”的前景/底色配对进来
 // （本项目的做法见 cmd/ui_theme.go 的 contrastPairs，按钮只配它自己的常态与 hover 底色）
 func TestEnsureContrastContradictoryBackgrounds(t *testing.T) {
 	bgs := []string{"#1e1e1e", "#df8e1d"}

@@ -23,13 +23,13 @@ type SettingView struct {
 	Kind  Kind   `json:"kind"`
 	// Value 是当前生效值（文件里有就用文件里的，否则用内置默认值）
 	Value string `json:"value"`
-	// Default 是内置默认值的文本形态，面板据此提供"恢复默认"
+	// Default 是内置默认值的文本形态，面板据此提供“恢复默认”
 	Default string `json:"default"`
 	// Expected 是合法取值的人类可读描述，与命令行的报错同源
 	Expected string `json:"expected"`
 	// Options 是候选取值。空数组表示自由输入，页面据此渲染成普通输入框
 	Options []Option `json:"options"`
-	// AllowCustom 为真时候选之外还接受别的写法，页面渲染成"输入框 + 候选"
+	// AllowCustom 为真时候选之外还接受别的写法，页面渲染成“输入框 + 候选”
 	AllowCustom bool `json:"allowCustom"`
 	// Min / Max 是整数输入的边界，指针为空表示这一侧不设限
 	Min *int `json:"min"`
@@ -88,7 +88,7 @@ func viewOptions(s Setting, current string) []Option {
 }
 
 // optionsOf 把候选清单取成一份新切片，空的时候给空切片而不是 nil：
-// JSON 里 nil 会编码成 null，页面要为此多写一个分支，而"没有候选"用空数组表达就够了
+// JSON 里 nil 会编码成 null，页面要为此多写一个分支，而“没有候选”用空数组表达就够了
 func optionsOf(s Setting) []Option {
 	if s.Options == nil {
 		return []Option{}
@@ -121,7 +121,7 @@ func valueTextLines(s Setting, v any) string {
 // ChoiceAllowed 判断一个文本取值是否落在候选取值之内。
 //
 // 大小写不敏感：这与各解析器的口径一致（parseConcurrency、enumParser 都忽略大小写），
-// 若这里严格而解析器宽松，就会出现"命令行存得进、页面存不进"的分叉
+// 若这里严格而解析器宽松，就会出现“命令行存得进、页面存不进”的分叉
 func ChoiceAllowed(s Setting, text string) bool {
 	if s.Options == nil || s.AllowCustom {
 		return true
@@ -142,12 +142,12 @@ func choiceIn(opts []Option, text string) bool {
 
 // SetFromTextAt 按注册表把一个文本取值写进配置文件，返回写入后的规范文本。
 //
-// 命令行与网页设置面板共用这一条实现：两处各写一遍校验，迟早分叉成"页面能存、命令行存不进"
+// 命令行与网页设置面板共用这一条实现：两处各写一遍校验，迟早分叉成“页面能存、命令行存不进”
 // 这类自相矛盾（旧的 /api/theme 就是这么长出来的——它自己实现了一套主题校验）
 //
 // strict 为真时额外要求取值落在候选之内，网页设置面板用严格模式：它的控件只会给出候选，
 // 收到候选之外的取值说明请求不是页面发出来的。命令行用宽松模式——写一个自定义主题文件的
-// 路径是合法用法，候选只是"能直接点的那几个"
+// 路径是合法用法，候选只是“能直接点的那几个”
 //
 // 取值的边界（Min/Max）刻意不在这里判：每个配置项的 Parse 已经把自己那套边界写死了
 // （parsePositiveInt 之类），在这里再判一遍就有了两个真相源。测试断言"边界外一号的值
@@ -181,7 +181,7 @@ func SetFromTextAt(path, key, text string, strict bool) (string, error) {
 	return ValueText(parsed), nil
 }
 
-// NotWritableError 返回"这一项由别的命令管理、不能在这里改"的错误，可以改时返回 nil。
+// NotWritableError 返回“这一项由别的命令管理、不能在这里改”的错误，可以改时返回 nil。
 //
 // 命令行、网页设置面板、恢复默认三条路径都从这里取同一条文案：同一件事有三种说法时，
 // 用户会以为是三种不同的限制

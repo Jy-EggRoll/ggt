@@ -110,9 +110,9 @@ func TestLoadLanguage(t *testing.T) {
 	}
 }
 
-// assertDefaults 断言一份配置处于"全默认"状态。
+// assertDefaults 断言一份配置处于“全默认”状态。
 // 用 DeepEqual 与 defaultConfig() 对比，而不是逐字段列举：后者每加一个字段都要改一遍，
-// 漏改时这条测试反而会给出"通过"的假信号。
+// 漏改时这条测试反而会给出“通过”的假信号。
 func assertDefaults(t *testing.T, cfg *Config) {
 	t.Helper()
 	want := defaultConfig()
@@ -124,7 +124,7 @@ func assertDefaults(t *testing.T, cfg *Config) {
 // TestDefaultConfigMatchesSettings 断言结构体形态的默认值与 settings 注册表登记的
 // 默认值完全一致。
 //
-// 这是"默认值只有一处真相"的守门测试：applyConfigDefaults 一度把 500/800/"decimal"/
+// 这是“默认值只有一处真相”的守门测试：applyConfigDefaults 一度把 500/800/"decimal"/
 // "en" 又抄了一遍，两处一旦分叉，ggt config get（走 settings）与 ggt config show
 // （走 applyConfigDefaults）就会各说各话，而当时没有任何测试能发现。
 func TestDefaultConfigMatchesSettings(t *testing.T) {
@@ -263,10 +263,10 @@ func TestLoadConfigAt(t *testing.T) {
 			t.Errorf("空语言应回落默认，实得 %q", cfg.Language)
 		}
 		// size_unit 刻意**不**在加载期替换：非法取值由 ggt config validate 报出、
-		// 由 size 命令在消费端回退到 decimal 并打印警告。若在加载期就悄悄改成 decimal，
+		// 由 size 命令在使用端回退到 decimal 并打印警告。若在加载期就悄悄改成 decimal，
 		// 那句警告永远不会触发，用户的笔误也就永远看不见
 		if cfg.SizeUnit != "bogus" {
-			t.Errorf("size_unit 应原样保留、交给 validate 与消费端处理，实得 %q", cfg.SizeUnit)
+			t.Errorf("size_unit 应原样保留、交给 validate 与使用端处理，实得 %q", cfg.SizeUnit)
 		}
 	})
 

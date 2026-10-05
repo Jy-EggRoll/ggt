@@ -24,7 +24,7 @@ func TestSetFromTextAtWrites(t *testing.T) {
 	path := newViewConfigPath(t)
 
 	// 大小写不敏感只是输入方便，落盘必须是规范形态：文件里出现 BINARY 这种同义异形，
-	// 会让"体检"与"取值比较"两处都要考虑大小写
+	// 会让“体检”与“取值比较”两处都要考虑大小写
 	written, err := SetFromTextAt(path, "size_unit", "BINARY", false)
 	if err != nil {
 		t.Fatalf("写入失败：%v", err)
@@ -53,7 +53,7 @@ func TestSetFromTextAtWrites(t *testing.T) {
 		t.Errorf("未知键应返回 ErrUnknownKey，实得 %v", err)
 	}
 
-	// 受命令管理的项：报错必须说出该用哪个命令，否则用户只知道"不让改"却不知道去哪改
+	// 受命令管理的项：报错必须说出该用哪个命令，否则用户只知道“不让改”却不知道去哪改
 	_, err = SetFromTextAt(path, "repo_paths", "[]", false)
 	if err == nil || !strings.Contains(err.Error(), "ggt repo") {
 		t.Errorf("repo_paths 应由 ggt repo 管理，实得 %v", err)
@@ -177,7 +177,7 @@ func TestSettingsViewPathsAreLines(t *testing.T) {
 // 页面按 o.value / o.label 取值，字段名一旦落成 Go 的字段名（默认大写）或者拼错，
 // 页面拿到的就是 undefined——表现是下拉框里一排空白选项，而服务端这边一切正常，
 // 单测也全绿。契约横跨两种语言，只能在把字段名钉在这里。
-// 这条是踩过的：Option 原来没有 json 标签，四个字段序列化成 Value/Label/Note/Group，
+// 这条是实际遇到过的：Option 原来没有 json 标签，四个字段序列化成 Value/Label/Note/Group，
 // 页面上所有候选都是空白，是浏览器验收把它抓出来的
 func TestSettingViewJSONFieldNames(t *testing.T) {
 	b, err := json.Marshal(SettingView{
@@ -224,7 +224,7 @@ func TestSettingViewJSONFieldNames(t *testing.T) {
 	}
 }
 
-// jsonKeys 取出对象里的字段名，用于报错时说清"实际有哪些字段"
+// jsonKeys 取出对象里的字段名，用于报错时说清“实际有哪些字段”
 func jsonKeys(m map[string]json.RawMessage) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -274,7 +274,7 @@ func TestSettingsViewFollowsLanguage(t *testing.T) {
 //
 // Min/Max 只是给页面设输入框上下限的提示，真正把关的是各自的 Parse。两处不一致时，
 // 页面会允许用户填一个存不进去的值，或者反过来把合法值拦在外面——两者都没有编译错误，
-// 只有用户会撞上，因此在这里用"边界外一号必须被拒绝"把它们钉在一起
+// 只有用户会撞上，因此在这里用“边界外一号必须被拒绝”把它们钉在一起
 func TestSettingBoundsMatchParse(t *testing.T) {
 	for _, s := range Settings() {
 		if s.Kind != KindInt || s.Parse == nil {

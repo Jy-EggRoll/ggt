@@ -46,7 +46,7 @@ func TestParseNumstat(t *testing.T) {
 			t.Errorf("纯重命名不对：%+v", files[0])
 		}
 		if files[1].Path != "x.txt" || files[1].Adds != 1 || files[1].Dels != 1 {
-			t.Errorf("紧跟其后的普通记录被误消费了：%+v", files[1])
+			t.Errorf("紧跟其后的普通记录被误读了：%+v", files[1])
 		}
 	})
 

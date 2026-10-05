@@ -21,7 +21,7 @@ import (
 	"github.com/jy-eggroll/ggt/internal/git"
 )
 
-// TestDiffSectionsAlignWithNumstat 用真实仓库验"清单与分段按序对齐"这个假设。
+// TestDiffSectionsAlignWithNumstat 用真实仓库验“清单与分段按序对齐”这个假设。
 //
 // 页面是靠下标把第 i 段文本与第 i 条清单对上的（见 app.js 的 diffSections）。
 // 一旦 git 这两样东西的顺序不再一致，页面上会出现"标题写着 A 文件、内容却是 B 文件"，
@@ -50,7 +50,7 @@ func TestDiffSectionsAlignWithNumstat(t *testing.T) {
 	}
 
 	for i, sec := range sections {
-		// 改名与新增的路径在 +++ 行里写法不同，这里只核对"新路径出现在这一段里"：
+		// 改名与新增的路径在 +++ 行里写法不同，这里只核对“新路径出现在这一段里”：
 		// 段内容本身来自 git，是判断对齐与否的最小充分条件
 		if !strings.Contains(sec, files[i].Path) {
 			t.Errorf("第 %d 段里找不到清单给出的路径 %q，两边的顺序可能已经不一致", i+1, files[i].Path)
@@ -69,7 +69,7 @@ func TestDiffSectionsAlignWithNumstat(t *testing.T) {
 		}
 	}
 	if !sawBinary {
-		t.Error("夹具里的二进制文件没有出现在清单里")
+		t.Error("测试素材里的二进制文件没有出现在清单里")
 	}
 }
 
@@ -115,7 +115,7 @@ func initDiffTestRepo(t *testing.T) string {
 	write("keep.txt", "one\nTWO\nthree\n")
 	// 纯改名
 	git("mv", "renamed-src.txt", "renamed-dst.txt")
-	// 改名同时改内容：相似度低到 git 会当成"删一个、加一个"
+	// 改名同时改内容：相似度低到 git 会当成“删一个、加一个”
 	git("mv", "renamed-both.txt", "改名 之后.txt")
 	write("改名 之后.txt", "完全\n换了\n内容\n")
 	// 含空格与中文的新文件
@@ -132,7 +132,7 @@ func initDiffTestRepo(t *testing.T) string {
 // TestHandleDiffCommitMode 断言提交视图的四条路：整条提交、单个文件、不在该提交改动清单里的
 // 路径（404）、非法哈希（400）。
 //
-// 后两条不只是"输入校验"：哈希会直接进 git 的命令行，路径决定能读到仓库里的哪个文件。
+// 后两条不只是“输入校验”：哈希会直接进 git 的命令行，路径决定能读到仓库里的哪个文件。
 // 浏览器验收走的是正常路径，拒绝路径用单测钉住更省事，也才敢改这段代码
 func TestHandleDiffCommitMode(t *testing.T) {
 	// 隔离配置：快照采集读的是包级 cfg，这里直接换成只含临时仓库的那一份（同 withConfig），
@@ -180,7 +180,7 @@ func TestHandleDiffCommitMode(t *testing.T) {
 			},
 		},
 		{
-			// 这条提交里没有这个文件：既挡住路径穿越，也挡住"拿别的提交的文件名来问"
+			// 这条提交里没有这个文件：既挡住路径穿越，也挡住“拿别的提交的文件名来问”
 			name:   "不在该提交里的路径",
 			query:  url.Values{"commit": {hash}, "file": {"不存在的文件.txt"}},
 			status: http.StatusNotFound,
@@ -221,7 +221,7 @@ func TestHandleDiffCommitMode(t *testing.T) {
 }
 
 // gitOut 在指定仓库里跑一条 git 命令并返回标准输出。
-// 夹具仓库由 initDiffTestRepo 造好，环境变量与它保持一致（不读全局配置）
+// 测试素材里的仓库由 initDiffTestRepo 造好，环境变量与它保持一致（不读全局配置）
 func gitOut(t *testing.T, repo string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)

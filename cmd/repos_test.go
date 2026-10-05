@@ -19,7 +19,7 @@ import (
 
 // samePaths 判断解析结果与期望的路径列表内容是否一致。
 // 这里把 nil 与空切片视为等价：对调用方（discoverSubmodules 里的 for range）而言
-// "没有子模块"这一语义与底层用 nil 还是空切片承载无关，
+// “没有子模块”这一语义与底层用 nil 还是空切片承载无关，
 // 这样断言只锁语义、不锁实现细节，将来函数改用空切片返回也不会误报失败。
 func samePaths(got, want []string) bool {
 	if len(got) != len(want) {
@@ -116,7 +116,7 @@ func TestParseGitmodules(t *testing.T) {
 			want: []string{"real"},
 		},
 		{
-			// Windows 上 .gitmodules 可能是 CRLF 换行。TrimSpace 会吃掉行尾的 \r，
+			// Windows 上 .gitmodules 可能是 CRLF 换行。TrimSpace 会去掉行尾的 \r，
 			// 否则路径会变成 \"real\\r\"，在 Windows 之外的文件系统上必然找不到目录
 			name: "CRLF 行尾的 \\r 不应残留在路径里",
 			in: []byte("[submodule \"crlf\"]\r\n" +
@@ -199,7 +199,7 @@ func TestParseGitmodules(t *testing.T) {
 	})
 }
 
-// TestIsSubmoduleInitialized 验证"子模块目录存在且非空"这一判断的边界。
+// TestIsSubmoduleInitialized 验证“子模块目录存在且非空”这一判断的边界。
 // 这个判断决定了未初始化的子模块会不会被 ggt 当成可操作仓库：
 // 判宽了（把空目录或普通文件算作已初始化）会让后续 git 命令作用在不存在的仓库上；
 // 判严了（把非空目录算作未初始化）会让已 clone 的子模块被漏掉。
@@ -235,7 +235,7 @@ func TestIsSubmoduleInitialized(t *testing.T) {
 		},
 		{
 			// clone 中途失败或被清理后剩下的空目录：目录存在但没有任何工作区内容，
-			// 与"未初始化"等价，必须返回 false
+			// 与“未初始化”等价，必须返回 false
 			name: "空目录",
 			setup: func(t *testing.T, root string) string {
 				p := filepath.Join(root, "empty")
@@ -263,7 +263,7 @@ func TestIsSubmoduleInitialized(t *testing.T) {
 		},
 		{
 			// 注意：这里锁定实际行为——判断只看目录项数量，不递归看内容，
-			// 所以"只含一个空子目录"也算非空。真实仓库中内容不会全空，
+			// 所以“只含一个空子目录”也算非空。真实仓库中内容不会全空，
 			// 但明确记录该口径可以避免日后误以为函数会做深度校验
 			name: "只含空子目录也算非空",
 			setup: func(t *testing.T, root string) string {

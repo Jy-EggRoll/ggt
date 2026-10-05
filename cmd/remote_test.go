@@ -7,7 +7,7 @@
 // 最后按目标协议调用两个 build* 函数重写 URL。因此这里的用例都直接对应线上行为，
 // 一旦正则或判定逻辑变动，测试会立刻暴露
 //
-// 需要特别说明的实测结论（下述断言均以当前代码为准，不做「理应如此」的假设）：
+// 需要特别说明的实测结论（下述断言均以当前代码为准，不做“理应如此”的假设）：
 //  1. remoteURLRegex 没有 (?i) 标志，所以只认小写的 https:// / http:// / git@ 前缀，
 //     HTTPS://、Git@ 这类大小写混写会在 parseRemoteURL 处直接失败，尽管 detectProtocol
 //     经 ToLower 后能正确判出 HTTPS/SSH —— 两者对大小写形态的容忍度并不一致，见
@@ -194,7 +194,7 @@ func TestBuildSSHURL(t *testing.T) {
 // 历史 bug：曾用大小写敏感的 HasPrefix(raw, "http")，而 processSwitchResults 传入的是大写
 // "HTTPS"/"SSH"，导致 detectProtocol("HTTPS") 匹配不到 "http" 前缀、被判成 SSH，
 // 于是对外显示成 "SSH → SSH" 这种与实际切换方向相反的信息
-// 修复方式是先 ToLower 再判前缀，所以本用例里「大写目标串」必须仍然判成自己本身的协议
+// 修复方式是先 ToLower 再判前缀，所以本用例里“大写目标串”必须仍然判成自己本身的协议
 func TestDetectProtocol(t *testing.T) {
 	cases := []struct {
 		name string
@@ -222,12 +222,12 @@ func TestDetectProtocol(t *testing.T) {
 		{"git:// URL", "git://github.com/a/b.git", "SSH"},
 
 		// 判定只看前缀、不看内容是否合法，所以下列非法/空输入也不会报错
-		// 而是统一返回 SSH 作为兜底（对 remote 命令而言，非 http 即视为 SSH 语义）
-		{"空串兜底为 SSH", "", "SSH"},
-		{"纯空白兜底为 SSH", "   ", "SSH"},
-		{"纯文本兜底为 SSH", "not a url", "SSH"},
-		{"本地路径兜底为 SSH", "/home/user/repo", "SSH"},
-		{"裸主机路径兜底为 SSH", "github.com/a/b", "SSH"},
+		// 而是统一返回 SSH（对 remote 命令而言，非 http 即视为 SSH 语义）
+		{"空串按 SSH 处理", "", "SSH"},
+		{"纯空白按 SSH 处理", "   ", "SSH"},
+		{"纯文本按 SSH 处理", "not a url", "SSH"},
+		{"本地路径按 SSH 处理", "/home/user/repo", "SSH"},
+		{"不带协议的主机路径按 SSH 处理", "github.com/a/b", "SSH"},
 
 		// 前导空白不会被 trim：带前导空格的 https 串判成 SSH
 		// 实际调用方都会先 TrimSpace（doSwitchRemote / toggleCurrentRepo），
@@ -250,7 +250,7 @@ func TestDetectProtocol(t *testing.T) {
 }
 
 // TestRemoteURLRoundTrip 验证 SSH ↔ HTTPS 互转的往返一致性
-// doSwitchRemote 的切换路径是「解析当前 URL → 按目标协议重建 URL」，
+// doSwitchRemote 的切换路径是“解析当前 URL → 按目标协议重建 URL”，
 // 因此对任一可识别的形态都必须满足：
 //   - parse → buildHTTPSURL → parse 得到同一份 host/path
 //   - parse → buildSSHURL  → parse 得到同一份 host/path
@@ -309,7 +309,7 @@ func TestRemoteURLRoundTrip(t *testing.T) {
 				t.Errorf("二次往返信息漂移: 原始 %+v, 二次往返 %+v", *base, *back)
 			}
 
-			// 协议判定要与构建出的形态自洽：这是 doSwitchRemote 判「已一致、无需切换」的依据，
+			// 协议判定要与构建出的形态自洽：这是 doSwitchRemote 判“已一致、无需切换”的依据，
 			// 若这里不自洽，用户会看到同一个仓库被判成两种协议
 			if got := detectProtocol(httpsURL); got != "HTTPS" {
 				t.Errorf("detectProtocol(%q) = %q, 期望 HTTPS", httpsURL, got)
@@ -326,7 +326,7 @@ func TestRemoteURLRoundTrip(t *testing.T) {
 // 现象：detectProtocol 经 ToLower 后认为 "HTTPS://github.com/a/b.git" 是 HTTPS，
 // 但 parseRemoteURL 因正则无 (?i) 而报错
 // 影响：doSwitchRemote 先解析、后判协议，遇到这种 origin 会直接走 error 分支并提示
-// 「无法解析 URL」，而不会因为「已经是 HTTPS」而跳过；反之 Git@ 形态同理
+// “无法解析 URL”，而不会因为“已经是 HTTPS”而跳过；反之 Git@ 形态同理
 // 若后续给正则加上 (?i)（并注意 .git 后缀的匹配），本测试会失败，届时应当连同注释一起更新
 func TestRemoteURLSchemeCaseAsymmetry(t *testing.T) {
 	cases := []struct {

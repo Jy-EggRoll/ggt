@@ -255,7 +255,7 @@ func TestResetAllAtWritesEmptyArrays(t *testing.T) {
 
 // TestSetKeyWritesEmptySliceAsArray 断言把路径列表清空后写回，落盘的是 [] 而不是 null。
 // 覆盖 ggt repo remove 掉最后一个仓库后的形态：文件里必须是空数组，否则下次读回来是
-// nil，"已配置 0 个仓库"和"这个字段从未设置过"在文件层面就分不清了。
+// nil，“已配置 0 个仓库”和“这个字段从未设置过”在文件层面就分不清了。
 // （写入保留未知键的行为由 TestWriteRawAtPreservesUnknownKeys 覆盖，此处不重复。）
 func TestSetKeyWritesEmptySliceAsArray(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
@@ -425,7 +425,7 @@ func TestLookupIgnoresCaseAndSpace(t *testing.T) {
 }
 
 // TestManagedKeysHaveNoParse 断言由 ggt repo 管理的键不提供 Parse，
-// 这样 set 路径上就没有"怎么写进去"的入口。
+// 这样 set 路径上就没有“怎么写进去”的入口。
 func TestManagedKeysHaveNoParse(t *testing.T) {
 	for _, key := range []string{"repo_paths", "parent_paths"} {
 		s, ok := Lookup(key)
@@ -450,7 +450,7 @@ func TestManagedKeysHaveNoParse(t *testing.T) {
 func TestSettingMetadataIsComplete(t *testing.T) {
 	for _, s := range Settings() {
 		// Parse 与 ManagedBy 恰有其一：两者都缺的项写不进去也不说明该由谁管；
-		// 两者都有的项意味着 ManagedBy 那道"不能在这里改"的限制可以被 set 绕过
+		// 两者都有的项意味着 ManagedBy 那道“不能在这里改”的限制可以被 set 绕过
 		if s.Parse == nil && s.ManagedBy == "" {
 			t.Errorf("%q 既没有 Parse 也没有 ManagedBy：它无法被写入，也没说明该由谁管", s.Key)
 		}
@@ -481,7 +481,7 @@ func TestSettingMetadataIsComplete(t *testing.T) {
 			}
 		}
 
-		// AllowCustom 只在有候选时才有意义：没有候选就无所谓"候选之外的写法"
+		// AllowCustom 只在有候选时才有意义：没有候选就无所谓“候选之外的写法”
 		if s.AllowCustom && s.Options == nil {
 			t.Errorf("%q 声明了 AllowCustom 却没有候选清单", s.Key)
 		}
@@ -500,7 +500,7 @@ func TestSettingMetadataIsComplete(t *testing.T) {
 			}
 			seen[o.Value] = true
 
-			// 候选必须能通过自己的 Parse：这正是"页面能选、命令行却拒收"那道漂移的拦路测试
+			// 候选必须能通过自己的 Parse：这正是“页面能选、命令行却拒收”那道漂移的拦路测试
 			if s.Parse == nil {
 				continue
 			}
@@ -545,9 +545,9 @@ func TestLanguageOptionsCoverSupported(t *testing.T) {
 	}
 }
 
-// TestThemeOptionsEmptyValueRule 断言主题三项的候选与"能不能清空"这条规则一致。
+// TestThemeOptionsEmptyValueRule 断言主题三项的候选与“能不能清空”这条规则一致。
 //
-// theme 的空串是"跟随系统"，是有意义的取值；两个偏好的空串则意味着没配色可渲染。
+// theme 的空串是“跟随系统”，是有意义的取值；两个偏好的空串则意味着没配色可渲染。
 // 网页设置面板据此判断该项允不允许清空（候选里有没有空值项），因此这条规则必须锁住——
 // 它一旦松动，写入校验会放空串进来，页面渲染时整页没有颜色
 func TestThemeOptionsEmptyValueRule(t *testing.T) {
@@ -569,7 +569,7 @@ func TestThemeOptionsEmptyValueRule(t *testing.T) {
 		t.Error("theme 的候选里应有一个空值项，它代表跟随系统")
 	}
 	// 内置主题是 go:embed 进来的，任何时候都该存在。只剩一个空值项说明主题包枚举失败
-	// 或调用方传错了目录，而那种退化光看"有没有空值项"是发现不了的
+	// 或调用方传错了目录，而那种退化光看“有没有空值项”是发现不了的
 	if len(themeOpts) < 2 {
 		t.Errorf("theme 的候选只有 %d 项：内置主题应当总是在列，说明主题枚举已经失效", len(themeOpts))
 	}
@@ -587,9 +587,9 @@ func TestThemeOptionsEmptyValueRule(t *testing.T) {
 
 // TestConcurrentKeyWritesKeepEveryKey 断言并发写不同的键时不会互相覆盖。
 //
-// 这是 writeMu 的行为级测试。SetKeyAt 是"读整份文件、改一个键、写回"，没有那把锁时两个
+// 这是 writeMu 的行为级测试。SetKeyAt 是“读整份文件、改一个键、写回”，没有那把锁时两个
 // 并发调用会各自读到旧内容再各写一份，后写的那次把先写的键整个抹掉。断言锁存在（例如
-// 检查某个字段）只能测出"看起来加了锁"，而丢更新这件事只有真的并发写一次才看得见
+// 检查某个字段）只能测出“看起来加了锁”，而丢更新这件事只有真的并发写一次才看得见
 func TestConcurrentKeyWritesKeepEveryKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
 

@@ -35,7 +35,7 @@ Examples:
 		Run: func(cmd *cobra.Command, args []string) {
 			// 统一 ctx：第一阶段并发检查与第二阶段交互式操作（diff/count-objects/add/commit/push）
 			// 都复用同一 ctx，一旦它被取消，worker.Map 与正在执行的 git 调用会一起中断；
-			// 这些调用一律走 git.RunContext / RunCombinedContext，未设截止时间时由 git 包叠加默认超时兜底
+			// 这些调用一律走 git.RunContext / RunCombinedContext，未设截止时间时由 git 包叠加默认超时
 			ctx := context.Background()
 			repos := AllRepos(ctx)
 			InfoLn(l10n.T("Repositories: {{.Count}} — checking for changes...", map[string]any{"Count": len(repos)}))
@@ -44,8 +44,8 @@ Examples:
 			t := NewDebugTimer(l10n.T("Status check (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
 			results := worker.Map(ctx, repos, Concurrency(), func(ctx context.Context, e RepoEntry) *dirtyRepo {
 				// 是否值得处理，一律由机器可读的 porcelain v2 状态判定。
-				// 原实现是从给人看的 --short 文本里反推：统计非空行数判断"有没有文件变更"、
-				// 用 strings.Contains(output, "[ahead") 判断"有没有待推送提交"。两处都依赖
+				// 原实现是从给人看的 --short 文本里反推：统计非空行数判断“有没有文件变更”、
+				// 用 strings.Contains(output, "[ahead") 判断“有没有待推送提交”。两处都依赖
 				// git 的展示措辞与格式，一旦 git 改版、或用户配了 status.relativePaths /
 				// color.status，判断就会静默失效——不报错，只是所有仓库的结论一起变成错的
 				st, err := git.RunStatus(ctx, e.Path)
@@ -59,7 +59,7 @@ Examples:
 
 				// 展示仍然用 git 自己的彩色 --short 输出：它是给人看的格式，逐文件列出
 				// XY 与路径，且着色由 git 决定，与本命令改造前、以及用户在其他场合见到的
-				// status 完全一致。代价是"确实有变更"的仓库要多跑一次 git，而干净仓库已在
+				// status 完全一致。代价是“确实有变更”的仓库要多跑一次 git，而干净仓库已在
 				// 上一行返回，因此这份开销只落在真正要处理的少数仓库上
 				statusOutput, err := git.RunContext(ctx, e.Path, "-c", "color.status=always", "status", "--short", "--branch", "--untracked-files")
 				if err != nil {

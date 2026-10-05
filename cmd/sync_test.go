@@ -9,7 +9,7 @@ import "testing"
 // 现在它不接触 git 也不产生输出，"本地/远程/共同祖先"三者的相等关系正好穷尽四种结果。
 func TestDecideSyncAction(t *testing.T) {
 	// 三个互不相同的假 commit hash。特意不用 a/b/c 这种单字符，
-	// 以免有人误以为它们在比较"顺序"或"大小"——这里只比较相等关系
+	// 以免有人误以为它们在比较“顺序”或“大小”——这里只比较相等关系
 	const (
 		older  = "1111111"
 		middle = "2222222"
@@ -71,7 +71,7 @@ func TestDecideSyncAction(t *testing.T) {
 }
 
 // TestDecideSyncActionNeverAutoMerges 是一条语义防线，而不是行为测试：
-// 只有"本地严格落后"这一种情形允许 ggt 自动动仓库，其余一律交回用户。
+// 只有“本地严格落后”这一种情形允许 ggt 自动动仓库，其余一律交回用户。
 //
 // 之所以单独立一条：判断顺序一旦被改动（例如把 remote == base 提到 local == base 之前），
 // 分叉或领先的仓库就可能被误判成可快进而被自动 pull，那是会丢改动的操作。
@@ -82,7 +82,7 @@ func TestDecideSyncActionNeverAutoMerges(t *testing.T) {
 		c = "ccccccc"
 	)
 
-	// 穷举三个 hash 两两相等/不相等组合中所有"非本地落后"的情形
+	// 穷举三个 hash 两两相等/不相等组合中所有“非本地落后”的情形
 	for _, tc := range [][3]string{
 		{a, a, a}, // 一致
 		{a, a, b}, // 本地与远程一致

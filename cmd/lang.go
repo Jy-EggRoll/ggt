@@ -43,7 +43,7 @@ func chooseLanguage() string {
 //   - 四种等价写法 --lang=en / --lang en / -l en / -len 都要能识别
 //   - 独立的 -- 之后应当停止 flag 解析，其后的内容不能被当成 flag
 //
-// pflag 还会对未知 flag 做"剥离取值"处理（stripUnknownFlagValue），因此
+// pflag 还会对未知 flag 做“剥离取值”处理（stripUnknownFlagValue），因此
 // `ggt size --low 200` 里的 200 不会被误读成语言。
 //
 // 刻意忽略 Parse 返回的错误：pflag 是边解析边赋值的，即使后面遇到无法识别的参数而

@@ -51,7 +51,7 @@ func TestRenderIndexHTMLInjectsEveryPlaceholder(t *testing.T) {
 // callSettings 直接调用设置端点的处理函数。
 //
 // 刻意不经过 webui 基座：token 门禁、Host 校验、同源校验都是基座那一层的职责（那边有自己的
-// 测试），本文件要测的是端点自身"读什么、写什么、拒绝什么"。写入落点用临时目录，
+// 测试），本文件要测的是端点自身“读什么、写什么、拒绝什么”。写入落点用临时目录，
 // 绝不碰开发者自己的真实配置
 func callSettings(t *testing.T, handler http.HandlerFunc, method, body string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -120,7 +120,7 @@ func TestHandleSettingsPostWrites(t *testing.T) {
 	if len(out.Applied) != 2 {
 		t.Errorf("应有两项写入成功，实得 %v", out.Applied)
 	}
-	// 两项都不是"页面已烧进去"的配置，不该要求刷新
+	// 两项都不是“页面已烧进去”的配置，不该要求刷新
 	if out.Reload {
 		t.Error("size_unit 与 log_level 不需要刷新页面")
 	}
@@ -159,7 +159,7 @@ func TestHandleSettingsPostRejectsUnknownChoice(t *testing.T) {
 	}
 }
 
-// TestHandleSettingsPostReloadFlag 断言改到"页面已经烧进去"的配置项时要求刷新
+// TestHandleSettingsPostReloadFlag 断言改到“页面已经烧进去”的配置项时要求刷新
 func TestHandleSettingsPostReloadFlag(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ggt-config.json")
 	// 空值代表跟随系统，它是 theme 的候选之一
@@ -170,7 +170,7 @@ func TestHandleSettingsPostReloadFlag(t *testing.T) {
 	}
 }
 
-// TestHandleSettingsUnset 断言恢复默认走的是"从文件里删掉这个键"，而不是把默认值写进去
+// TestHandleSettingsUnset 断言恢复默认走的是“从文件里删掉这个键”，而不是把默认值写进去
 func TestHandleSettingsUnset(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ggt-config.json")
 	if err := config.SetKeyAt(path, "log_level", "debug"); err != nil {
@@ -237,7 +237,7 @@ func TestHandleSettingsMethodNotAllowed(t *testing.T) {
 
 // TestUIReloadKeysExist 断言 uiReloadKeys 里没有悬空的名字。
 //
-// 这份清单是"页面已经烧进去的键名"，与注册表分处两个文件；配置项被删掉或改名之后，
+// 这份清单是“页面已经烧进去的键名”，与注册表分处两个文件；配置项被删掉或改名之后，
 // 清单里残留的名字不会有任何编译错误，只会让刷新提示永远不出现
 func TestUIReloadKeysExist(t *testing.T) {
 	for _, key := range uiReloadKeys {

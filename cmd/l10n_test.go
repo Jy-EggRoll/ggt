@@ -13,7 +13,7 @@ import (
 // TestBuildRootRegistersAllCommands 断言 buildRoot 装配出完整的命令树。
 //
 // 各命令通过自己的 init() 调用 register 登记装配动作，漏登记的命令会从帮助里
-// 静默消失（不报错、不影响编译），所以需要这条测试兜住。
+// 静默消失（不报错、不影响编译），所以需要这条测试来发现。
 func TestBuildRootRegistersAllCommands(t *testing.T) {
 	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
 		t.Fatalf("初始化 i18n 失败: %v", err)
@@ -60,7 +60,7 @@ func TestBuildRootRegistersAllCommands(t *testing.T) {
 	}
 }
 
-// TestDescriptionsFollowLanguage 验证「l10n.Init → 命令构造函数 → l10n.T」整条链路：
+// TestDescriptionsFollowLanguage 验证“l10n.Init → 命令构造函数 → l10n.T”整条链路：
 // 命令描述与 flag 说明都应随语言切换。
 //
 // 这是重构后最关键的一条集成测试：命令树改为在语言加载之后构造，若哪一步的时序被
@@ -112,7 +112,7 @@ func TestDescriptionsFollowLanguage(t *testing.T) {
 // TestNoUntranslatedTextInCommandTree 断言命令树里不再残留中文描述。
 //
 // 全仓文案迁移完成后，所有命令描述与 flag 说明都必须经 l10n.T()。若有人新写一个命令
-// 却忘了包裹，英文环境下它的描述仍会是中文；这条测试是运行期的兜底。
+// 却忘了包裹，英文环境下它的描述仍会是中文；这条测试是运行期的检查。
 // 与之互补的是 l10n:check，它在源码层面做同样的判定并给出文件行号。
 func TestNoUntranslatedTextInCommandTree(t *testing.T) {
 	if err := l10n.Init(locales.Default, locales.Options()); err != nil {

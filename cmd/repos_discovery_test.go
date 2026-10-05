@@ -1,12 +1,12 @@
-// repos_discovery_test 覆盖 cmd 包"仓库发现"链路的三层函数：
+// repos_discovery_test 覆盖 cmd 包“仓库发现”链路的三层函数：
 //   - discoverSubmodules：解析 .gitmodules，递归发现已初始化的子模块
-//   - expand：把顶层仓库展开成"顶层 + 子模块"的扁平条目
+//   - expand：把顶层仓库展开成“顶层 + 子模块”的扁平条目
 //   - GetRepoList：合并配置里的 repo_paths 与 parent_paths 的扫描结果
 //
 // 为什么单独测这三个：它们位于 ggt 所有遍历型命令（status/size/sync/fetch...）的入口，
 // 而 repos_test.go 只钉死了它们内部依赖的两个纯函数（parseGitmodules / isSubmoduleInitialized）。
-// 剩下这三层语义——"递归时相对路径怎么拼""展开后顺序与 IsSubmodule 标记对不对"
-// "父目录下什么才算仓库"——一旦写错，错误会静默扩散到每一条命令，且从终端输出很难看出
+// 剩下这三层语义——“递归时相对路径怎么拼”"展开后顺序与 IsSubmodule 标记对不对"
+// “父目录下什么才算仓库”——一旦写错，错误会静默扩散到每一条命令，且从终端输出很难看出
 // 是哪一层错的。因此这里按层补测，不重复已被覆盖的纯函数。
 //
 // 三个函数都会读包级全局 cfg（经 GetConfig()），所以每个用例都必须显式替换并在结束时还原，
@@ -57,10 +57,10 @@ func writeGitmodules(t *testing.T, repoPath, body string) {
 	writeTestFile(t, filepath.Join(repoPath, ".gitmodules"), body)
 }
 
-// writeSubmoduleDir 构造"已初始化子模块"的最小真实形态：目录存在且非空
+// writeSubmoduleDir 构造“已初始化子模块”的最小真实形态：目录存在且非空
 // 注意里面刻意把 .git 写成**文件**（内容形如 gitdir: ...）：真实子模块的 .git 就是指向
 // 父仓库 .git/modules/... 的 gitdir 文件而非目录，所以这里照原样复刻——
-// 这既让 isSubmoduleInitialized 判定它已初始化，也说明子模块的"已初始化"与 git.IsRepo
+// 这既让 isSubmoduleInitialized 判定它已初始化，也说明子模块的“已初始化”与 git.IsRepo
 // 要求的".git 必须是目录"是两套口径（后者不认这种目录）
 func writeSubmoduleDir(t *testing.T, repoPath, rel string) {
 	t.Helper()
@@ -82,7 +82,7 @@ func makeGitRepoDir(t *testing.T, dir string) {
 }
 
 // sameRepoEntries 按顺序比较两条 RepoEntry 列表的 Path/Name/IsSubmodule 三个字段
-// 不复用 reflect.DeepEqual：这里要的是"逐字段相等且顺序一致"，失败时能报出具体差异
+// 不复用 reflect.DeepEqual：这里要的是“逐字段相等且顺序一致”，失败时能报出具体差异
 func sameRepoEntries(got, want []RepoEntry) bool {
 	if len(got) != len(want) {
 		return false
@@ -96,13 +96,13 @@ func sameRepoEntries(got, want []RepoEntry) bool {
 }
 
 // TestDiscoverSubmodules 验证子模块发现的四类语义：
-//   - 没有 .gitmodules（或其中没有条目）时返回空，命令表现为"无子模块"
+//   - 没有 .gitmodules（或其中没有条目）时返回空，命令表现为“无子模块”
 //   - 未初始化的子模块被跳过（目录不存在 / 空目录 / 目录尚未 clone）
 //   - 已初始化的子模块保持 .gitmodules 里的书写顺序
 //   - 嵌套子模块的相对路径逐级正确拼接，且深度优先紧跟其父
 //
 // 复用同包的 samePaths 助手比较路径列表（故 nil 与空切片等价）：
-// 对调用方而言"没有子模块"这一语义与底层用 nil 还是空切片承载无关，
+// 对调用方而言“没有子模块”这一语义与底层用 nil 还是空切片承载无关，
 // 同一函数不再重复定义一份，避免重名编译冲突与实现重复
 func TestDiscoverSubmodules(t *testing.T) {
 	cases := []struct {
@@ -119,7 +119,7 @@ func TestDiscoverSubmodules(t *testing.T) {
 		},
 		{
 			// 反向操作后残留的空 .gitmodules：文件在但没有 [submodule] 块，
-			// 与"没有文件"必须同义，否则会多出一个空路径参与 filepath.Join
+			// 与“没有文件”必须同义，否则会多出一个空路径参与 filepath.Join
 			name: "只有注释的 .gitmodules 返回空",
 			setup: func(t *testing.T, repo string) {
 				writeGitmodules(t, repo, "# 子模块列表（当前为空）\n\n")
@@ -146,7 +146,7 @@ func TestDiscoverSubmodules(t *testing.T) {
 			want: nil,
 		},
 		{
-			// clone 中断或被清理后留下的空目录：与"目录不存在"一样没有工作区，
+			// clone 中断或被清理后留下的空目录：与“目录不存在”一样没有工作区，
 			// 若被当成已初始化，ggt 会对空目录执行 git 操作
 			name: "未初始化的子模块（空目录）被跳过",
 			setup: func(t *testing.T, repo string) {
@@ -201,7 +201,7 @@ func TestDiscoverSubmodules(t *testing.T) {
 		},
 		{
 			// 嵌套层级未初始化时，父层仍应被返回，但不要为不存在的 nested 产出条目。
-			// 这一分支能暴露"先递归再判断初始化"这类顺序写反的实现
+			// 这一分支能暴露“先递归再判断初始化”这类顺序写反的实现
 			name: "子模块已初始化但其嵌套子模块未初始化时只返回父层",
 			setup: func(t *testing.T, repo string) {
 				writeGitmodules(t, repo, "[submodule \"sub\"]\n\tpath = sub\n")
@@ -211,7 +211,7 @@ func TestDiscoverSubmodules(t *testing.T) {
 			want: []string{"sub"},
 		},
 		{
-			// 顺序契约：结果不是"先所有直接子模块、再所有嵌套子模块"，而是深度优先——
+			// 顺序契约：结果不是“先所有直接子模块、再所有嵌套子模块”，而是深度优先——
 			// a 及其嵌套 a/a1、a/a2 先全部出现，然后才是同级子模块 b。
 			// ggt 据此顺序批量执行，写反会导致输出与实际操作顺序不一致
 			name: "嵌套条目紧跟其父之后，然后才是下一个同级子模块（深度优先）",
@@ -241,7 +241,7 @@ func TestDiscoverSubmodules(t *testing.T) {
 
 	// samePaths 把 nil 与空切片视为等价，但这里额外锁定当前实现的真实返回值：
 	// 无 .gitmodules 时返回 nil。显式记录是为了将来有人把它改成空切片时能意识到
-	// 这是"返回值形态变化"而非语义变化，从而判断下游是否有依赖
+	// 这是“返回值形态变化”而非语义变化，从而判断下游是否有依赖
 	t.Run("无 .gitmodules 时底层返回 nil 而非空切片", func(t *testing.T) {
 		repo := t.TempDir()
 		if got := discoverSubmodules(repo); got != nil {
@@ -250,7 +250,7 @@ func TestDiscoverSubmodules(t *testing.T) {
 	})
 }
 
-// TestExpand 验证"顶层 + 子模块"展开后的条目内容与顺序：
+// TestExpand 验证“顶层 + 子模块”展开后的条目内容与顺序：
 //   - ignoreSubmodules=true 时只返回顶层条目，且 IsSubmodule 全为 false
 //   - 顶层条目 Name 为目录名，子模块条目 Name 为相对父仓库的路径
 //   - 顶层条目全部在前，子模块按父仓库的配置顺序依次追加
@@ -296,7 +296,7 @@ func TestExpand(t *testing.T) {
 		{
 			// 顺序契约：所有顶层条目先整体出现，然后才是子模块；
 			// 子模块之间按父仓库的配置顺序排列（alpha 的 a1/a2 先于 beta 的 b1）。
-			// 若实现改成"每个顶层后面紧跟自己的子模块"，批量输出顺序会与仓库列表不一致
+			// 若实现改成“每个顶层后面紧跟自己的子模块”，批量输出顺序会与仓库列表不一致
 			name: "多个顶层仓库时顶层全部在前、子模块按父仓库顺序追加",
 			setup: func(t *testing.T, root string) ([]string, []RepoEntry) {
 				alpha := filepath.Join(root, "alpha")
@@ -413,7 +413,7 @@ func TestExpand(t *testing.T) {
 // （repo_paths 必须原样保留且排在最前），其余元素与 wantRest 按**集合**（含重复计数）相等
 //
 // 剩余部分不比较顺序，是因为它们来自 os.ReadDir 的字典序遍历，顺序属于实现细节；
-// 用集合比较足以锁定"哪些子目录被认定为仓库"，同时避免把遍历顺序一起焊死
+// 用集合比较足以锁定“哪些子目录被认定为仓库”，同时避免把遍历顺序一起焊死
 func assertRepoList(t *testing.T, got, wantPrefix, wantRest []string) {
 	t.Helper()
 	if len(got) < len(wantPrefix) {
@@ -450,7 +450,7 @@ func assertRepoList(t *testing.T, got, wantPrefix, wantRest []string) {
 //   - parent_paths 不存在或无法读取时静默跳过，不能 panic 也不能中断其余来源
 //   - 两个来源的结果都保留，且 repo_paths 在前
 //
-// 这里必须显式设置 cfg：GetRepoList 完全依赖全局配置，且它不做任何 nil 兜底
+// 这里必须显式设置 cfg：GetRepoList 完全依赖全局配置，且它不做任何 nil 检查
 // setup 直接返回配置与期望值：期望路径依赖运行时创建的 root，无法在表字面量里提前写死
 func TestGetRepoList(t *testing.T) {
 	cases := []struct {
@@ -458,8 +458,8 @@ func TestGetRepoList(t *testing.T) {
 		setup func(t *testing.T, root string) (conf *config.Config, wantPrefix, wantRest []string)
 	}{
 		{
-			// repo_paths 是用户显式添加的仓库，属于"无条件信任"的输入：
-			// 这里刻意不创建这些目录，以锁定"不校验存在性"的实际行为——
+			// repo_paths 是用户显式添加的仓库，属于“无条件信任”的输入：
+			// 这里刻意不创建这些目录，以锁定“不校验存在性”的实际行为——
 			// 校验发生在 git.IsRepo（父目录扫描）那一侧，而不是这里
 			name: "只有 repo_paths 时原样返回且顺序不变",
 			setup: func(t *testing.T, root string) (*config.Config, []string, []string) {
@@ -499,7 +499,7 @@ func TestGetRepoList(t *testing.T) {
 			},
 		},
 		{
-			// 覆盖 os.ReadDir 失败这一分支。用"父目录其实是个普通文件"来稳定触发：
+			// 覆盖 os.ReadDir 失败这一分支。用“父目录其实是个普通文件”来稳定触发：
 			// 真正把目录 chmod 000 的做法在 root 用户下无效（root 无视权限位），
 			// 会让用例在特权环境里假通过，所以改用必然失败的文件路径
 			name: "parent_paths 指向普通文件（读取失败）时静默跳过",

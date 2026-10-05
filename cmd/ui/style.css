@@ -27,13 +27,13 @@
  *                             （diffEditor.insertedLineBackground / removedLineBackground，见下方变量）
  *   文件类型图标              VSCode 默认图标主题 Seti，字形与映射见 seti-icon-theme.json
  *
- * 卡片背景、边框、圆角、列间距是 ggt 自有的「卡片」概念，VSCode 侧栏里没有等价物（它只有列表行），
+ * 卡片背景、边框、圆角、列间距是 ggt 自有的“卡片”概念，VSCode 侧栏里没有等价物（它只有列表行），
  * 因此这几项保留原设计，不强行对齐
  */
 
 /*
- * 这里只留"与配色无关"的布局变量。所有颜色变量都由服务端在渲染页面时注入
- * （见 cmd/ui_theme.go：解析选中的 VSCode 主题，拼成一条 :root 规则塞进 index.html 的
+ * 这里只留“与配色无关”的布局变量。所有颜色变量都由服务端在渲染页面时注入
+ * （见 cmd/ui_theme.go：解析选中的 VSCode 主题，拼成一条 :root 规则写进 index.html 的
  * <style id="theme">）——因此本文件里不该再出现任何颜色字面量，否则主题就名存实亡。
  *
  * 颜色变量在页面上的集合（名字由 cssVarNames 与 themeOwnVars 定义）：
@@ -46,7 +46,7 @@
 :root {
   /* ——— 尺度变量 ———
    * 上游没有间距、圆角、动效这三类令牌（已核 colors/*.ts），因此下面这几组的取值是本项目自拟的：
-   * 间距按 4px 基准取 VSCode 界面里实际出现的档位，圆角按"越小越方正"排五档，
+   * 间距按 4px 基准取 VSCode 界面里实际出现的档位，圆角按“越小越方正”排五档，
    * 动效收敛成三条各有唯一职责的时长 */
   --sp-1: 4px;
   --sp-2: 6px;
@@ -60,7 +60,7 @@
      一处不带）——收成一个令牌之后只有一处定义，也就不存在"改了一处忘了另一处" */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
 
-  /* --page-pad / --statusbar-h 是页面上唯一的一份"留白与底栏高度"：app.js 算列高时从计算样式
+  /* --page-pad / --statusbar-h 是页面上唯一的一份“留白与底栏高度”：app.js 算列高时从计算样式
      里读它们（cssVar），而不是在 JS 里再写一遍数字——底栏是后加的，硬编码的话它一出现就会
      压住最下面一行卡片。底栏 32px = 24px 控件上下各留 4px */
   --page-pad: 16px;
@@ -161,7 +161,7 @@
 }
 
 @supports not selector(::-webkit-scrollbar) {
-  /* Firefox 只能给"滑块一个颜色 + 轨道透明"，没有 hover/active 两态可用 */
+  /* Firefox 只能给“滑块一个颜色 + 轨道透明”，没有 hover/active 两态可用 */
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar, var(--card-border)) transparent;
@@ -171,7 +171,7 @@
 /*
  * 按钮三级：主（button.*）、次（button.secondary*）、图标（toolbar.hoverBackground）。
  * 几何自拟（上游没有按钮几何令牌），语义照抄：底色与前景永远成对取自同一组令牌，
- * 这样换主题时不会出现"前景与底色各自漂移"
+ * 这样换主题时不会出现“前景与底色各自漂移”
  */
 .btn {
   flex: none;
@@ -263,7 +263,7 @@ html {
    * 这里刻意不声明 scroll-behavior: smooth，平滑改由 app.js 统一负责。
    * 原因是实测出来的：CSS 的 smooth 由 UA 按滚动距离决定时长（明显长于 180ms），
    * 而滚轮每拨一格都会重新发起一次 scrollBy，于是连续拨动时表现为
-   * 「上一段动画没走完就被新的一段生硬截断」——正是用户明确不接受的那种手感。
+   * “上一段动画没走完就被新的一段生硬截断”——正是用户明确不接受的那种手感。
    * app.js 用固定 180ms 的等减速曲线接管后，缓动只有一处定义，也不会与 CSS 叠加。
    *
    * 触控板横扫与 Shift+滚轮产生的 deltaX 不走那条路径，仍交给浏览器原生处理
@@ -305,11 +305,11 @@ body {
 }
 
 /*
- * 每一行都是绝对定位的独立单元，这正是「行级流式」的关键：
+ * 每一行都是绝对定位的独立单元，这正是“行级流式”的关键：
  * 绝对定位的元素不参与 CSS 分片（multicol 里那种卡片被浏览器拦腰截断、
  * 续段丢失标题的问题因此不会出现），且 getBoundingClientRect 返回的坐标是准确的
  *
- * transition 让位置变化可动画：轮询刷新后卡片是「滑」到新位置，而不是整页重建闪烁
+ * transition 让位置变化可动画：轮询刷新后卡片是“滑”到新位置，而不是整页重建闪烁
  *
  * 行高取 VSCode 的 22px，三种行共用同一个高度，列内节奏与 VSCode 列表一致
  */
@@ -342,7 +342,7 @@ body {
   border-top: 1px solid var(--card-border);
   /* 圆角写成四个角的逻辑属性，而不是 border-radius 简写。
      原因：一张卡片的上圆角来自 .head、下圆角来自 .foot，两者优先级相同；
-     用简写时后写的规则会整条覆盖前者，于是「只有一行」的干净仓库卡片
+     用简写时后写的规则会整条覆盖前者，于是“只有一行”的干净仓库卡片
      （同一行同时是 head 与 foot）就会变成上面方、下面圆。
      逻辑属性各管各的角，天然叠加，不再互相覆盖 */
   border-start-start-radius: 7px;
@@ -357,8 +357,8 @@ body {
   white-space: nowrap;
 }
 
-/* 卡片的最后一行收口：圆角与下边框。跨列被切断的卡片，其上一段的末行没有这个类，
-   视觉上就自然表现为「还没结束，下接另一列」。
+/* 卡片的最后一行：圆角与下边框。跨列被切断的卡片，其上一段的末行没有这个类，
+   视觉上就自然表现为“还没结束，下接另一列”。
    圆角同样用逻辑属性写：只有一行时本行也是 .head，两组圆角必须能叠加（见 .row.head 处注释） */
 .row.foot {
   border-bottom: 1px solid var(--card-border);
@@ -383,7 +383,7 @@ body {
  * 计数徽标：几何取自 VSCode 的 countBadge.css（3px 5px 内边距、11px 圆角、最小 18x18）。
  * 背景与前景这一对同取 badge.background / badge.foreground（上游注册表默认值：深色
  * #4D4D4D/#FFFFFF、浅色 #C4C4C4/#333333，见 internal/theme/defaults.json）。
- * 此前只取背景、前景沿用 --text，于是浅色主题里出现过"深灰字压浅灰底"这种几乎读不出来的
+ * 此前只取背景、前景沿用 --text，于是浅色主题里出现过“深灰字压浅灰底”这种几乎读不出来的
  * 组合——一对令牌就该成对使用
  */
 .badge {
@@ -394,7 +394,7 @@ body {
   height: 18px;
   min-width: 18px;
   padding: 0 var(--sp-1);
-  /* 胶囊圆角用 pill 而不是"高度的一半"那个巧合值：徽标换高度时它不会跟着坏掉 */
+  /* 胶囊圆角用 pill 而不是“高度的一半”那个巧合值：徽标换高度时它不会跟着坏掉 */
   border-radius: var(--radius-pill);
   background: var(--badge-bg);
   color: var(--badge-fg, var(--text-dim));
@@ -446,7 +446,7 @@ body {
 
 /*
  * 分组行头（未合并的改动 / 已暂存的改动 / 未暂存的改动）。
- * 高度与文件行同为 --row-h，因此不破坏布局那套"行高即常量"的前提（见 app.js 的 layout）。
+ * 高度与文件行同为 --row-h，因此不破坏布局那套“行高即常量”的前提（见 app.js 的 layout）。
  * 颜色只用次要前景色：分组的语义靠文字与位置表达，不额外引入一组颜色
  */
 .row.group {
@@ -513,7 +513,7 @@ body {
  * 文件名上色更利于横向扫读，用户已确认保留
  */
 .row.file.st-modified { color: var(--git-modified); --tint: var(--git-modified); }
-/* 已暂存那一侧用 stage* 变体：这两个令牌此前映射了却从没被消费（样式表 0 处引用），
+/* 已暂存那一侧用 stage* 变体：这两个令牌此前映射了却从没被使用（样式表 0 处引用），
    于是在所有主题下"已暂存的修改"和"未暂存的修改"都是同一个颜色。上游注册表里两者确实同值
    （extensions/git/package.json 的 defaults 逐字如此），但主题写了它们时就该不同 */
 .row.file.st-stage-modified {
@@ -535,15 +535,15 @@ body {
 /*
  * 行底色：每个状态各自的半透明色块，色源与它的文字色**同一个令牌**
  *
- * 为什么底色必须与文字同源：底色按"组"给（曾经是整组绿、整组黄）时，会出现"红字的删除行压在
- * 绿底上"这种搭配——既难读，也把"这个文件怎么了"和"它属于哪一组"两件事糊成一个颜色。
+ * 为什么底色必须与文字同源：底色按“组”给（曾经是整组绿、整组黄）时，会出现"红字的删除行压在
+ * 绿底上“这种搭配——既难读，也把”这个文件怎么了“和”它属于哪一组"两件事糊成一个颜色。
  * 现在两个维度各管一件事：
  *   st-* → 决定色相（这个文件是 M/A/D/U/!…，也就是 --tint 取哪个令牌）
  *   g-*  → 只决定同一色相下的深浅（它属于哪一组）
  * 底色由 --tint 与卡片底色混出，样式表里因此仍然没有任何颜色字面量
  */
-/* 状态底色只给"有分组"的行：分组只有 未合并 / 已暂存 / 未暂存 三种，
-   因此这里不给 .row.file 兜底底色，而是逐个分组写，避免出现一条谁也不生效的死规则 */
+/* 状态底色只给“有分组”的行：分组只有 未合并 / 已暂存 / 未暂存 三种，
+   因此这里不给 .row.file 回退底色，而是逐个分组写，避免出现一条谁也不生效的规则 */
 .row.file.g-merge { background: color-mix(in srgb, var(--tint, var(--card-bg)) 12%, var(--card-bg)); }
 .row.file.g-index { background: color-mix(in srgb, var(--tint, var(--card-bg)) 18%, var(--card-bg)); }
 .row.file.g-work { background: color-mix(in srgb, var(--tint, var(--card-bg)) 9%, var(--card-bg)); }
@@ -552,7 +552,7 @@ body {
    而抹掉的时机恰好是用户要点这一行的时候。叠色则保住色相，只加深一点 */
 .row.file:hover { background-image: linear-gradient(var(--hover-bg), var(--hover-bg)); }
 
-/* 续段标识：卡片被列边界切开后，下一列顶部用它说明「这是谁的后续」。
+/* 续段标识：卡片被列边界切开后，下一列顶部用它说明“这是谁的后续”。
    不画左右实线边框而用虚线，是为了在视觉上与卡片主体区分开 */
 .cont {
   position: absolute;
@@ -589,7 +589,7 @@ body {
  * 只在没有 hidden 属性时才铺满全屏。
  * 不能把 display: flex 直接写进上面那条规则：[hidden] 的 UA 规则（display: none）会被
  * 任何作者样式的 display 声明盖过，于是本元素即使 hidden 也照旧铺满全屏——它带着 inset: 0，
- * 于是静默地吞掉整页的点击（表现为"点了没反应"，控制台也没有报错）。
+ * 于是静默地吞掉整页的点击（表现为“点了没反应”，控制台也没有报错）。
  * 这一条是补上的：本轮新增"点行看 diff"之后才暴露出来。此前看板上没有任何可点的东西，
  * 覆盖全屏也碍不着谁，因此一直没被发现
  */
@@ -610,7 +610,7 @@ body {
 #status.error { color: var(--status-error, var(--git-conflicting)); }
 
 /* ——— 看板底栏 ———
- * 整宽固定在底部，左侧「更新于…」，右侧是看板层面的动作（拉取全部、主题选择）与它们的结果。
+ * 整宽固定在底部，左侧“更新于…”，右侧是看板层面的动作（拉取全部、主题选择）与它们的结果。
  * 为什么收成一条：#status 原来在文档流里，被按视口算高的看板顶到屏幕之外（几乎看不到），
  * 而 #tools 浮在左下角会压住最后一行卡片；合成一条之后各占一侧，谁也不再压谁
  */
@@ -762,10 +762,10 @@ body {
  * 形态照 VSCode 的通知那套：右下角浮出一叠通知，点关闭才收；底栏右端一个铃铛，
  * 点开是能翻历史、能逐条清除的通知中心。
  *
- * 为什么不做成"原位一行字"：那一行会被下一次写操作直接覆盖，用户的原话是"一闪而过"。
+ * 为什么不做成“原位一行字”：那一行会被下一次写操作直接覆盖，用户的原话是“一闪而过”。
  * 通知不走这条路——它有自己的容器，不与看板、卡片上的任何元素抢位置，
  * 因此也不会被任何一次重绘冲掉。这也是这一块不设自动消失的理由：
- * 抱怨的根源就是"还没看清就没了"，再加一个定时器只会把同一个问题换个地方重现
+ * 抱怨的根源就是“还没看清就没了”，再加一个定时器只会把同一个问题换个地方重现
  *
  * 三类颜色的出处：严重度只有 editorInfo/editorWarning/editorError 三种语义色可抄
  * （status-info/warn/error，见 cmd/ui_theme.go），底色用 editorWidget.background
@@ -911,22 +911,22 @@ body {
 }
 #notif-empty[hidden] { display: none; }
 
-/* 尊重「减少动态效果」的系统设置：这类用户对位移动画敏感，动画会让界面难以使用。
+/* 尊重“减少动态效果”的系统设置：这类用户对位移动画敏感，动画会让界面难以使用。
    滚轮那条平滑在这里管不到（它已改由 app.js 驱动），app.js 会用同一个媒体查询
    把动画时长降为 0，两处必须保持一致 */
 @media (prefers-reduced-motion: reduce) {
   .row, .cont { transition: none; }
-  /* 通知的入场位移也在这里关掉：这类用户对位移动画敏感，通知又是"随时可能冒出来"的东西 */
+  /* 通知的入场位移也在这里关掉：这类用户对位移动画敏感，通知又是“随时可能冒出来”的东西 */
   .notif { animation: none; }
 }
 
 /*
  * ——— diff 视图 ———
  *
- * 覆盖整页替换看板（用户明确要求「点开后整页看 diff，Esc 或返回键回看板」）。
+ * 覆盖整页替换看板（用户明确要求“点开后整页看 diff，Esc 或返回键回看板”）。
  * 用 fixed + inset:0 而不是把看板 display:none：看板的行是绝对定位的，一旦被移出布局，
  * app.js 里的 layout 就量不到行高（offsetHeight 归零），关闭后必须先重排才能恢复——
- * 而"盖住但不移出布局"让看板始终维持着关闭前的状态，回来时不需要重排、也不会闪一下
+ * 而“盖住但不移出布局”让看板始终维持着关闭前的状态，回来时不需要重排、也不会闪一下
  */
 /* diff 只声明自己的层级与两处归属它的东西：几何、底色、标题栏都在 .overlay 里 */
 #diff { z-index: var(--z-diff); }
@@ -937,7 +937,7 @@ body {
   white-space: nowrap;
   font-weight: 700;
 }
-/* 标题里的文件路径比主体淡一档，与文件行里"目录淡化"一致 */
+/* 标题里的文件路径比主体淡一档，与文件行里“目录淡化”一致 */
 #diff-title .dir {
   font-weight: 400;
   color: var(--text-dim);
@@ -993,7 +993,7 @@ kbd {
  * 整仓 diff 里的一个文件。标题贴在滚动容器顶部（sticky），好让人滚到一个文件的中段时
  * 仍然知道自己在读哪个文件——"整页 diff 里分不清不同文件"就是这条要解决的问题
  *
- * content-visibility: auto 是给"一次改了几百个文件"准备的：屏幕外的段落跳过排版与绘制。
+ * content-visibility: auto 是给“一次改了几百个文件”准备的：屏幕外的段落跳过排版与绘制。
  * contain-intrinsic-size 给浏览器一个高度估算，否则滚动条会随内容进出视口而跳动。
  * 代价是估算与实际不符时滚动位置会小幅回调——两害相权，长列表卡死更难受
  */
@@ -1086,10 +1086,10 @@ pre.diff .add { background: var(--diff-add-bg); }
 pre.diff .del { background: var(--diff-del-bg); }
 /*
  * @@ 段头与 diff/index/---/+++ 这类 git 元信息统一用淡色。
- * 为什么不给段头单独配色：本视图已经约定"不做语法高亮"，只有真正增删的行着色；
- * 若把段头也染色（曾用绿色），在一屏里它和新增行是同一个色系，容易被误读成"多了一行"。
+ * 为什么不给段头单独配色：本视图已经约定“不做语法高亮”，只有真正增删的行着色；
+ * 若把段头也染色（曾用绿色），在一屏里它和新增行是同一个色系，容易被误读成“多了一行”。
  * git 的 color.diff.frag 默认确实是青色，但终端配色由调色板决定、没有可引用的固定值，
- * 与其编一个十六进制，不如按"非内容行统一淡化"处理
+ * 与其编一个十六进制，不如按“非内容行统一淡化”处理
  */
 pre.diff .hunk,
 pre.diff .meta { color: var(--text-dim); }
@@ -1102,11 +1102,11 @@ pre.diff .meta { color: var(--text-dim); }
  * ——— 行内动作：暂存 / 取消暂存 ———
  *
  * 与 VSCode 一样只在鼠标移入该行时出现。这里用 visibility 而不是 display：
- * visibility: hidden 的元素仍然占位，鼠标移入时不会因为按钮"长出来"而整行重排、
+ * visibility: hidden 的元素仍然占位，鼠标移入时不会因为按钮“长出来”而整行重排、
  * 也不会让路径的省略号位置跳动。
  *
  * 代价写在这里以免日后当成缺陷：visibility: hidden 的元素不可聚焦，因此这两个按钮
- * 只能用鼠标操作。VSCode 那边有键盘快捷键兜底，本看板没有，暂时接受（要补的话，
+ * 只能用鼠标操作。VSCode 那边有键盘快捷键可用，本看板没有，暂时接受（要补的话，
  * 得先设计一套快捷键，那是一件独立的事）
  */
 .row .acts {
@@ -1127,9 +1127,9 @@ pre.diff .meta { color: var(--text-dim); }
   cursor: pointer;
 }
 .row:hover .act { visibility: visible; }
-/* 分组行头上的整组动作常亮：它们不是"鼠标移到这一行才出现"的行内动作，而是这一组的常设入口 */
+/* 分组行头上的整组动作常亮：它们不是“鼠标移到这一行才出现”的行内动作，而是这一组的常设入口 */
 .act.always { visibility: visible; }
-/* 图标按钮的 hover 取 toolbar.hoverBackground：它才是"工具条上的动作"那个语义，
+/* 图标按钮的 hover 取 toolbar.hoverBackground：它才是“工具条上的动作”那个语义，
    行的 list.hoverBackground 是"列表行"的语义 */
 .act:hover { background: var(--toolbar-hover-bg, var(--hover-bg)); color: var(--text); }
 
@@ -1137,7 +1137,7 @@ pre.diff .meta { color: var(--text-dim); }
 #board.busy { cursor: progress; }
 #board.busy .act { pointer-events: none; }
 
-/* 最近一次写操作的结果。空的时候整行消失（:empty 对"没有任何子节点"成立，
+/* 最近一次写操作的结果。空的时候整行消失（:empty 对“没有任何子节点”成立，
    而 textContent = '' 正好清空子节点） */
 #diff-op {
   margin: 0;
@@ -1215,7 +1215,7 @@ pre.diff .meta { color: var(--text-dim); }
   border-radius: var(--radius-sm);
   padding: 0 var(--sp-2);
 }
-/* 占位符要能读出来，它同样是"前景压在底色上"，因此也走对比度兜底那一对 */
+/* 占位符要能读出来，它同样是“前景压在底色上”，因此也走对比度回退那一对 */
 #graph-msg::placeholder { color: var(--input-placeholder, var(--text-dim)); }
 #graph-msg:focus { outline: none; border-color: var(--focus-ring); }
 
@@ -1267,7 +1267,7 @@ pre.diff .meta { color: var(--text-dim); }
   /* 出现只做淡入、不做位移：跟手的卡片一旦有位移，快速划过一排提交时会看起来在抖 */
   animation: hovercard-in var(--dur-fast) var(--ease-decel);
 }
-/* 钉住之后不再重复淡入，并用焦点色描一圈边表明"它现在是固定的" */
+/* 钉住之后不再重复淡入，并用焦点色描一圈边表明“它现在是固定的” */
 .hovercard.pinned {
   border-color: var(--focus-ring);
   animation: none;
@@ -1292,7 +1292,7 @@ pre.diff .meta { color: var(--text-dim); }
 /*
  * 小图标按钮：钉住态提交详情卡的关闭、通知单条的关闭共用这一份。
  * 之所以提出来：两处的尺寸、留白、hover 底色与前景完全相同，各写一份迟早会漂移，
- * 而"关闭"这种控件一旦尺寸不一致，并排看就很明显
+ * 而“关闭”这种控件一旦尺寸不一致，并排看就很明显
  */
 .icon-btn {
   flex: none;
@@ -1344,7 +1344,7 @@ pre.diff .meta { color: var(--text-dim); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 文件行可点：点开"这个文件在那次提交里改了什么"。hover 底色沿用行选中的令牌，
+/* 文件行可点：点开“这个文件在那次提交里改了什么”。hover 底色沿用行选中的令牌，
    与看板上那些可点的行保持同一套观感 */
 .hovercard .files li.clickable { cursor: pointer; }
 /* 用 --hover-bg（list.hoverBackground，与看板行、按钮次要态同一个令牌） */
@@ -1357,7 +1357,7 @@ pre.diff .meta { color: var(--text-dim); }
 
 /*
  * 提交行。行高必须等于泳道高度（app.js 的 SWIMLANE_HEIGHT = 22，也是 --row-h 的取值）：
- * 线段是按"上一行底边到这一行底边"画的，行高一变，连线就在行间断开
+ * 线段是按“上一行底边到这一行底边”画的，行高一变，连线就在行间断开
  */
 .g-row {
   display: flex;
@@ -1369,7 +1369,7 @@ pre.diff .meta { color: var(--text-dim); }
   white-space: nowrap;
 }
 .g-row:hover { background: var(--hover-bg); }
-/* 选中态与 hover 分开：hover 是"鼠标正经过"，选中是"用户钉住了这一条"。
+/* 选中态与 hover 分开：hover 是“鼠标正经过”，选中是“用户钉住了这一条”。
    两者同色的话，鼠标一移开就看不出刚才选的是哪条了 */
 .g-row.selected {
   background: var(--list-selected-bg, var(--hover-bg));
@@ -1379,8 +1379,8 @@ pre.diff .meta { color: var(--text-dim); }
 
 /*
  * 圆点的描边与 HEAD 内圈的填充。这两件事为什么不在 app.js 里画：
- * 它们的颜色必须等于"这一行当前坐在什么底色上"——描边是给圆点镶一圈底色、把穿过它的连线
- * 压住；HEAD 内圈是拿底色在实心点上"挖"一个洞，洞的颜色当然也得是行底色。而行底色会随
+ * 它们的颜色必须等于“这一行当前坐在什么底色上”——描边是给圆点镶一圈底色、把穿过它的连线
+ * 压住；HEAD 内圈是拿底色在实心点上“挖”一个洞，洞的颜色当然也得是行底色。而行底色会随
  * hover（--hover-bg）与选中（--list-selected-bg）变化，写在 JS 里只会拿到初始值，鼠标一
  * 经过就露出一圈不跟着变的色边。上游同样交给样式表，且四组状态各写一遍（scm.css 的
  * .graph > circle、circle:first-of-type、circle:nth-of-type(2)、circle:last-child）

@@ -3,7 +3,7 @@
 /*
  * ggt ui 的页面逻辑。
  *
- * 布局方案：行级流式横向布局。把「行」（仓库标题行、变更文件行）而不是「整张卡片」当作布局单元，
+ * 布局方案：行级流式横向布局。把“行”（仓库标题行、变更文件行）而不是“整张卡片”当作布局单元，
  * 依次填进当前列；列高恒等于视口高，填满就换到右侧下一列，页面只横向滚动。
  *
  * 为什么不用 CSS 的 columns（多列文本流）：实测三处不可接受——
@@ -150,7 +150,7 @@ const MSG = {
     graphCount: '已显示 {{shown}} / {{total}}',
     graphLoading: '加载中…',
     graphEnd: '已加载全部',
-    graphLimitReached: '已到 {{n}} 条上限，可取消勾选「全部分支与 tag」往回看',
+    graphLimitReached: '已到 {{n}} 条上限，可取消勾选“全部分支与 tag”往回看',
     graphNoCommits: '还没有提交',
     graphNoSubject: '（无提交信息）',
     graphFiles: '改动的文件',
@@ -181,7 +181,7 @@ const MSG = {
 
 const LANG = (typeof window.__GGT_LANG__ === 'string' && window.__GGT_LANG__) || 'en';
 
-// PAGE_SETTINGS 是服务端随首页注入的设置快照（按配置注册表生成），供"页面行为"读用。
+// PAGE_SETTINGS 是服务端随首页注入的设置快照（按配置注册表生成），供“页面行为”读用。
 // 不在页面启动时去 /api/settings 取一次，是因为这些取值只影响页面行为、不影响首屏渲染，
 // 为它们多一次请求不值得。拿不到时按空数组处理，各用途退回自己的默认行为
 const PAGE_SETTINGS = Array.isArray(window.__GGT_SETTINGS__) ? window.__GGT_SETTINGS__ : [];
@@ -207,7 +207,7 @@ function t(key, vars) {
 // ——— 常量 ———
 
 // 轮询间隔。取值权衡：状态变化（保存一个文件）要能较快反映，但又不能太频繁——
-// 每次请求都会触发一轮服务端采集（每个仓库一个 git 进程），服务端虽有 2 秒缓存兜底，
+// 每次请求都会触发一轮服务端采集（每个仓库一个 git 进程），服务端虽会缓存 2 秒，
 // 多个标签页同时开着时压力仍会叠加
 const POLL_MS = 5000;
 
@@ -223,7 +223,7 @@ const NOMINAL_FRAME_MS = 1000 / 60;
 // DOM_DELTA_LINE 时一行折算的像素。与 Slint 的 line→60 逻辑像素对齐
 // （i-slint-backend-winit 的 LineDelta(lx, ly) => (lx * 60., ly * 60.)）
 const LINE_PX = 60;
-// 判定「位置被别人改了」的像素阈值：拖滚动条、按方向键、触控板横扫都会改它，
+// 判定“位置被别人改了”的像素阈值：拖滚动条、按方向键、触控板横扫都会改它，
 // 阈值用来吸收浏览器取整的误差
 const EXTERNAL_SCROLL_TOLERANCE = 3;
 
@@ -236,7 +236,7 @@ const diffBackEl = document.getElementById('diff-back');
 const diffTitleEl = document.getElementById('diff-title');
 const diffBodyEl = document.getElementById('diff-body');
 const diffOpEl = document.getElementById('diff-op');
-// 提交信息与提交按钮属于"仓库卡片"（VSCode 的源码管理视图里这一对也在最上方）
+// 提交信息与提交按钮属于“仓库卡片”（VSCode 的源码管理视图里这一对也在最上方）
 const commitMsgEl = document.getElementById('graph-msg');
 const commitBtnEl = document.getElementById('graph-commit-btn');
 const fetchBtnEl = document.getElementById('fetch-btn');
@@ -288,11 +288,11 @@ fetchBtnEl.textContent = t('fetch');
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 const authHeaders = TOKEN ? { 'X-WebUI-Token': TOKEN } : undefined;
 
-// rowEls 是「上一次渲染留下的行元素」，按 key 索引。
+// rowEls 是“上一次渲染留下的行元素”，按 key 索引。
 // 保留它们是为了 DOM 复用：数据刷新时能复用的元素就复用，位置变化由 CSS transition 平滑过渡；
 // 若每次都重建 DOM，卡片会瞬间跳到新位置，看起来像整页闪烁
 let rowEls = new Map();
-// newRows 是「本次渲染新建的行」，layout 定位完它们之后要在下一帧把过渡打开回来。
+// newRows 是“本次渲染新建的行”，layout 定位完它们之后要在下一帧把过渡打开回来。
 // 之所以要记一批而不是逐行处理：见 reconcile 与 layout 末尾的说明
 let newRows = [];
 let lastSpecs = [];
@@ -316,16 +316,16 @@ function cssVar(name, fallback) {
 //     window.innerWidth  1360    window.innerHeight  2944
 //     documentElement.clientWidth  390    clientHeight  844
 // 看板的宽高偏偏又由 JS 按列数算出来写到元素上（见 layout 末尾的 board.style.width/height），
-// 于是"尺寸读大了 → 看板算大了 → 溢出更多 → 尺寸读得更大"能自举成一个稳态：窄屏下按 4 列
+// 于是“尺寸读大了 → 看板算大了 → 溢出更多 → 尺寸读得更大”会这样一直互相放大：窄屏下按 4 列
 // 排并横向溢出。分列、贴边、滚轮横滚上限与翻页折算因此全都按一个被撑大的尺寸在算。
 // 更隐蔽的一层：layout 是轮询也会重跑的，一次重排就能把列高按 2944 算成近三倍，整块看板
 // 塌成一列。改读 documentElement 的 client 尺寸后，这两条路都不会再被内容反过来影响
 //
-// 有一件事要说明白：一开始把"窄屏下详情卡被摆到视口外、点不到关闭按钮"也记在这条因果上，
+// 有一件事要说明白：一开始把“窄屏下详情卡被摆到视口外、点不到关闭按钮”也记在这条因果上，
 // 实测证明不成立——那种情形下新旧代码算出的位置一模一样，真因是锚点本身在视口外，
 // 见 commitCardPosition 的注释。这里不再重复那个错误结论
 //
-// 取 client 尺寸而不是 visualViewport：后者语义是"当前可见区"，会随捏合缩放变化，而这里要的是
+// 取 client 尺寸而不是 visualViewport：后者语义是“当前可见区”，会随捏合缩放变化，而这里要的是
 // 布局依据。client 尺寸还会扣掉经典滚动条占宽，用于分列与贴边反而更准——无溢出时它与
 // innerWidth 的差别也就只有滚动条那十几像素，其余场合与原来的取值一致
 function viewportSize() {
@@ -340,7 +340,7 @@ function esc(s) {
 // ——— 变更状态的字母与配色 ———
 //
 // 逐条照抄 VSCode extensions/git/src/repository.ts 的 Resource.getStatusLetter 与 getStatusColor。
-// 两种状态下标：porcelain 的 X 位是「暂存区相对 HEAD」，Y 位是「工作区相对暂存区」。
+// 两种状态下标：porcelain 的 X 位是“暂存区相对 HEAD”，Y 位是“工作区相对暂存区”。
 
 // 暂存侧（X 位）
 const STAGED = {
@@ -355,9 +355,9 @@ const STAGED = {
 // 工作区侧（Y 位）
 //
 // A 这一档对应 git 的 intent-to-add（`git add -N`）：v2 输出形如 "1 .A N... path"，
-// 即索引位是 "."、工作区位是 "A"。上游把它当"已新增"处理（repository.ts 的 raw.y === 'A'
+// 即索引位是 "."、工作区位是 "A"。上游把它当“已新增”处理（repository.ts 的 raw.y === 'A'
 // 映射到 INTENT_TO_ADD，字母 'A'、配色 addedResourceForeground）。此前这里没有 A，
-// 该记录会落到下面 fileStatus 的兜底分支，字母侥幸还是 A，颜色却取了"已忽略"的灰并加斜体，
+// 该记录会落到下面 fileStatus 的默认分支，字母侥幸还是 A，颜色却取了“已忽略”的灰并加斜体，
 // 与 VSCode 的绿 A 不一致——这是实测（`git add -N` 后取 status）发现的
 const WORKTREE = {
   A: { letter: 'A', cls: 'st-added' },
@@ -499,8 +499,8 @@ function iconGlyph(def) {
 }
 
 // iconHTML 生成文件类型图标的 HTML。
-// 颜色用图标文档里的 fontColor（Seti 为每种类型配了色），因此图标颜色是「类型色」，
-// 与文件名、状态字母的「状态色」互不干扰——这正是 VSCode 里的观感
+// 颜色用图标文档里的 fontColor（Seti 为每种类型配了色），因此图标颜色是“类型色”，
+// 与文件名、状态字母的“状态色”互不干扰——这正是 VSCode 里的观感
 function iconHTML(path) {
   const map = prefersLight.matches ? iconLight : iconDark;
   if (!map) return '';
@@ -538,19 +538,19 @@ const UI_GROUPS = [
 
 // buildSpecs 把仓库列表摊平成行序列。顺序即渲染顺序，排序由服务端完成（排序规则只有一处实现）
 //
-// 干净的仓库只占一行（只有标题行，不额外补一行「工作区干净」说明）：
+// 干净的仓库只占一行（只有标题行，不额外补一行“工作区干净”说明）：
 // 实测真实配置下 37 个仓库里有 33 个是干净的，若每个都补一行说明，
-// 大半屏都在重复同一句话，而它的信息量等于零——也正是用户提出的痛点
+// 大半屏都在重复同一句话，而它的信息量等于零——也正是用户提出的问题
 //
 // 分组是 VSCode 语义的照搬：每个仓库内部按 UI_GROUPS 分段，空分组不显示。
-// 分组的行头也占一行（高度与其它行同为 22px），因此布局那套"行高即常量"的前提不受影响
+// 分组的行头也占一行（高度与其它行同为 22px），因此布局那套“行高即常量”的前提不受影响
 function buildSpecs(repos) {
   const specs = [];
   for (const repo of repos) {
     specs.push({ key: repo.path + '\u0000h', kind: 'head', repo });
 
     if (repo.error) {
-      // 采集失败的仓库必须显式说明失败，不能显示成「工作区干净」
+      // 采集失败的仓库必须显式说明失败，不能显示成“工作区干净”
       specs.push({ key: repo.path + '\u0000e', kind: 'note', repo, text: t('failed') + ': ' + repo.error });
     } else {
       for (const group of UI_GROUPS) {
@@ -558,7 +558,7 @@ function buildSpecs(repos) {
         if (files.length === 0) continue; // 空分组不显示（VSCode 也不显示）
         specs.push({ key: repo.path + '\u0000g\u0000' + group.id, kind: 'group', repo, group, count: files.length });
         for (const f of files) {
-          // 行的 key 用"分组 + 文件路径"而不是下标：文件增删时其余行的元素还能被复用，
+          // 行的 key 用“分组 + 文件路径”而不是下标：文件增删时其余行的元素还能被复用，
           // 用下标的话一次插入就让后面所有行的 key 全变、全部重建、动画全丢。
           // 而带上分组是必须的——同一个文件会在两组各出现一次，不带分组的 key 会让两组抢同一个元素
           specs.push({
@@ -573,8 +573,8 @@ function buildSpecs(repos) {
     }
     // 干净仓库不再补说明行：实时状态已经在标题行上（分支、领先/落后、游离 HEAD、尚无提交）
 
-    // 标记卡片末行：CSS 靠它画下边框与圆角收口。跨列被切断的卡片，其上一段的末行不带这个标记，
-    // 视觉上自然表现为「还没结束，下接另一列」
+    // 标记卡片末行：CSS 靠它画下边框与圆角。跨列被切断的卡片，其上一段的末行不带这个标记，
+    // 视觉上自然表现为“还没结束，下接另一列”
     specs[specs.length - 1].foot = true;
   }
   return specs;
@@ -595,7 +595,7 @@ function rowHTML(s) {
     }
 
     // 分支与待办写在标题行右侧，字体更小、颜色更淡——与 VSCode 的仓库标题只显示名字不同，
-    // 多仓库看板需要在一行内同时说清「哪个分支、有没有没推的东西」
+    // 多仓库看板需要在一行内同时说清“哪个分支、有没有没推的东西”
     const meta = [];
     if (r.noCommits) meta.push(t('noCommits'));
     else if (r.detached) meta.push(esc(r.branch || t('detached')));
@@ -609,10 +609,10 @@ function rowHTML(s) {
   }
 
   if (s.kind === 'group') {
-    // 分组行头：组名 + 该组的文件数，外加"整组动作"——未暂存那组给 +（暂存全部），
+    // 分组行头：组名 + 该组的文件数，外加“整组动作”——未暂存那组给 +（暂存全部），
     // 已暂存那组给 −（全部取消暂存）。
     // 未合并组刻意不给按钮：冲突得由人来分辨，批量暂存会把还带着冲突标记的文件一起 stage 进去
-    // （与单个文件那个按钮同一套理由），而"点一下全部暂存"恰恰是最容易误触的操作
+    // （与单个文件那个按钮同一套理由），而“点一下全部暂存”恰恰是最容易误触的操作
     let action = '';
     if (s.group.id === 'work') {
       action = '<button class="act always" type="button" data-act="stage-all" title="' +
@@ -630,12 +630,12 @@ function rowHTML(s) {
     const f = s.file;
     const side = s.group ? s.group.id : 'work';
     const st = fileStatus(f, side);
-    // 路径拆成「文件名 + 目录」两部分：文件名用状态色，目录用更淡的色。
+    // 路径拆成“文件名 + 目录”两部分：文件名用状态色，目录用更淡的色。
     // 与 VSCode 在列表模式下把路径作为 description 淡化显示一致，也让同类文件名更容易对齐扫读
     const slash = f.path.lastIndexOf('/');
     const base = slash === -1 ? f.path : f.path.slice(slash + 1);
     const dir = slash === -1 ? '' : f.path.slice(0, slash);
-    // 行尾的动作按钮：只给"属于这一组"的那一个。未暂存组给「暂存」，已暂存组给「取消暂存」，
+    // 行尾的动作按钮：只给“属于这一组”的那一个。未暂存组给“暂存”，已暂存组给“取消暂存”，
     // 未合并组两个都不给（冲突要人来解决，后端也会拒绝）——与 VSCode 的行内动作一致
     let acts = '';
     if (side === 'work') {
@@ -649,7 +649,7 @@ function rowHTML(s) {
       iconHTML(base) +
       // 目录用 .dir 而不是 .branch：.branch 的规则只作用于仓库标题行（.row.head .branch），
       // 用在文件行上会匹配不到任何规则，目录便继承了文件名的状态色——而两处注释都写明
-      // 目录应当比文件名更淡。这是一处类名与规则名对不上的笔误，颜色上的表现是"路径整段同色"
+      // 目录应当比文件名更淡。这是一处类名与规则名对不上的笔误，颜色上的表现是“路径整段同色”
       '<span class="path">' + esc(base) + (dir ? '<span class="dir"> ' + esc(dir) + '</span>' : '') + '</span>' +
       '<span class="letter">' + esc(st.letter) + '</span>' +
       acts
@@ -680,13 +680,13 @@ function reconcile(specs) {
 
     const cls = ['row', s.kind];
     if (s.foot) cls.push('foot');
-    // 分组类：只用来给「已暂存 / 未暂存」两组铺不同的半透明底色（见 style.css）。
+    // 分组类：只用来给“已暂存 / 未暂存”两组铺不同的半透明底色（见 style.css）。
     // 状态类（st-*）负责文件自己的字母与文字颜色，两者互不干扰
     if (s.group) cls.push('g-' + s.group.id);
     if (s.file) cls.push(fileStatus(s.file, s.group ? s.group.id : 'work').cls);
     if (isNew) {
       // 新行在首次定位前必须关掉过渡：行是绝对定位的，刚建出来时 transform 是 none
-      // （即页面左上角），而它的真实坐标要等 layout() 才写入，带着过渡就会「从左上角飞过来」
+      // （即页面左上角），而它的真实坐标要等 layout() 才写入，带着过渡就会“从左上角飞过来”
       // ——暂存一个文件后，新出现在另一组里的那一行正是这么飞的
       cls.push('no-anim');
       newRows.push(el);
@@ -703,7 +703,7 @@ function reconcile(specs) {
 
     next.set(s.key, el);
     // 元素与它当前对应的行数据挂钩：元素是复用的，数据每次渲染都在换，
-    // 点击时（事件委托）只有从这里才能拿到"这一行是哪个仓库的哪个文件"
+    // 点击时（事件委托）只有从这里才能拿到“这一行是哪个仓库的哪个文件”
     el.__spec = s;
     els.push(el);
   }
@@ -728,7 +728,7 @@ function reconcile(specs) {
 //
 // 性能：本函数既不读布局属性，也不往已布局的容器里逐个插元素——这两件事都会让浏览器
 // 立刻结算当时积压的样式，把本该 O(行数) 的活变成 O(行数²)。下面两条都是踩出来的，
-// 修法不是"优化"，而是拿掉触发点：
+// 修法不是“优化”，而是拿掉触发点：
 //
 //   1) 行高曾经在循环里读 el.offsetHeight。写一次 transform 就让浏览器把待结算的样式算一遍，
 //      紧接着的读取又强制它立刻结算，于是每行都真的重排一次。而三种行（标题行、文件/说明行、
@@ -754,12 +754,12 @@ function layout(els, specs) {
   // 不在这里自己写死：底栏是后加的，硬编码的话它一出现就会压住最下面一行卡片，
   // 而"JS 里一份、CSS 里一份"的数字迟早会漂移
   // 视口高走 viewportSize 而不是 window.innerHeight：内容溢出时后者会被撑大，而看板的高度又是
-  // 按它算出来写回元素的，那正是"看板把自己撑高"的闭环（见 viewportSize 的注释）
+  // 按它算出来写回元素的，那正是“看板把自己撑高”的循环（见 viewportSize 的注释）
   const colH = viewportSize().h - cssVar('--page-pad', 16) * 2 - cssVar('--statusbar-h', 30);
 
   // tailRows[i] 是第 i 条标题行之后、属于同一张卡片的内容行数，用来判断
-  // 「列尾还值不值得起一张新卡片」。
-  // 原实现对所有卡片一律要求「标题 + 三行内容」（88px），于是「干净仓库」这种本来
+  // “列尾还值不值得起一张新卡片”。
+  // 原实现对所有卡片一律要求“标题 + 三行内容”（88px），于是“干净仓库”这种本来
   // 只有一行标题的卡片也被要求 88px：列尾明明还放得下它（实测 92px），却提前换列，
   // 左列因此只填到 956/1048px。按卡片自己的行数算之后，没有内容行的卡片只需一行的高度
   const tailRows = new Array(specs.length).fill(0);
@@ -787,7 +787,7 @@ function layout(els, specs) {
     if (s.repo.path !== prevRepo && used > 0) used += GAP;
     prevRepo = s.repo.path;
 
-    // 列尾放不下「标题 + 这张卡片最多三行内容」就整卡顺延。上限取三行是为了避免
+    // 列尾放不下“标题 + 这张卡片最多三行内容”就整卡顺延。上限取三行是为了避免
     // 标题孤零零留在列尾，但下限必须按卡片自己的行数来，否则单行卡片会被白白推走
     if (s.kind === 'head' && used > 0 && colH - used < headH + Math.min(tailRows[i], 3) * rowH) {
       col++;
@@ -823,7 +823,7 @@ function layout(els, specs) {
   board.style.width = (col + 1) * (colW + GAP) + 'px';
   board.style.height = colH + 'px';
 
-  // 新行的坐标已经写入，下一帧再把过渡打开：同一帧里「关过渡 → 写坐标 → 开过渡」会被浏览器
+  // 新行的坐标已经写入，下一帧再把过渡打开：同一帧里“关过渡 → 写坐标 → 开过渡”会被浏览器
   // 合并成一次样式结算，等于没关，动画照样从左上角起飞（must 经过一次真正的样式结算才行）
   if (newRows.length) {
     const pending = newRows;
@@ -836,29 +836,29 @@ function layout(els, specs) {
 
 // ——— diff 视图 ———
 //
-// 覆盖整页打开某个仓库或某个文件的改动（对齐结论：不做语法高亮、分「已暂存 / 未暂存」两段、
+// 覆盖整页打开某个仓库或某个文件的改动（对齐结论：不做语法高亮、分“已暂存 / 未暂存”两段、
 // 覆盖整页替换看板、Esc 或返回键回看板）。
 
 // diffOpen 为真表示覆盖层正打开。它同时关掉三件事，各自的理由不同：
 //   - 轮询：看板被盖住，刷了也没人看，而每次刷新都要让服务端为每个仓库起一趟 git
-//   - resize 重排：看板仍是"被盖住但仍在布局中"，尺寸没有变化，重排纯属白花
+//   - resize 重排：看板仍是“被盖住但仍在布局中”，尺寸没有变化，重排纯属白花
 //   - 滚轮转横向：覆盖层里滚轮应当滚动 diff 正文，被抢去滚看板会让 diff 滚不动
 let diffOpen = false;
 // 打开前的横向滚动位置。看板在覆盖层关闭后要回到用户刚才看的那一列，
 // 否则关掉 diff 会莫名跳回最左
 let diffScrollX = 0;
-// 每次打开的序号：响应回来时用它丢弃"用户已经关掉或换了目标"的那次结果
+// 每次打开的序号：响应回来时用它丢弃“用户已经关掉或换了目标”的那次结果
 let diffSeq = 0;
 
 // settingsOpen 为真表示设置面板正打开。
-// 它刻意与 diff、卡片这两个标志声明在一起：三者都是"整页覆盖 + 锁定滚动"的浮层，
-// 而"有没有浮层开着"这件事必须被同一处看到（见 syncScrollLock 与 resume），
+// 它刻意与 diff、卡片这两个标志声明在一起：三者都是“整页覆盖 + 锁定滚动”的浮层，
+// 而“有没有浮层开着”这件事必须被同一处看到（见 syncScrollLock 与 resume），
 // 分散声明时最典型的漏法是新面板忘了并进去，表现为打开设置后背后还能滚动
 let settingsOpen = false;
 
 // syncScrollLock 统一决定要不要锁住页面滚动，并顺带切换遮罩层。
-// 遮罩与滚动锁由同一处决定：两件事都取决于"有没有浮层开着"，分头写迟早会出现
-// "层关了、模糊还在"这种半截状态
+// 遮罩与滚动锁由同一处决定：两件事都取决于“有没有浮层开着”，分头写迟早会出现
+// “层关了、模糊还在”这种半截状态
 function syncScrollLock() {
   const overlayOpen = diffOpen || cardOpen || settingsOpen;
   document.documentElement.style.overflow = overlayOpen ? 'hidden' : '';
@@ -933,7 +933,7 @@ function diffSectionTitle(kind, spec) {
 }
 
 // diffFileStat 造一段文件头右侧的增删行数。
-// 二进制显示"二进制"而不是 +0 −0：那两个 0 是"git 数不出来"，不是"没改"。
+// 二进制显示“二进制”而不是 +0 −0：那两个 0 是"git 数不出来"，不是“没改”。
 // 字段名与提交卡的文件行一致（都来自 git 的 --numstat），两处不必各记一套
 function diffFileStat(f) {
   if (!f) return '';
@@ -988,8 +988,8 @@ function diffFileSections(text, files) {
 }
 
 // renderDiff 把 /api/diff 的响应画进覆盖层。
-// spec 是这次请求的那一行（仓库 + 可选文件 + 可选提交），只用于标题与"要不要提示未跟踪文件"，
-// 正文一律来自响应——页面不猜"应该有哪些改动"
+// spec 是这次请求的那一行（仓库 + 可选文件 + 可选提交），只用于标题与“要不要提示未跟踪文件”，
+// 正文一律来自响应——页面不猜“应该有哪些改动”
 function renderDiff(repo, spec, out) {
   const blocks = [];
   const file = spec.file || null;
@@ -1000,18 +1000,18 @@ function renderDiff(repo, spec, out) {
     return;
   }
 
-  // 五条提示都放在正文之前：它们说明"下面的内容为什么长这样或为什么不完整"，
+  // 五条提示都放在正文之前：它们说明“下面的内容为什么长这样或为什么不完整”，
   // 放在末尾会被长 diff 推到看不见的地方
   if (out.untracked) blocks.push('<p class="diff-note">' + esc(t('diffUntracked')) + '</p>');
   if (out.unmerged) blocks.push('<p class="diff-note">' + esc(t('diffUnmerged')) + '</p>');
   if (out.binary) blocks.push('<p class="diff-note">' + esc(t('diffBinary')) + '</p>');
   if (out.truncated) blocks.push('<p class="diff-note">' + esc(t('diffTruncated')) + '</p>');
   // 合并提交只跟第一个父提交比（后端把 git 的组合格式挡掉了）：不说明的话，
-  // "这次提交就改了这些"会被理解成相对两个父提交的合计
+  // “这次提交就改了这些”会被理解成相对两个父提交的合计
   if (spec.commit && spec.commit.merge) {
     blocks.push('<p class="diff-note">' + esc(t('diffMergeFirstParent')) + '</p>');
   }
-  // 整仓视图看不到未跟踪文件（git diff 不含它们）。与其让人以为"这个仓库只有这些改动"，
+  // 整仓视图看不到未跟踪文件（git diff 不含它们）。与其让人以为“这个仓库只有这些改动”，
   // 不如说清它们在哪儿看。提交视图与它无关：那看的是历史，不是当前工作区
   if (!file && !spec.commit) {
     const untracked = (repo.files || []).filter((it) => it.untracked).length;
@@ -1026,7 +1026,7 @@ function renderDiff(repo, spec, out) {
     files: s.files,
   }));
   for (const s of sections) {
-    // 单文件视图与"切不开"的两段都退回整块渲染：那边只有一份内容，分段没有意义
+    // 单文件视图与“切不开”的两段都退回整块渲染：那边只有一份内容，分段没有意义
     const parts = s.files === undefined ? null : diffFileSections(s.text, s.files);
     if (!parts) {
       const html = diffHTML(s.text, !!out.untracked);
@@ -1052,8 +1052,8 @@ function renderDiff(repo, spec, out) {
     blocks.push('<section><h2>' + esc(s.title) + '</h2>' + body + '</section>');
   }
 
-  // 只在"既没有分段也没有提示"时才是真的没有改动：二进制未跟踪文件就是这种情形，
-  // 它有提示、正文为空，此时说一句"没有改动"会与提示自相矛盾
+  // 只在“既没有分段也没有提示”时才是真的没有改动：二进制未跟踪文件就是这种情形，
+  // 它有提示、正文为空，此时说一句“没有改动”会与提示自相矛盾
   if (sections.length === 0 && blocks.length === 0) {
     blocks.push('<p class="diff-note">' + esc(t('diffEmpty')) + '</p>');
   }
@@ -1071,7 +1071,7 @@ let diffSpec = null;
 const draftMsg = new Map();
 
 // loadDiff 按 diffSpec 取一次 diff 并渲染。
-// 与 openDiff 分开，是因为写操作之后要"重取同一份"而不该重走一遍打开的副作用
+// 与 openDiff 分开，是因为写操作之后要“重取同一份”而不该重走一遍打开的副作用
 // （改标题、抢焦点、重置滚动位置）
 async function loadDiff() {
   const spec = diffSpec;
@@ -1092,13 +1092,13 @@ async function loadDiff() {
   }
 
   // 用户在响应到达之前按了 Esc（或又点开了别的）就把这次结果丢掉，
-  // 否则会出现"已经回到看板却又被旧结果写了一次"
+  // 否则会出现“已经回到看板却又被旧结果写了一次”
   if (seq !== diffSeq || !diffOpen || spec !== diffSpec) return;
   renderDiff(spec.repo, spec, out);
 }
 
 // openDiff 打开某个仓库（file 为空 → 整个仓库）或某个文件的 diff。
-// 异步：本地接口也有一次往返，期间先显示"加载中"，避免看起来是点了没反应
+// 异步：本地接口也有一次往返，期间先显示“加载中”，避免看起来是点了没反应
 async function openDiff(spec) {
   const repo = spec.repo;
   const file = spec.file || null;
@@ -1144,15 +1144,15 @@ function closeDiff() {
 // ——— 通知 ———
 //
 // 为什么要有这套东西：写操作的结果原来写在 #op、#graph-op、#diff-op 三行文字里，而这三行是
-// "最近一次结果的占位"——下一次写操作、下一次重绘都会把它覆盖掉。用户点完推送，成功信息出现
-// 不到一秒就被别的东西冲掉，原话是"一个成功的信息一闪而过，这肯定是不合适的"。
+// “最近一次结果的占位”——下一次写操作、下一次重绘都会把它覆盖掉。用户点完推送，成功信息出现
+// 不到一秒就被别的东西冲掉，原话是“一个成功的信息一闪而过，这肯定是不合适的”。
 //
 // 因此通知不走三行文字那条路：它有独立的容器与独立的列表，不与任何会重绘的元素抢位置，
-// 也就不会被冲掉；并且刻意不设定时器，只有用户点关闭才消失——抱怨的根源就是"还没看清就没了"，
+// 也就不会被冲掉；并且刻意不设定时器，只有用户点关闭才消失——抱怨的根源就是“还没看清就没了”，
 // 再挂一个自动消失只是把同一个问题换个地方重现。
 //
-// 三行文字因此只留给"需要一直可见的持续状态"：取数失败（要一直看着才知道仓库读不出来）、
-// 续取上限提示（要一直提醒为什么滚不到更早的提交）、拉取进行中的"正在拉取…"
+// 三行文字因此只留给“需要一直可见的持续状态”：取数失败（要一直看着才知道仓库读不出来）、
+// 续取上限提示（要一直提醒为什么滚不到更早的提交）、拉取进行中的“正在拉取…”
 // （网络操作期间的状态，结束时由结果通知接手）。一次性动作的结果一律走通知
 
 // 通知在内存里的上限。为什么要上限：页面开着不动也会一直攒，上限保证内存与面板高度都是常数级。
@@ -1168,7 +1168,7 @@ const NOTIFY_TIMEOUT_MS = Math.max(0, Math.round(Number(settingValue('notify_tim
 // 都从它渲染，不各自维护一份。每项含：
 //   text / level / at  正文、严重度（info|warn|error）、发生时间
 //   el                 右下角那一条的元素（收起或清除后置空），挂在数据上是为了让
-//                      "追加一条"不必重建已有元素，也不会让屏幕上的通知重放入场动画
+//                      “追加一条”不必重建已有元素，也不会让屏幕上的通知重放入场动画
 //   dismissed          是否已经被用户收起过：收起只是关掉提示，条目仍留在历史里
 //   timer              自动消失的定时器（0 时长或 error 档没有；收起、清除时一并停掉）
 const notifItems = [];
@@ -1178,7 +1178,7 @@ const notifItems = [];
 let notifUnread = 0;
 
 // notifCenterOpen 记录面板开着没有：开着时新通知直接算已读（用户正看着面板），
-// 也用于"点面板外面就收起"这条判断
+// 也用于“点面板外面就收起”这条判断
 let notifCenterOpen = false;
 
 // 三种严重度的图标。用内联 SVG 而不是字符：图标要跟着主题的严重度前景色走，
@@ -1228,8 +1228,8 @@ function notifCloseButton(labelKey, onClick) {
   btn.setAttribute('aria-label', t(labelKey));
   btn.addEventListener('click', (e) => {
     // 挡掉冒泡：清除会把这个按钮自己（或它所在的那一行）从 DOM 里摘掉，而页面级的
-    // "点别处就收起面板"是靠 notifCenterEl.contains(e.target) 判断的——按钮已脱离文档时
-    // 那个判断必然为假，于是"清除一条"会顺带把面板也关掉
+    // “点别处就收起面板”是靠 notifCenterEl.contains(e.target) 判断的——按钮已脱离文档时
+    // 那个判断必然为假，于是“清除一条”会顺带把面板也关掉
     e.stopPropagation();
     onClick();
   });
@@ -1254,7 +1254,7 @@ function buildToast(item) {
 // renderToasts 让右下角的堆叠与 notifItems 对齐。
 //
 // 为什么不每次整块重建：重建会让已经在屏幕上的通知重放入场动画，看起来像一起抖了一下。
-// 元素挂在 item.el 上，因此"同一条"跨渲染还认得出来；已在容器里的元素重新 append 只是移动位置，
+// 元素挂在 item.el 上，因此“同一条”跨渲染还认得出来；已在容器里的元素重新 append 只是移动位置，
 // 不会重放动画
 function renderToasts() {
   for (const item of notifItems) {
@@ -1305,7 +1305,7 @@ function notify(text, severity) {
   return item;
 }
 
-// notifFromResult 是 runWrite 那个"显示结果"回调的适配层：
+// notifFromResult 是 runWrite 那个“显示结果”回调的适配层：
 // 把它的 (文本, 是否出错) 翻成一条通知
 function notifFromResult(text, isError) {
   notify(text, isError ? 'error' : 'info');
@@ -1313,7 +1313,7 @@ function notifFromResult(text, isError) {
 
 // stopToastCountdown 停掉某条提示的倒计时（本来没在走也安全）。
 // 提示被收起、被清除、被上限挤掉时都要停：留着定时器，稍后它会对一条已经不在屏幕上的
-// 提示再调一次收起，虽然幂等，但会让"这条通知到底还在不在计时"变得说不清
+// 提示再调一次收起，虽然幂等，但会让“这条通知到底还在不在计时”变得说不清
 function stopToastCountdown(item) {
   if (item.timer) {
     clearTimeout(item.timer);
@@ -1344,7 +1344,7 @@ function startToastCountdown(item) {
 }
 
 // dismissToast 只收起右下角那一条，条目本身留在历史里。
-// 与"清除"分开是有意的（VSCode 也是这么分的）：收起弹出来的提示，往往只表示"我看过了、别挡着"，
+// 与“清除”分开是有意的（VSCode 也是这么分的）：收起弹出来的提示，往往只表示“我看过了、别挡着”，
 // 不等于要把这条记录从历史里抹掉——事后回到通知中心还要能翻到它。
 // 这也是本文件里 dismissed 与 removeNotif 两套动作并存的原因
 function dismissToast(item) {
@@ -1356,7 +1356,7 @@ function dismissToast(item) {
   item.dismissed = true;
 }
 
-// removeNotif 从历史里彻底清掉一条：面板里那一行的 × 与"全部清除"走这条。
+// removeNotif 从历史里彻底清掉一条：面板里那一行的 × 与“全部清除”走这条。
 // 还在屏幕上的那条提示也要一起收掉——同一个通知不该在历史里没了、提示还挂着
 //
 // 为什么按对象而不是按下标：面板里每一行的按钮闭包拿着的是点击那一刻的那条通知，
@@ -1409,7 +1409,7 @@ function buildNotifRow(item) {
 function renderNotifCenter() {
   notifTitleEl.textContent = t('notifTitle');
   notifClearAllEl.textContent = t('notifClearAll');
-  // 一条都没有时"全部清除"没有意义，置灰而不是藏起来——位置固定，不会让标题行跳动
+  // 一条都没有时“全部清除”没有意义，置灰而不是藏起来——位置固定，不会让标题行跳动
   notifClearAllEl.disabled = notifItems.length === 0;
   notifEmptyEl.textContent = t('notifEmpty');
   notifEmptyEl.hidden = notifItems.length > 0;
@@ -1469,7 +1469,7 @@ document.addEventListener('click', (e) => {
 });
 
 // 首屏先把铃铛摆正：未读为 0（徽标隐藏），无障碍标签也要有——按钮里只有一个图形，
-// 不设标签的话屏幕阅读器只会念出"按钮"
+// 不设标签的话屏幕阅读器只会念出“按钮”
 renderBell();
 
 // ——— 写操作：暂存 / 取消暂存 / 提交 / 推送 ———
@@ -1482,7 +1482,7 @@ let writeBusy = false;
 // setOp / setBoardOp 各写一处持续状态行：覆盖层标题栏下的 #diff-op，与看板底栏里的 #op。
 // 分两处而不是共用一处，是因为两者可能同时存在，共用一个元素会互相覆盖
 //
-// 注意它们现在只管"需要一直可见的状态"，不再管一次性动作的结果——那些改走右上角通知，
+// 注意它们现在只管“需要一直可见的状态”，不再管一次性动作的结果——那些改走右上角通知，
 // 理由见上面通知那一段的说明。判断标准：这条信息在动作结束之后还有没有用？
 // 有（取数失败、续取到上限、拉取还在进行中）就留在这里，没有就发一条通知
 function setOp(text, isError) {
@@ -1500,7 +1500,7 @@ async function postJSON(path, body) {
   const headers = Object.assign({ 'Content-Type': 'application/json' }, authHeaders || {});
   const res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
   const out = await res.json().catch(() => ({}));
-  // 非 JSON 响应（基座直接回的 401/403 纯文本）也要能说出原因，否则页面只会显示"失败了"
+  // 非 JSON 响应（基座直接回的 401/403 纯文本）也要能说出原因，否则页面只会显示“失败了”
   if (out.error === undefined && !res.ok) out.error = 'HTTP ' + res.status;
   return out;
 }
@@ -1523,7 +1523,7 @@ async function runWrite(path, body, show) {
   try {
     out = await postJSON(path, body);
     // git 的原话优先：失败的说明（没有 upstream、没有可提交的内容）与成功的摘要
-    // 都是用户判断"到底发生了什么"的唯一依据，页面不再自拟一套说法
+    // 都是用户判断“到底发生了什么”的唯一依据，页面不再自拟一套说法
     show(out.error || out.output || '', !!out.error);
   } catch (err) {
     out = { error: err.message };
@@ -1557,9 +1557,9 @@ function applyFileAction(spec, action) {
 }
 
 // fetchAll 拉取全部仓库的远程数据。
-// 拉取是网络操作，几十个仓库可能要等好几秒：期间在底栏留一行"正在拉取…"，否则会让人以为
+// 拉取是网络操作，几十个仓库可能要等好几秒：期间在底栏留一行“正在拉取…”，否则会让人以为
 // 按钮没反应。这一行是持续状态——操作没结束就一直在，结束时无论成败都由下面的回调清掉，
-// 因此留在底栏而不发通知：发成通知的话，操作结束后它会变成一条永远停在"正在拉取"的假消息
+// 因此留在底栏而不发通知：发成通知的话，操作结束后它会变成一条永远停在“正在拉取”的假消息
 function fetchAll() {
   if (writeBusy) return;
   setBoardOp(t('fetching'), false);
@@ -1573,14 +1573,14 @@ function fetchAll() {
 //
 // 面板里的每一项都由服务端给的元数据长出来（GET /api/settings）：Kind 决定控件形态、
 // Options 决定候选、Min/Max 决定输入边界、ManagedBy 决定是否只读。页面不认识任何一个具体的
-// 配置键，新增一项配置因此不必回来改这个文件——这是"配置逻辑与界面共用一份抽象"的直接结果。
+// 配置键，新增一项配置因此不必回来改这个文件——这是“配置逻辑与界面共用一份抽象”的直接结果。
 //
 // 写入走 POST /api/settings，与命令行的 "ggt config set" 是同一份后端实现：解析与校验因此
 // 只在后端做一次。页面这边不做取值校验——前端校验只能当提示，不能成为唯一防线
 
 // settingsItems 是服务端给的清单；settingsControls 按配置键索引控件（保存时要读回控件里的值）；
 // settingsDirty 只记录用户改过、还没保存的键。
-// 保存时只发改过的键：没碰过的项不发送，页面因此不会因为"少认识某个值"而把配置改坏
+// 保存时只发改过的键：没碰过的项不发送，页面因此不会因为“少认识某个值”而把配置改坏
 let settingsItems = [];
 let settingsControls = new Map();
 let settingsDirty = new Set();
@@ -1642,7 +1642,7 @@ function settingsControlFor(item) {
       }
       const option = document.createElement('option');
       option.value = o.value;
-      // 空值代表"不做选择"（主题里就是跟随系统）。这一条的显示名由页面给：
+      // 空值代表“不做选择”（主题里就是跟随系统）。这一条的显示名由页面给：
       // 服务端那份注册表里是英文，页面按当前语言说才自然
       option.textContent = o.label || (o.value === '' ? t('themeFollow') : o.value);
       groups.get(name).appendChild(option);
@@ -1665,7 +1665,7 @@ function settingsControlFor(item) {
   }
 
   // 有候选又允许自由输入（并发数那种）：输入框 + 候选清单。
-  // 用 datalist 而不是"下拉框再加一个输入框"：同一个控件既能点选也能手写
+  // 用 datalist 而不是“下拉框再加一个输入框”：同一个控件既能点选也能手写
   if (item.options.length > 0) {
     const input = document.createElement('input');
     input.type = 'text';
@@ -1756,7 +1756,7 @@ function settingsRow(item) {
   return row;
 }
 
-// updateSaveButton 让保存按钮反映"有几项改动待保存"，没有改动时禁用。
+// updateSaveButton 让保存按钮反映“有几项改动待保存”，没有改动时禁用。
 // 按钮上带数目，用户因此知道自己刚才改了几项，不必回头一个个找
 function updateSaveButton() {
   const n = settingsDirty.size;
@@ -1784,11 +1784,11 @@ async function fetchSettingsView() {
 }
 
 // loadSettings 取清单并重画面板。
-// 保存成功后也走它：面板显示的因此永远是配置文件里的真实内容，而不是"用户输入了什么就显示什么"
+// 保存成功后也走它：面板显示的因此永远是配置文件里的真实内容，而不是“用户输入了什么就显示什么”
 async function loadSettings() {
   const out = await fetchSettingsView();
   // 用户在响应到达之前关掉了面板（或又打开了一次）就把这次结果丢掉，
-  // 否则会出现"已经回到看板却又被旧结果写了一次"
+  // 否则会出现“已经回到看板却又被旧结果写了一次”
   if (!settingsOpen) return;
   if (out.error) {
     setSettingsOp(t('loadFailed', { err: out.error }), true);
@@ -1853,10 +1853,10 @@ async function saveSettings() {
   // 结果写在面板自己那一行，而不是发成通知：通知堆叠区就在右下角，恰好压在面板页脚那颗
   // 保存按钮上（通知的层级高于浮层），保存一次之后想再点一次就会被它挡住。
   // 这也是 #diff-op / #graph-op 一直以来的做法——动作发生在这个面里，结果就写在这个面里；
-  // 只有"这件事在动作结束后还有用"的消息才值得发成通知
+  // 只有“这件事在动作结束后还有用”的消息才值得发成通知
   const notes = Object.values(out.notes || {});
   const text = notes.length > 0 ? t('settingsSaved') + ' · ' + notes.join(' ') : t('settingsSaved');
-  // notes 是"这项改完还要做什么"，例如语言要下次运行才生效：与结果写在一起，
+  // notes 是“这项改完还要做什么”，例如语言要下次运行才生效：与结果写在一起，
   // 用户不必去别处找这句话
   setSettingsOp(text, false);
   // 主题这类由服务端烧进首页的取值，只改配置文件不会反映到当前页面上，必须刷新
@@ -1872,7 +1872,7 @@ async function saveSettings() {
 // resetSetting 把一项恢复成内置默认值：服务端会把这个键从配置文件里删掉，
 // 与命令行的 "ggt config reset" 是同一种做法（文件里因此只留下用户真正改过的项）。
 //
-// 立即生效而不是等"保存"：它本身就是一次明确的动作，再让用户去按一次保存反而多一步。
+// 立即生效而不是等“保存”：它本身就是一次明确的动作，再让用户去按一次保存反而多一步。
 // 只重画这一行而不是整块重画：整块重画会把用户还没保存的其他改动一起抹掉
 async function resetSetting(key) {
   const out = await postJSON('/api/settings', { unset: [key] });
@@ -1966,7 +1966,7 @@ board.addEventListener('click', (e) => {
   const s = row.__spec;
   // 分组行头也参与：它上面有"整组暂存/取消暂存"两个按钮
   if (s.kind !== 'head' && s.kind !== 'file' && s.kind !== 'group') return;
-  // 行尾的动作按钮优先于"打开"：它是行内动作，不该顺带把卡片打开。
+  // 行尾的动作按钮优先于“打开”：它是行内动作，不该顺带把卡片打开。
   // 分组行头上的"整组暂存/取消暂存"也走这一条
   const act = e.target.closest('.act');
   if (act) {
@@ -1990,7 +1990,7 @@ commitMsgEl.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  // 设置面板与通知中心都是"后开的先收"：面板是整页浮层，压在看板之上，因此排在第一个
+  // 设置面板与通知中心都是“后开的先收”：面板是整页浮层，压在看板之上，因此排在第一个
   if (settingsOpen) {
     closeSettings();
     return;
@@ -2001,7 +2001,7 @@ document.addEventListener('keydown', (e) => {
     closeNotifCenter(true);
     return;
   }
-  // 焦点在提交输入框里时，Esc 先退出输入而不是关掉卡片——否则"想退出输入框"这个动作会把
+  // 焦点在提交输入框里时，Esc 先退出输入而不是关掉卡片——否则“想退出输入框”这个动作会把
   // 刚写好的提交信息一起丢掉（它会留在草稿里，但用户并不知道）。再按一次才关
   if (document.activeElement === commitMsgEl) {
     commitMsgEl.blur();
@@ -2090,12 +2090,12 @@ prefersLight.addEventListener('change', () => {
 // 不做转换的话滚轮会毫无反应，用户会以为页面卡死。
 //
 // 为什么不用 CSS 的 scroll-behavior: smooth：它由 UA 按滚动距离决定时长（明显长于 180ms），
-// 而每拨一格都会重新发起一次滚动，连续拨动时表现为「上一段动画没走完就被生硬截断」。
+// 而每拨一格都会重新发起一次滚动，连续拨动时表现为“上一段动画没走完就被生硬截断”。
 //
 // 曲线照抄宿主自己的 AvaloniaDesktopKit/Behaviors/SmoothWheelScroll.cs，它又刻意与
 // Slint 1.18 的 Flickable 对齐：固定 180ms 等减速——以恒定减速度走完全程、终点速度恰好
 // 降到 0，归一化位置 p(u) = 2u - u²（u 为已过时长占比），起手最快、结尾干脆停住。
-// 每个滚轮事件都从「当前位置」重起一段曲线（Slint 本身就是这个行为，不是缺陷），
+// 每个滚轮事件都从“当前位置”重起一段曲线（Slint 本身就是这个行为，不是缺陷），
 // 并先按一个标称帧推进一次，保证即使下一帧还没到，拨动当帧也立刻有反馈
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let scrollAnim = null;
@@ -2105,7 +2105,7 @@ function smoothScrollBy(px) {
   // 减的是视口宽而不是 window.innerWidth：有横向溢出时后者会等于 scrollWidth，相减恒为 0，
   // 滚轮横滚于是彻底失效——窄屏看板正是这种情形（见 viewportSize 的注释）
   const max = Math.max(0, document.documentElement.scrollWidth - viewportSize().w);
-  // 目标基于「当前位置」累加：连续拨动因此不会丢失位移，也不会跳回去
+  // 目标基于“当前位置”累加：连续拨动因此不会丢失位移，也不会跳回去
   const target = Math.min(max, Math.max(0, window.scrollX + px));
   if (reduceMotion.matches) {
     scrollAnim = null;
@@ -2124,14 +2124,14 @@ function smoothScrollBy(px) {
   if (!scrollRaf) scrollRaf = requestAnimationFrame(stepScroll);
 }
 
-// 轨迹只由「已过时长」决定，因此与帧率无关：掉帧只会让采样变粗，不会改变曲线形状
+// 轨迹只由“已过时长”决定，因此与帧率无关：掉帧只会让采样变粗，不会改变曲线形状
 function stepScroll(now) {
   scrollRaf = 0;
   const a = scrollAnim;
   if (!a) return;
   // 位置被别人改了（拖滚动条、方向键、触控板横扫）就放弃本轮动画、改为跟随真实位置，
   // 免得两边互相打架。事件可能是异步送达的，所以只能按位置差判断来源、不能用标志位
-  // ——参照实现踩过这个坑：标志位会把自己的每帧写入当成外部滚动，动画第一帧就被掐断
+  // ——参照实现遇到过这个问题：标志位会把自己的每帧写入当成外部滚动，动画第一帧就被掐断
   if (Math.abs(window.scrollX - a.written) > EXTERNAL_SCROLL_TOLERANCE) {
     scrollAnim = null;
     return;
@@ -2156,7 +2156,7 @@ window.addEventListener(
     // 横向手势（触控板横扫、Shift+滚轮）交给浏览器原生处理：那条路自带缓动，手感最好
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.deltaY === 0) return;
     e.preventDefault();
-    // 距离直接用事件给的增量，不强行折算成「一格 60px」：浏览器给的是像素增量
+    // 距离直接用事件给的增量，不强行折算成“一格 60px”：浏览器给的是像素增量
     // （鼠标一格约 100px，触控板是细粒度像素），照搬 60px 会把触控板的手感拉坏。
     // 只有行/页两种模式需要折算，行模式按 Slint 的 line→60px 对齐
     const px = e.deltaMode === 1 ? e.deltaY * LINE_PX
@@ -2203,7 +2203,7 @@ const CIRCLE_RADIUS = 4;
 const CIRCLE_STROKE_WIDTH = 2;
 
 // SVG 元素必须用 createElementNS：createElement('circle') 造出来的是 HTML 元素，
-// 浏览器不会把它当图形画——表现为"什么都没有"，控制台也不报错
+// 浏览器不会把它当图形画——表现为“什么都没有”，控制台也不报错
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 let cardOpen = false;
@@ -2217,7 +2217,7 @@ let cardSeq = 0; // 作废过期响应（卡片被关掉、或换了仓库时）
 let cardSelected = ''; // 当前钉住详情的那条提交
 
 // graphColor 把接口给的变量名包成 var(...)。变量名为空（主题没写那个令牌、也没默认值）时
-// 用兜底色，而不是留一个空的 stroke——那会让线整条消失
+// 用回退色，而不是留一个空的 stroke——那会让线整条消失
 function graphColor(name, fallback) {
   return name ? 'var(--' + name + ')' : fallback;
 }
@@ -2246,7 +2246,7 @@ function graphCircle(index, radius, strokeWidth, color) {
   });
   c.style.strokeWidth = strokeWidth + 'px';
   // 只有带颜色的圆点才在这里定填充。没颜色的那个是 HEAD 的内圈，它的填充、以及所有圆点的
-  // 描边颜色，都交给 CSS：这两个颜色必须等于"这一行当前的实际底色"，而底色会随 hover 与
+  // 描边颜色，都交给 CSS：这两个颜色必须等于“这一行当前的实际底色”，而底色会随 hover 与
   // 选中变化，写进 JS 就固定成了初始底色，hover 时会露出一圈不跟着变的色边。上游把这两件
   // 事也放在样式表里（scm.css 的 .graph > circle 与 circle:last-child 规则，含 hover 与
   // 选中三组变体），此前这里的注释把那段误读成"上游不设填充（SVG 默认黑）"，于是把填充
@@ -2488,7 +2488,7 @@ function renderGraphRows() {
     frag.appendChild(row);
   }
 
-  // 尾部一行：还有更多就说"加载中"，到底了就说"已加载全部"。滚动到底的判据就看它
+  // 尾部一行：还有更多就说“加载中”，到底了就说“已加载全部”。滚动到底的判据就看它
   if (graphItems.length > 0) {
     const tail = mkEl('p', 'hint', graphItems.length >= graphTotal ? t('graphEnd') : t('graphLoading'));
     tail.style.padding = '6px 12px';
@@ -2505,7 +2505,7 @@ function setGraphOp(text, isError) {
   graphOpEl.classList.toggle('error', !!isError);
 }
 
-// loadGraph 取一批历史。more 为真表示"滚到底了，再取一批"——做法是把 limit 翻倍重取，
+// loadGraph 取一批历史。more 为真表示“滚到底了，再取一批”——做法是把 limit 翻倍重取，
 // 而不是 skip：泳道是逐行递推的，只取第二页会让整页的线从最左边重新开始
 async function loadGraph(more) {
   if (!cardSpec) return;
@@ -2536,7 +2536,7 @@ async function loadGraph(more) {
     if (data.branch) cardSpec.repo.branch = data.branch;
     fillBranchSelect(data.branches || [], data.branch || '');
     // 头部随仓库状态更新：切了分支、提交或推送之后，标题上的分支与领先/落后必须跟着变。
-    // 这也是"切分支成功了吗"在页面上唯一看得见的结果
+    // 这也是“切分支成功了吗”在页面上唯一看得见的结果
     const repo = currentRepo();
     graphTitleEl.innerHTML =
       '<span>' + esc(repo.name) + '</span>' +
@@ -2579,7 +2579,7 @@ function repoStateText(r) {
 
 // openRepoCard 打开某个仓库的卡片：默认就是这个仓库的提交分支图，顶栏是这个仓库的操作。
 //
-// 这一层替代了原来的"仓库面板"：点仓库直接进来，不再有中间那一步选择；仓库自身的操作
+// 这一层替代了原来的“仓库面板”：点仓库直接进来，不再有中间那一步选择；仓库自身的操作
 // （切分支、拉取、同步、推送、提交）也都收在这张卡片里，不散落到页面上别处
 function openRepoCard(spec) {
   cardSpec = spec;
@@ -2623,7 +2623,7 @@ function openRepoCard(spec) {
 }
 
 // closeCardState 只收起卡片这一层，不碰焦点与轮询。
-// 与关掉整张卡片分开，是为了让"只换内容"这类场景不误触轮询与焦点
+// 与关掉整张卡片分开，是为了让“只换内容”这类场景不误触轮询与焦点
 function closeCardState() {
   if (!cardOpen) return;
   cardOpen = false;
@@ -2638,7 +2638,7 @@ function closeCardState() {
 }
 
 // closeRepoCard 关闭卡片：若 diff 还开着（从卡片里进去的），一并关掉——返回键的语义是
-// "回到上一层"，不是"只关掉最上面那层"
+// “回到上一层”，不是“只关掉最上面那层”
 function closeRepoCard() {
   if (!cardOpen) return;
   if (diffOpen) closeDiff();
@@ -2675,8 +2675,8 @@ graphAllRefsEl.addEventListener('change', () => {
 
 /* ——— 提交详情卡：悬浮即显 + 点击钉住 ———
  *
- * 为什么不做成侧栏常驻面板：泳道图占满整个卡片宽度才看得清分叉与合并，侧栏会一直吃掉一块宽度。
- * 但"只能靠悬浮"也不行——键盘用户根本触发不了 hover，而"点什么就出什么"是这次的要求。
+ * 为什么不做成侧栏常驻面板：泳道图占满整个卡片宽度才看得清分叉与合并，侧栏会一直占去一块宽度。
+ * 但“只能靠悬浮”也不行——键盘用户根本触发不了 hover，而“点什么就出什么”是这次的要求。
  * 因此做成两级：
  *   - 鼠标移过某一行：立刻贴着光标弹出（元信息来自内存，文件清单异步补上并缓存）
  *   - 点一下（或按上下键 / 回车）：钉住，不再随鼠标移开消失，Esc 或点别处才收
@@ -2685,13 +2685,13 @@ const commitCardCache = new Map(); // 提交哈希 -> 文件清单：同一个�
 let hoverSeq = 0;
 let cardPinned = false;
 let hoverCardTimer = null;
-// lastPointer 记录指针最后一次移动到的位置；hoverSuppressAt 是"刚收起卡片时指针所在的位置"。
+// lastPointer 记录指针最后一次移动到的位置；hoverSuppressAt 是“刚收起卡片时指针所在的位置”。
 //
 // 为什么需要后者：收起卡片会让指针下方的元素从卡片换成泳道图的行，浏览器随后就地补派一次
 // mouseover 给那个新元素——鼠标其实一动没动。不认这一次的话，点右上角那个 × 收起之后，卡片
-// 会立刻被同一个位置重新弹开，用户看到的是"关了又弹"。
-// 判据是"坐标与收起时几乎相同"：不用时间窗（慢机器与合成事件有延迟时都不可靠），
-// 也不用"等指针移动"（mouseover 可能先于 mousemove 派发，会连带吃掉用户在别的行上的正常悬停）
+// 会立刻被同一个位置重新弹开，用户看到的是“关了又弹”。
+// 判据是“坐标与收起时几乎相同”：不用时间窗（慢机器与合成事件有延迟时都不可靠），
+// 也不用“等指针移动”（mouseover 可能先于 mousemove 派发，会连带丢掉用户在别的行上的正常悬停）
 let lastPointer = { x: -1, y: -1 };
 let hoverSuppressAt = null;
 
@@ -2699,13 +2699,13 @@ let hoverSuppressAt = null;
 function commitCardPosition(x, y) {
   const box = graphPopupEl.getBoundingClientRect();
   // 贴边判断与最终落位都按真实视口算，不用 window.innerWidth / innerHeight：内容溢出时那两个值
-  // 会被一起撑大（见 viewportSize），"右边放不下"于是判断不出来，卡片会跨出屏幕右缘
+  // 会被一起撑大（见 viewportSize），“右边放不下”于是判断不出来，卡片会跨出屏幕右缘
   const vp = viewportSize();
   let left = x + 14;
   let top = y + 14;
   if (left + box.width > vp.w - 8) left = x - box.width - 14;
   if (top + box.height > vp.h - 8) top = y - box.height - 14;
-  // 翻转只把卡片挪到锚点的另一侧，救不了"锚点本身就在视口外"这种情形：点击与键盘钉住都走
+  // 翻转只把卡片挪到锚点的另一侧，救不了“锚点本身就在视口外”这种情形：点击与键盘钉住都走
   // pinCommitCard，锚点取自行尾（row.right − 40），而泳道图在窄屏下比视口宽（实测 390 的视口里
   // #graph-list 就有 986），行尾连同锚点都在屏幕外——实测卡片因此被摆到 x=795，连右上角那个
   // 关闭按钮都点不到。所以最后再夹一次：宁可叠在行上，也不能把这张卡唯一的可见出口挪出屏幕
@@ -2728,7 +2728,7 @@ function hideCommitCard(force) {
 }
 
 // showCommitCard 立刻画出能拿到的那一半（元信息在内存里，要什么有什么），
-// 文件清单随后补上——不为了"一次画全"让卡片迟一拍才出现
+// 文件清单随后补上——不为了“一次画全”让卡片迟一拍才出现
 function showCommitCard(vm, x, y, pinned) {
   cardPinned = !!pinned;
   graphPopupEl.classList.toggle('pinned', cardPinned);
@@ -2826,7 +2826,7 @@ function renderCommitCard(vm, files, pinned) {
     const list = mkEl('ul', 'files');
     for (const f of files.files) {
       const li = mkEl('li');
-      // 点一行看这个文件在那次提交里改了什么：卡片只说"改了哪些文件"，
+      // 点一行看这个文件在那次提交里改了什么：卡片只说“改了哪些文件”，
       // 看不到改了什么，这正是它此前最缺的一环
       li.classList.add('clickable');
       li.title = t('diffOpenFile');
@@ -2846,19 +2846,19 @@ function renderCommitCard(vm, files, pinned) {
   return box;
 }
 
-// 指针位置要随时记着：hideCommitCard 收起卡片时拿它当"哪一次 mouseover 该被吃掉"的基准
+// 指针位置要随时记着：hideCommitCard 收起卡片时拿它当"哪一次 mouseover 该被忽略"的基准
 document.addEventListener('mousemove', (e) => {
   lastPointer = { x: e.clientX, y: e.clientY };
 });
 
 // 鼠标移过某一行就弹卡；移开时给 120ms 宽限再收——不留宽限的话，从行移向卡片的那段空隙
-// 会把它闪掉，而"贴着光标"的卡片本来就常常需要把鼠标移进去看更多内容
+// 会把它闪掉，而“贴着光标”的卡片本来就常常需要把鼠标移进去看更多内容
 graphListEl.addEventListener('mouseover', (e) => {
   if (!cardOpen || cardPinned) return;
   // 卡片刚收起时，指针下方的元素由卡片换成了泳道图的行，浏览器会就地补派一次 mouseover，
-  // 坐标与收起时几乎相同——认了它就是"点 × 关了又弹"。只吃掉这一次。
-  // 判据用坐标而不是"等指针移动"：mouseover 可能先于 mousemove 派发，那种顺序下"等移动解除"
-  // 会把用户在别的行上的第一次悬停一起吃掉（实测踩过：卡片再也弹不出来）
+  // 坐标与收起时几乎相同——认了它就是“点 × 关了又弹”。只忽略这一次。
+  // 判据用坐标而不是“等指针移动”：mouseover 可能先于 mousemove 派发，那种顺序下“等移动解除”
+  // 会把用户在别的行上的第一次悬停一起丢掉（实际遇到过：卡片再也弹不出来）
   if (
     hoverSuppressAt &&
     Math.abs(e.clientX - hoverSuppressAt.x) <= 2 &&
@@ -2915,7 +2915,7 @@ graphListEl.addEventListener('keydown', (e) => {
 /* ——— 卡片顶栏上的仓库操作 ———
  *
  * 五件：切分支、拉取本仓库、同步、推送、提交，外加进入全仓 diff 的入口。
- * 全部走 runWrite：统一处理"一次只允许一个写操作在飞"、失败时把 git 的原话交出来、
+ * 全部走 runWrite：统一处理“一次只允许一个写操作在飞”、失败时把 git 的原话交出来、
  * 以及写完之后失效快照
  */
 function currentRepo() {
@@ -2943,5 +2943,5 @@ graphBranchEl.addEventListener('change', async () => {
 graphFetchEl.addEventListener('click', () => cardWrite('/api/fetch', { repo: cardSpec.repo.path }));
 graphSyncEl.addEventListener('click', () => cardWrite('/api/sync', { repo: cardSpec.repo.path }));
 graphPushEl.addEventListener('click', () => cardWrite('/api/push', { repo: cardSpec.repo.path }));
-// 全仓 diff 从卡片顶栏进：它浮在卡片之上，关掉回到卡片（不再占据"入口行"那样的对等地位）
+// 全仓 diff 从卡片顶栏进：它浮在卡片之上，关掉回到卡片（不再占据“入口行”那样的对等地位）
 graphDiffEl.addEventListener('click', () => openDiff({ repo: currentRepo() }));

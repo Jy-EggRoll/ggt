@@ -4,7 +4,7 @@
 // 为什么连颜色轮转都照抄：泳道配色由分配顺序决定，同一份历史必须每次得到同一套颜色，
 // 否则刷新一次整张图就换色；自己发明一套规则更不可能和 VSCode 的观感一致
 //
-// 与上游的三处差异（都是"上游有、这个项目没有"的东西，不是算法改动）：
+// 与上游的三处差异（都是“上游有、这个项目没有”的东西，不是算法改动）：
 //   - 上游的 incoming / outgoing changes 两个虚拟行（未拉取 / 未推送的占位）没有搬：
 //     它们依赖 upstream 与 merge base 的判定，是另一件事
 //   - 上游的 base ref（merge base 高亮）同理没有搬
@@ -14,7 +14,7 @@ package git
 
 import "sort"
 
-// GraphNode 是泳道上的一个节点：ID 是"这条泳道正等着哪个提交"，Color 是 VSCode 的颜色 id
+// GraphNode 是泳道上的一个节点：ID 是“这条泳道正等着哪个提交”，Color 是 VSCode 的颜色 id
 type GraphNode struct {
 	ID    string `json:"id"`
 	Color string `json:"color"`
@@ -45,14 +45,14 @@ type HistoryViewModel struct {
 	Item HistoryItem `json:"item"`
 	// Kind 取 HEAD 或 node（上游还有 incoming-changes / outgoing-changes，本实现不产生）
 	Kind string `json:"kind"`
-	// Input 是这个提交"上方"的泳道，Output 是"下方"的泳道
+	// Input 是这个提交“上方”的泳道，Output 是“下方”的泳道
 	Input  []GraphNode `json:"inputSwimlanes"`
 	Output []GraphNode `json:"outputSwimlanes"`
 	// Index 是圆点在第几条泳道（对齐 getHistoryItemIndex），前端画线时要用
 	Index int `json:"index"`
 }
 
-// LayoutHistory 把提交列表变成"每个提交 + 它上下两侧的泳道"。
+// LayoutHistory 把提交列表变成“每个提交 + 它上下两侧的泳道”。
 //
 // branch / upstream 是当前分支与它的上游引用名，只有这两个引用有固定配色（对齐上游那套
 // colorMap）；headHash 是 HEAD 指向的提交，用来把那一行标成 HEAD
@@ -85,8 +85,8 @@ func LayoutHistory(items []HistoryItem, branch, upstream, headHash string) []His
 		}
 		output := []GraphNode{}
 
-		// 把第一个 parent 顶进"这个提交所在的那条泳道"：其余泳道原样传给下一行。
-		// 找不到自己那条泳道时 firstParentAdded 保持为假，第一个 parent 会在下面按"新泳道"补上
+		// 把第一个 parent 顶进“这个提交所在的那条泳道”：其余泳道原样传给下一行。
+		// 找不到自己那条泳道时 firstParentAdded 保持为假，第一个 parent 会在下面按“新泳道”补上
 		firstParentAdded := false
 		if len(item.Parents) > 0 {
 			for _, node := range input {
@@ -164,7 +164,7 @@ func circleIndex(input []GraphNode, item HistoryItem) int {
 	return len(input)
 }
 
-// labelColor 对齐上游 getLabelColorIdentifier：这个提交的第一个"有配色"的引用用的是什么颜色
+// labelColor 对齐上游 getLabelColorIdentifier：这个提交的第一个“有配色”的引用用的是什么颜色
 func labelColor(item HistoryItem, colorMap map[string]string) string {
 	for _, ref := range item.Refs {
 		if c, ok := colorMap[ref.Name]; ok {

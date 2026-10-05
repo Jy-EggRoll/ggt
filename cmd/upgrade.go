@@ -42,7 +42,7 @@ func newUpgradeCmd() *cobra.Command {
 // platformLabel 产出面向用户展示的当前平台标签，形如 linux-amd64。
 //
 // 它只用于展示，不要用它去替换 upgrade_target.go 中按 GOOS/GOARCH 匹配发布资产名的逻辑：
-// 那里是「选哪个发布产物」的构建坐标，与这里「给用户看的名字」语义不同，合并会破坏资产匹配。
+// 那里是“选哪个发布产物”的构建坐标，与这里“给用户看的名字”语义不同，合并会破坏资产匹配。
 // 当前只有 upgrade 一处使用，因此就近放在本文件，不单独抽到别处
 func platformLabel() string {
 	platform := fmt.Sprintf("%s-%s", runtime.GOOS, runtime.GOARCH)
@@ -113,8 +113,8 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 
 	// 版本与构建时间由发布构建注入（见 version.go）；本地开发构建下没有注入值，
 	// 由 effectiveVersion 补一个可读占位，避免出现版本号位置为空的提示。
-	// 此时升级器无法解析版本，会跳过比较，退化为"列出目标通道中的最高版本"，
-	// 由展示层避免使用"更新"这类断言
+	// 此时升级器无法解析版本，会跳过比较，退化为“列出目标通道中的最高版本”，
+	// 由展示层避免使用“更新”这类断言
 	info, err := upgrader.Check(effectiveVersion(), BuildTime, channel)
 	if err != nil {
 		return fmt.Errorf("%s: %w", l10n.T("Failed to check for updates", nil), err)
@@ -128,7 +128,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	if info.CurrentComparable {
 		reporter.Info("%s", l10n.T("Latest version: {{.Version}}", map[string]any{"Version": info.LatestVersion}))
 	} else {
-		// 本地版本无法比较时不能宣称"最新"：这里给出的只是通道内的最高版本，
+		// 本地版本无法比较时不能宣称“最新”：这里给出的只是通道内的最高版本，
 		// 是否比本地构建新需要用户自行判断
 		reporter.Info("%s", l10n.T("Highest version in the {{.Channel}} channel: {{.Version}}", map[string]any{"Channel": channelLabel, "Version": info.LatestVersion}))
 	}

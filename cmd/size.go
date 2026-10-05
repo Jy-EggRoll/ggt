@@ -27,7 +27,7 @@ type repoSizeResult struct {
 
 // sizeLow、sizeHigh、sizeUnit 是 size 命令的命令行覆盖参数。
 // 约定与根命令的 -c 一致：仅当显式指定时才覆盖配置文件里的值，且不持久化。
-// sizeLow/sizeHigh 默认 0 表示"未指定"；sizeUnit 默认空字符串表示"未指定"。
+// sizeLow/sizeHigh 默认 0 表示“未指定”；sizeUnit 默认空字符串表示“未指定”。
 var (
 	sizeLow  int
 	sizeHigh int
@@ -45,9 +45,9 @@ func newSizeCmd() *cobra.Command {
 		Use: "size",
 		// 描述直接写英文原文：它同时也是 i18n 的消息 id，缺失中文译文时回退为英文原文。
 		// 命令树在语言加载之后才构造（见 registry.go），所以这里的 T() 是真调用，
-		// 不存在"包级变量求值过早、语言尚未确定"的问题。
+		// 不存在“包级变量求值过早、语言尚未确定”的问题。
 		//
-		// Long 这类多行原文必须保持"干净"：不能含制表符、行尾空白或首尾空行，
+		// Long 这类多行原文必须保持“干净”：不能含制表符、行尾空白或首尾空行，
 		// 否则源码重排会让 id 跟着变，既有译文会静默失效。提取器会强制这一点。
 		Short: l10n.T("Show size statistics for all repositories", nil),
 		Long: l10n.T(`Iterate over all configured repositories and show each one's size statistics.
@@ -63,7 +63,7 @@ Examples:
 		Run: func(cmd *cobra.Command, args []string) {
 			repos := AllRepos(context.Background())
 			// 用 InfoLn 而非 InfoMsg：Ln 系列会在结尾多留一个空行，与后续明细隔开；
-			// "%s\n" 的格式串细节已收口在 output.go，调用点不再自带格式串
+			// "%s\n" 的格式串细节已统一在 output.go 处理，调用点不再自带格式串
 			InfoLn(l10n.T("Repositories: {{.Count}} — gathering sizes...", map[string]any{"Count": len(repos)}))
 
 			width := pterm.GetTerminalWidth()
@@ -130,7 +130,7 @@ Examples:
 	c.Aliases = []string{"sz"}
 
 	// 阈值与换算口径：flag 优先于配置文件，仅本次生效、不写入 JSON。
-	// 语义与根命令 -c 相同：默认 0/空字符串表示"未指定"
+	// 语义与根命令 -c 相同：默认 0/空字符串表示“未指定”
 	c.Flags().IntVar(&sizeLow, "low", 0, l10n.T("Lower bucket bound in MB (defaults to the size_bucket_low_mb config value)", nil))
 	c.Flags().IntVar(&sizeHigh, "high", 0, l10n.T("Upper bucket bound in MB (defaults to the size_bucket_high_mb config value)", nil))
 	c.Flags().StringVar(&sizeUnit, "unit", "", l10n.T("MB conversion unit used for buckets: decimal or binary (defaults to the size_unit config value)", nil))
@@ -140,7 +140,7 @@ Examples:
 
 // showRepoSize 分析单个仓库的大小并返回格式化结果。
 // 从 git count-objects -vH 的输出中提取关键字段，
-// 主要展示"磁盘占用"和"包文件大小"两个核心指标。
+// 主要展示“磁盘占用”和“包文件大小”两个核心指标。
 // 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
 func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 	output, err := git.RunContext(ctx, e.Path, "count-objects", "-vH")
@@ -169,7 +169,7 @@ func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 	// 主要指标：磁盘占用（size）和包文件大小（size-pack）
 	// 制表符留在 Go 侧而不写进文案：它是排版手段而非文案内容，混进消息里既会让译者
 	// 困惑，也会让这个不可见字符成为消息 id 的一部分（提取器会拒绝含 \t 的消息）。
-	// 注意制表位对齐依赖标签的显示宽度，中文"磁盘占用"（8 列）与英文 "Disk usage"
+	// 注意制表位对齐依赖标签的显示宽度，中文“磁盘占用”（8 列）与英文 "Disk usage"
 	// （10 列）恰好都落在同一制表位上；若将来新增语言导致错位，需改为显式列宽填充
 	if v, ok := info["size"]; ok {
 		b.WriteString("  ")
@@ -324,7 +324,7 @@ func parseSizeValue(s string) int64 {
 
 // formatSize 将字节数转为人类可读的大小字符串（如 985.7 MB）。
 // 仅做数值格式化，不含颜色；颜色由调用处的 InfoMsg 统一处理，
-// 便于对纯文本结果做单元测试，也符合"格式化与展示分离"的原则。
+// 便于对纯文本结果做单元测试，也符合“格式化与展示分离”的原则。
 func formatSize(size int64) string {
 	const unit = int64(1024)
 	if size < unit {

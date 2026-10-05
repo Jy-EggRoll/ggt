@@ -45,7 +45,7 @@ func TestLayoutHistory_LinearKeepsOneLane(t *testing.T) {
 }
 
 // TestLayoutHistory_MergeOpensSecondLane 合并提交的第二个父提交要另开一条泳道，
-// 且两条泳道不同色；到共同祖先处泳道收口
+// 且两条泳道不同色；到共同祖先处两条泳道汇合
 func TestLayoutHistory_MergeOpensSecondLane(t *testing.T) {
 	vms := LayoutHistory([]HistoryItem{
 		graphItem("m", "a", "b"),
@@ -64,7 +64,7 @@ func TestLayoutHistory_MergeOpensSecondLane(t *testing.T) {
 		t.Errorf("b 在第二条泳道上，圆点索引应为 1，实得 %d", vms[2].Index)
 	}
 	if len(vms[3].Output) != 0 {
-		t.Errorf("共同祖先之后泳道应全部收口：%+v", vms[3].Output)
+		t.Errorf("共同祖先之后泳道应全部汇合：%+v", vms[3].Output)
 	}
 }
 
@@ -100,7 +100,7 @@ func TestLayoutHistory_HeadKindOnlyForHeadHash(t *testing.T) {
 }
 
 // TestLayoutHistory_FirstParentTakesRefColor 有引用配色的提交，它的第一个父提交继承这个配色——
-// 这样"当前分支那条线"整条都是同一种颜色，一眼能认出来
+// 这样“当前分支那条线”整条都是同一种颜色，一眼能认出来
 func TestLayoutHistory_FirstParentTakesRefColor(t *testing.T) {
 	items := []HistoryItem{
 		{Hash: "x", Parents: []string{"y"}, Refs: []HistoryRef{{Name: "main", Kind: "head"}}},
@@ -177,7 +177,7 @@ func TestLayoutHistoryPrefixStable(t *testing.T) {
 }
 
 // TestLayoutHistory_UnknownParent 父提交不在这一段历史里（浅克隆、或翻页边界）时不报错：
-// 泳道照常指向那个未知的哈希，只是不会再有行去消费它
+// 泳道照常指向那个未知的哈希，只是不会再有行去使用它
 func TestLayoutHistory_UnknownParent(t *testing.T) {
 	vms := LayoutHistory([]HistoryItem{graphItem("a", "missing")}, "main", "", "a")
 	if len(vms[0].Output) != 1 || vms[0].Output[0].ID != "missing" {

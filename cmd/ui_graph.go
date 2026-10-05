@@ -20,24 +20,24 @@ const (
 	// graphPageSize 是一批提交数：页面滚到底就把它翻倍再取一次
 	graphPageSize = 100
 	// graphMaxLimit 是单次采集的上限。再大就不该一次取回来：git log 的代价随行数增长，
-	// 页面为几万行建元素也会卡。到上限后页面上的"继续加载"会停在原处并如实提示
+	// 页面为几万行建元素也会卡。到上限后页面上的“继续加载”会停在原处并如实提示
 	graphMaxLimit = 2000
 )
 
 // uiLogResponse 是 /api/log 的响应
 type uiLogResponse struct {
-	// Items 是"每个提交 + 它上下两侧的泳道"，泳道颜色已经翻成 CSS 变量名
+	// Items 是“每个提交 + 它上下两侧的泳道”，泳道颜色已经翻成 CSS 变量名
 	Items []uiLogItem `json:"items"`
 	// Total 是按当前范围能采集到的总数，页面用它显示"已显示 X / 共 N"
 	Total int `json:"total"`
-	// Head 是 HEAD 指向的提交，Branch / Upstream 是当前分支与它的上游（"只看当前分支"这个开关要用）
+	// Head 是 HEAD 指向的提交，Branch / Upstream 是当前分支与它的上游（“只看当前分支”这个开关要用）
 	Head     string `json:"head"`
 	Branch   string `json:"branch"`
 	Upstream string `json:"upstream"`
 	// Branches 是本地分支名（升序），供卡片顶栏的分支选择器用。顺带在这一次请求里给出，
 	// 而不是让页面再打一个接口：两者本来就要一起用，多一次往返只会多一次闪烁
 	Branches []string `json:"branches"`
-	// MaxLimit 是单次采集的上限，页面据此知道"继续加载"什么时候该停（上限只有一处定义）
+	// MaxLimit 是单次采集的上限，页面据此知道“继续加载”什么时候该停（上限只有一处定义）
 	MaxLimit int `json:"maxLimit"`
 }
 
@@ -93,9 +93,9 @@ func cssVarOf(colorID string) string {
 // handleLog 返回一段提交历史与它的泳道。
 //
 // 分页是"把 limit 加大再取一次"，不是 skip：泳道是逐行递推出来的，只取第二页的话第一行的
-// 输入泳道无从得知，整页的线都会从最左边重新开始。VSCode 的做法也是每次对"已加载的全部提交"
+// 输入泳道无从得知，整页的线都会从最左边重新开始。VSCode 的做法也是每次对“已加载的全部提交”
 // 重算一遍（toISCMHistoryItemViewModelArray），因此这里每次都从第一条开始算，limit 只增不减——
-// 代价是 O(已加载条数)，而这也正是前面那条"前缀稳定"单测守住的契约
+// 代价是 O(已加载条数)，而这也正是前面那条“前缀稳定”单测守住的契约
 func (c *uiCache) handleLog(w http.ResponseWriter, r *http.Request) {
 	repo, ok := findUIRepo(c.repos(), r.URL.Query().Get("repo"))
 	if !ok {
@@ -112,7 +112,7 @@ func (c *uiCache) handleLog(w http.ResponseWriter, r *http.Request) {
 	if limit > graphMaxLimit {
 		limit = graphMaxLimit
 	}
-	// 默认跨全部分支与 tag：用户要的就是"默认全部"，只在明确传 all=0 时收窄到当前分支
+	// 默认跨全部分支与 tag：用户要的就是“默认全部”，只在明确传 all=0 时收窄到当前分支
 	all := r.URL.Query().Get("all") != "0"
 
 	ctx := r.Context()
@@ -122,7 +122,7 @@ func (c *uiCache) handleLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 计数失败不该让整张图打不开：退化成"已知条数"，页面上的"N"会小于真实值，但图仍然可用
+	// 计数失败不该让整张图打不开：退化成“已知条数”，页面上的"N"会小于真实值，但图仍然可用
 	total, err := git.CountHistory(ctx, repo.Path, all)
 	if err != nil {
 		logger.Warn(l10n.T("Failed to count the commits", nil), "path", repo.Path, "error", err)
@@ -132,7 +132,7 @@ func (c *uiCache) handleLog(w http.ResponseWriter, r *http.Request) {
 	branch, upstream, head := git.CurrentRefs(ctx, repo.Path)
 	viewModels := git.LayoutHistory(items, branch, upstream, head)
 
-	// 分支列表读不出来时不影响图：选择器退化成"只有当前分支"这一个选项
+	// 分支列表读不出来时不影响图：选择器退化成“只有当前分支”这一个选项
 	branches, err := git.LocalBranches(ctx, repo.Path)
 	if err != nil {
 		logger.Warn(l10n.T("Failed to list the branches", nil), "path", repo.Path, "error", err)

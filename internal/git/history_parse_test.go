@@ -46,7 +46,7 @@ func TestParseHistoryLog(t *testing.T) {
 }
 
 // TestParseHistoryLog_SkipsBrokenRecords 字段数不足的记录要跳过：整条输出被截断时，
-// 宁可少一行，也不要把半个提交塞进图里（半个提交会让泳道错位且难以察觉）
+// 宁可少一行，也不要把半个提交写进图里（半个提交会让泳道错位且难以察觉）
 func TestParseHistoryLog_SkipsBrokenRecords(t *testing.T) {
 	good := strings.Join([]string{"aaa1", "", "a", "a@x", "1", "s", "m"}, "\x00")
 	broken := strings.Join([]string{"bbb2", "", "b"}, "\x00") // 只有三个字段

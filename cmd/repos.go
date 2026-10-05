@@ -1,6 +1,6 @@
-// repos.go 定义 ggt 对"仓库"的统一抽象，以及唯一一处子模块发现逻辑。
+// repos.go 定义 ggt 对“仓库”的统一抽象，以及唯一一处子模块发现逻辑。
 // 设计原则：子模块逻辑完全抽离到此文件，除 discoverSubmodules / expand 之外，
-// 任何业务命令都不再编写子模块专属代码——子模块在 ggt 眼里就是"另一个仓库"，
+// 任何业务命令都不再编写子模块专属代码——子模块在 ggt 眼里就是“另一个仓库”，
 // 只是带一个 IsSubmodule 标记用于展示时加 [子] 前缀、以及一个全局开关决定要不要包含它。
 //
 // 子模块发现策略（性能优先）：
@@ -51,7 +51,7 @@ func discoverSubmodules(repoPath string) []string {
 	gitmodulesPath := filepath.Join(repoPath, ".gitmodules")
 	data, err := os.ReadFile(gitmodulesPath)
 	if err != nil {
-		// .gitmodules 不存在或不可读，按"无子模块"处理。
+		// .gitmodules 不存在或不可读，按“无子模块”处理。
 		return nil
 	}
 
@@ -129,8 +129,8 @@ func isSubmoduleInitialized(path string) bool {
 	return true
 }
 
-// expand 把"顶层仓库路径列表"展开为"顶层 + 子模块"的扁平条目列表。
-// ignoreSubmodules 为 true 时完全跳过子模块，是全局唯一控制"是否忽略子模块"的接口
+// expand 把“顶层仓库路径列表”展开为“顶层 + 子模块”的扁平条目列表。
+// ignoreSubmodules 为 true 时完全跳过子模块，是全局唯一控制“是否忽略子模块”的接口
 // （对应配置项 ignore_submodules）。
 // 返回的切片中，顶层仓库 IsSubmodule=false，子模块 IsSubmodule=true。
 //
@@ -175,7 +175,7 @@ func expand(ctx context.Context, topPaths []string, ignoreSubmodules bool) []Rep
 // AllRepos 按当前配置取全部仓库条目（含子模块，除非配置要求忽略）。
 //
 // 各遍历型命令统一用它，避免每处都写 GetConfig().IgnoreSubmodules——那是配置细节，
-// 不该泄漏到每个命令里；真要改"是否含子模块"的语义时也只需改这一处。
+// 不该泄漏到每个命令里；真要改“是否含子模块”的语义时也只需改这一处。
 func AllRepos(ctx context.Context) []RepoEntry {
 	return MustGetAllRepos(ctx, GetConfig().IgnoreSubmodules)
 }
@@ -186,8 +186,8 @@ func ExpandRepos(ctx context.Context, top []string) []RepoEntry {
 	return expand(ctx, top, GetConfig().IgnoreSubmodules)
 }
 
-// MustGetAllRepos 返回"顶层仓库 + 子模块"的全部条目，顶层仓库为空时打印提示并退出
-// （空列表属于"正常无任务可做"而非错误，所以退出码 0）。
+// MustGetAllRepos 返回“顶层仓库 + 子模块”的全部条目，顶层仓库为空时打印提示并退出
+// （空列表属于“正常无任务可做”而非错误，所以退出码 0）。
 // 需要仓库集合的命令一律调用它（或其封装 AllRepos），不要直接用 GetRepoList——
 // 只有经它展开才能获得子模块辐射能力。
 // --debug 模式下分别输出仓库发现和子模块展开的耗时。
@@ -196,7 +196,7 @@ func MustGetAllRepos(ctx context.Context, ignore bool) []RepoEntry {
 	top := GetRepoList()
 	if len(top) == 0 {
 		WarnMsg(l10n.T("No repositories configured; add one with 'ggt repo add <path>' or 'ggt repo add-parent <path>'", nil))
-		// 空列表属于"正常无任务可做"而非错误，因此退出码 0。
+		// 空列表属于“正常无任务可做”而非错误，因此退出码 0。
 		os.Exit(0)
 	}
 	t1.Done()

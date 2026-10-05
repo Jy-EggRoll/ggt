@@ -3,13 +3,13 @@
 // 所有命令都应经由这里的函数输出，不要直接在命令里调用 pterm.*——这样未来统一换主题色、
 // 换输出库、或接入日志系统时，只需改这一个文件，而不必改动各业务命令。
 //
-// 命名约定是「4 种严重级别 × 4 种形态」：
+// 命名约定是“4 种严重级别 × 4 种形态”：
 //   - XxxMsg    打印纯字符串
 //   - XxxLn     打印纯字符串，并在其后留一个空行
 //   - XxxStr    返回着色后的字符串，供先缓存再统一打印的场合
 //   - XxxStrLn  返回着色字符串，并在其后补一个换行（得不到空行，原因见下方 StrLn 系列的说明）
 //
-// 唯一例外是**面向脚本消费**的输出（ggt config get / validate / path）：pterm 不检测
+// 唯一例外是**面向脚本处理**的输出（ggt config get / validate / path）：pterm 不检测
 // TTY，会把 ANSI 转义写进管道，让 `ggt config show | jq` 这类用法失败。那些命令
 // 直接走 fmt 的裸输出，不受本文件的样式调整影响。
 package cmd
@@ -25,7 +25,7 @@ import (
 // ——— 统一的 pterm 输出辅助函数 ———
 // 形态与命名约定见文件头，此处不再重复。唯一需要额外记住的是：全仓**没有** f 系列
 // （format + 参数）封装，确实需要格式串时直接调用 pterm 的 Printf/Printfln，
-// 但**不能把译文当格式串**送进去（译文里的字面 % 会被 fmt 吃掉，原因见 root.go）。
+// 但**不能把译文当格式串**送进去（译文里的字面 % 会被 fmt 当成格式动词，原因见 root.go）。
 
 // Header 打印带样式的标题（使用 Section 风格，比 DefaultHeader 方块更简洁）。
 func Header(title string) {
@@ -56,7 +56,7 @@ func WarnMsg(msg string) {
 //
 // 这个空行不是随手加的：pterm 的 Printfln 会在渲染结果后追加换行，而 Println 会把
 // 结尾换行**折叠掉**（PrefixPrinter.Sprint 对结尾 \n 先 TrimRight 再补一个），
-// 所以"保留一个空行"只能靠常量格式串走 Printfln。该细节收口于此，
+// 所以“保留一个空行”只能靠常量格式串走 Printfln。该细节统一在这里处理，
 // 调用点不必再写 "%s\n"，也不必各自解释一遍。
 func SuccessLn(msg string) { pterm.Success.Printfln("%s\n", msg) }
 func ErrorLn(msg string)   { pterm.Error.Printfln("%s\n", msg) }
@@ -79,7 +79,7 @@ func PrintPath(path string) {
 // 不得再直接调用 pterm.* 原色或 fmt.Print*，git 自身着色输出除外，统一走 PrintRaw）———
 
 // Muted 返回灰色（次要/细节）文本字符串，不立即打印。
-// 用于 URL、说明性标签（如"变动详情："）等不希望抢占视觉重心的文本。
+// 用于 URL、说明性标签（如“变动详情：”）等不希望抢占视觉重心的文本。
 func Muted(text string) string {
 	return pterm.FgGray.Sprint(text)
 }
@@ -109,12 +109,12 @@ func RepoName(name string) string {
 	return pterm.FgCyan.Sprintf("[%s]", name)
 }
 
-// RepoLabel 返回带"是否子模块"语义的仓库标签：
+// RepoLabel 返回带“是否子模块”语义的仓库标签：
 //   - 顶层仓库：青色 [name]
 //   - 子模块：青色 [子] name
 //
 // 所有命令在打印仓库名时必须统一经此函数，消除此前各个命令对仓库名异色/无前缀的割裂处理，
-// 也让"子模块"这一身份在任意命令输出里都有一致的 [子] 标识。
+// 也让“子模块”这一身份在任意命令输出里都有一致的 [子] 标识。
 func RepoLabel(name string, isSubmodule bool) string {
 	if isSubmodule {
 		return pterm.FgCyan.Sprintf("%s %s", l10n.T("[sub]", nil), name)
@@ -122,7 +122,7 @@ func RepoLabel(name string, isSubmodule bool) string {
 	return RepoName(name)
 }
 
-// RepoLine 打印一行"仓库标签 + 备注"，作为各命令的仓库标题行（不含分隔线）。
+// RepoLine 打印一行“仓库标签 + 备注”，作为各命令的仓库标题行（不含分隔线）。
 // 仓库标签统一经 RepoLabel 着色，子模块自动带 [子] 前缀。
 // 需要分隔线时另行调用 PrintSeparator。
 func RepoLine(name, note string, isSubmodule bool) {
@@ -135,14 +135,14 @@ func RepoLine(name, note string, isSubmodule bool) {
 }
 
 // PrintRaw 透传外部（如 git）自带 ANSI 着色的原始输出，仅做打印封装。
-// 调用处可明确这是"透传"而非本工具自身样式，避免与统一封装混淆。
+// 调用处可明确这是“透传”而非本工具自身样式，避免与统一封装混淆。
 func PrintRaw(s string) {
 	fmt.Print(s)
 }
 
-// ProgressLine 以「回车 + 清到行尾」就地重绘一行进度文本，供下载等长任务持续展示进度使用。
+// ProgressLine 以“回车 + 清到行尾”就地重绘一行进度文本，供下载等长任务持续展示进度使用。
 //
-// 收口在本文件而不是调用点：就地重绘依赖 ANSI 控制序列，属于输出层的渲染细节，
+// 统一在本文件处理而不是调用点：就地重绘依赖 ANSI 控制序列，属于输出层的渲染细节，
 // 与其它用户可见输出同源，调用点只负责决定这一帧显示什么内容。
 //
 // 为什么必须带清行序列 \x1b[K：进度帧的长度会随百分比、速率、剩余时间的字符数变化，
@@ -177,7 +177,7 @@ func SuccessStr(s string) string { return pterm.Success.Sprint(s) }
 // 结尾换行、再补回一个，所以多传几个 \n 也只会折叠成一个换行。想要空行只能用 Ln 系列
 // （它们经 Printfln 在结果之后再追加一个换行，凑成两个）。
 //
-// 用途是"先并发收集、再顺序统一打印"的场合（如 sync 的逐仓库结果）拼接多行，
+// 用途是“先并发收集、再顺序统一打印”的场合（如 sync 的逐仓库结果）拼接多行，
 // 免得每个调用点都自己写 + "\n"。
 func WarnStrLn(s string) string    { return pterm.Warning.Sprint(s + "\n") }
 func InfoStrLn(s string) string    { return pterm.Info.Sprint(s + "\n") }

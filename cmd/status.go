@@ -26,7 +26,7 @@ Examples:
   ggt st              Short form`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			repos := AllRepos(context.Background())
-			// 用 InfoLn 而非 InfoMsg：Ln 系列结尾会多留一个空行，把抬头行与后续仓库输出隔开（"%s\n" 的细节收口在 output.go）
+			// 用 InfoLn 而非 InfoMsg：Ln 系列结尾会多留一个空行，把抬头行与后续仓库输出隔开（"%s\n" 的细节统一在 output.go 处理）
 			InfoLn(l10n.T("Repositories: {{.Count}} — checking status...", map[string]any{"Count": len(repos)}))
 
 			t := NewDebugTimer(l10n.T("Status check (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))

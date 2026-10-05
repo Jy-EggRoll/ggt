@@ -7,9 +7,9 @@
 // 只能再遍历命令树覆盖字段——那套机制会就地改写字段、破坏幂等，还要求提取器对
 // 框架自身的代码开例外（参见本文件末尾的说明）。
 //
-// 改为"延迟构造"后，T() 在构造期就是一次真调用，全仓语义一致：
+// 改为“延迟构造”后，T() 在构造期就是一次真调用，全仓语义一致：
 //   - 各命令文件只提供构造函数 newXxxCmd()，并在自己的 init() 里用 register
-//     登记"把该命令挂到根命令上"的动作
+//     登记“把该命令挂到根命令上”的动作
 //   - Execute 先 l10n.Init 加载语言，再 buildRoot() 触发全部构造函数
 //   - flag 的取地址绑定发生在构造函数内部，仍早于 cobra 解析参数，不会失效
 package cmd
@@ -21,7 +21,7 @@ import "github.com/spf13/cobra"
 // 命令在帮助里的展示顺序由 cobra 的 EnableCommandSorting 决定，与此无关。
 var constructors []func(root *cobra.Command)
 
-// register 由各命令文件的 init() 调用，登记"把本命令挂到根命令上"的动作。
+// register 由各命令文件的 init() 调用，登记“把本命令挂到根命令上”的动作。
 // 登记的是动作而非命令实例，正是为了把构造推迟到语言加载之后。
 func register(add func(root *cobra.Command)) {
 	constructors = append(constructors, add)

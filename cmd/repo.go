@@ -1,4 +1,4 @@
-// repo.go 实现 "ggt repo" 及其子命令，管理"仓库路径"相关的两个配置项
+// repo.go 实现 "ggt repo" 及其子命令，管理“仓库路径”相关的两个配置项
 // （repo_paths 与 parent_paths）。
 //
 // 落盘一律走 config.SetKey，只写命令真正改动的那一个键，而不是"把整份 Config 写回

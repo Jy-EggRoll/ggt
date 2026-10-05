@@ -5,12 +5,12 @@
 //
 // 刻意用 `//go:build !race` 把自己排除在 -race 之外：端到端每个断言都要新起一个子进程，
 // 而子进程就是同一份被竞态插桩的测试二进制，启动代价极高——同构的测试在姊妹项目 flk 上
-// 实测为「非 race 1.0s / race 68.3s」，被放大了 67 倍。而竞态检测对"子进程驱动的 CLI 断言"
+// 实测为“非 race 1.0s / race 68.3s”，被放大了 67 倍。而竞态检测对"子进程驱动的 CLI 断言"
 // 几乎不产生价值：真正并发的代码在 internal/worker 里有各自的单测覆盖。
 // 代价是 -race 那一轮不再重复验证 CLI 契约，换来的是反馈时间从一分钟以上回到一两秒
 //
 // 为什么必须端到端：ggt 现有测试全是包内单测，它们直接调用函数、断言内存里的返回值，
-// 证明不了"用户敲一条命令后看到什么"——版本号有没有打印出来、退出码对不对、
+// 证明不了“用户敲一条命令后看到什么”——版本号有没有打印出来、退出码对不对、
 // 损坏的配置文件是否会让命令直接崩、写入的键是不是真的落盘到了隔离 HOME 下。
 // 这些只有把编译产物当黑盒、以子进程方式驱动才能覆盖
 //
@@ -62,8 +62,8 @@ func TestCLIHelperProcess(t *testing.T) {
 	}
 
 	// 把程序名固定成 "ggt" 再交给 Cobra：cobra 读 os.Args[1:] 作参数，
-	// 而语言预扫描（cmd/lang.go 的 scanLangFlag）同样吃掉 os.Args[1:]，
-	// 两者都要求这里已经是"程序名 + 真实参数"的形态
+	// 而语言预扫描（cmd/lang.go 的 scanLangFlag）同样会读走 os.Args[1:]，
+	// 两者都要求这里已经是“程序名 + 真实参数”的形态
 	os.Args = append([]string{"ggt"}, os.Args[separator+1:]...)
 	cmd.Execute()
 	os.Exit(0)
@@ -88,8 +88,8 @@ func runCLI(t *testing.T, arguments ...string) cliResult {
 
 // runCLIWithEnv 与 runCLI 一致，但由调用方指定子进程的 HOME
 //
-// 需要它的场景：同一个用例要先写入配置、再在"新的进程"里读回，两次必须落进同一个 HOME，
-// 才能证明"写入真的落盘了"而不是只改了内存
+// 需要它的场景：同一个用例要先写入配置、再在“新的进程”里读回，两次必须落进同一个 HOME，
+// 才能证明“写入真的落盘了”而不是只改了内存
 func runCLIWithEnv(t *testing.T, childHome string, arguments ...string) cliResult {
 	t.Helper()
 
@@ -98,7 +98,7 @@ func runCLIWithEnv(t *testing.T, childHome string, arguments ...string) cliResul
 
 // runCLIWithExtraEnv 与 runCLIWithEnv 一致，但允许追加额外的环境变量
 //
-// 需要它的场景：验证"某个环境变量对语言/日志级别没有效果"时必须把它塞进子进程环境，
+// 需要它的场景：验证"某个环境变量对语言/日志级别没有效果"时必须把它放进子进程环境，
 // 而不能改本测试进程自己的 os.Environ()，否则会污染同进程的其它用例
 func runCLIWithExtraEnv(t *testing.T, childHome string, extraEnv []string, arguments ...string) cliResult {
 	t.Helper()
@@ -108,7 +108,7 @@ func runCLIWithExtraEnv(t *testing.T, childHome string, extraEnv []string, argum
 	// HOME 与 USERPROFILE 同时改写：Unix 走前者、Windows 走后者，
 	// 两者都指向本用例专属的临时目录，避免平台差异导致隔离失效
 	//
-	// os/exec 对环境变量重复键的处理是"后者胜"（内建 dedupEnv 保留最后一次出现），
+	// os/exec 对环境变量重复键的处理是“后者胜”（内建 dedupEnv 保留最后一次出现），
 	// 因此把我们的取值追加在 os.Environ() 之后即可稳定覆盖真实 HOME
 	command.Env = append(os.Environ(),
 		cliHelperEnv+"=1",
@@ -141,10 +141,10 @@ func configFilePath(home string) string {
 	return filepath.Join(home, ".config", "go-git-ggt", "ggt-config.json")
 }
 
-// hasHanText 判断输出里是否含汉字，用来确认"语言确实变成了中文"
+// hasHanText 判断输出里是否含汉字，用来确认“语言确实变成了中文”
 //
-// 用「是否含汉字」而不是比对具体译文：译文措辞会随翻译迭代改动，
-// 把用例钉在某一句话上会让它跟着翻译一起红，而这里要守住的是"语言设置真的生效了"
+// 用“是否含汉字”而不是比对具体译文：译文措辞会随翻译迭代改动，
+// 把用例钉在某一句话上会让它跟着翻译一起红，而这里要守住的是“语言设置真的生效了”
 func hasHanText(text string) bool {
 	for _, r := range text {
 		if unicode.Is(unicode.Han, r) {
@@ -190,7 +190,7 @@ func readConfigFile(t *testing.T, path string) map[string]any {
 //
 // 断言口径与 flk 保持一致：不钉死具体措辞（版本号本身也随时会变），
 // 只要求英文输出含 "Version:"、zh-CN 输出含汉字，并额外要求两者不同——
-// 后者用于排除"两种语言其实是同一份输出"的假通过
+// 后者用于排除“两种语言其实是同一份输出”的假通过
 func TestCLIVersionContract(t *testing.T) {
 	english := runCLI(t, "version")
 	if english.exitCode != 0 {
@@ -249,16 +249,16 @@ func TestCLIHelpContract(t *testing.T) {
 }
 
 // TestCLIConfigSubtreeContract 端到端验证 `ggt config` 子树的对外契约：
-// path/get/set/reset 的读写往返、未知键与未知取值被拒、以及"键只落用户真正设过的那一个"
+// path/get/set/reset 的读写往返、未知键与未知取值被拒、以及“键只落用户真正设过的那一个”
 //
-// 覆盖的是"命令层与配置层对不对得上"这类只有真实进程才暴露的问题：
-// path 打印的路径与实际读写的是不是同一个、get 的输出能不能被脚本消费、
+// 覆盖的是“命令层与配置层对不对得上”这类只有真实进程才暴露的问题：
+// path 打印的路径与实际读写的是不是同一个、get 的输出能不能被脚本处理、
 // 以及 set 会不会把文件里用户手写的未知键顺手抹掉
 func TestCLIConfigSubtreeContract(t *testing.T) {
 	home := t.TempDir()
 	configPath := configFilePath(home)
 
-	// path：必须与读取侧用的是同一个路径，否则"设了却不生效"就无从排查
+	// path：必须与读取侧用的是同一个路径，否则“设了却不生效”就无从排查
 	path := runCLIWithEnv(t, home, "config", "path")
 	if path.exitCode != 0 || strings.TrimSpace(path.stdout) != configPath {
 		t.Fatalf("config path = %q (exit=%d)，期望 %q", path.stdout, path.exitCode, configPath)
@@ -269,7 +269,7 @@ func TestCLIConfigSubtreeContract(t *testing.T) {
 		t.Fatalf("缺文件时 config get size_unit = %q，期望 default decimal", got.stdout)
 	}
 
-	// 预置一份含"未知键 + 一个已知键"的文件：随后的 set 必须只动目标键，
+	// 预置一份含“未知键 + 一个已知键”的文件：随后的 set 必须只动目标键，
 	// 其余键（尤其是 ggt 根本不认识的 alpha/zeta）原样保留
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("创建配置目录失败: %v", err)
@@ -294,7 +294,7 @@ func TestCLIConfigSubtreeContract(t *testing.T) {
 		t.Fatalf("set 应保留文件里的未知/其它键，实际 %#v", afterSet)
 	}
 
-	// reset 单键：默认模式是"把该键从文件里移除"，于是回落到内置默认
+	// reset 单键：默认模式是“把该键从文件里移除”，于是回落到内置默认
 	if reset := runCLIWithEnv(t, home, "config", "reset", "size_unit"); reset.exitCode != 0 {
 		t.Fatalf("config reset size_unit 失败: exit=%d stderr=%q", reset.exitCode, reset.stderr)
 	}
@@ -351,7 +351,7 @@ func TestCLIConfigValidateContract(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("创建配置目录失败: %v", err)
 	}
-	// 一份同时含"未知键"和"非法取值"的文件：两者都应被逐条点名
+	// 一份同时含“未知键”和“非法取值”的文件：两者都应被逐条点名
 	if err := os.WriteFile(configPath, []byte(`{"language":"fr","nosuchkey":1}`), 0o644); err != nil {
 		t.Fatalf("写入问题配置失败: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestCLIRepoLifecycle(t *testing.T) {
 
 // TestCLIStatusAndSizeOnControlledRepos 在一组受控的临时仓库上跑 status 与 size
 //
-// 两者都是"遍历型"命令（经 AllRepos 展开），是 ggt 的核心工作流。
+// 两者都是“遍历型”命令（经 AllRepos 展开），是 ggt 的核心工作流。
 // 断言只要求退出码为 0 且输出里出现各仓库名——仓库名的着色前缀 [name] 是稳定的，
 // 而具体的状态行与大小会随 git 版本和仓库内容变化，钉死它们只会带来脆弱的用例
 func TestCLIStatusAndSizeOnControlledRepos(t *testing.T) {
@@ -467,13 +467,13 @@ func TestCLIStatusAndSizeOnControlledRepos(t *testing.T) {
 	}
 }
 
-// TestCLIBadInvocationContract 覆盖两类"调用方式不对"的场景
+// TestCLIBadInvocationContract 覆盖两类“调用方式不对”的场景
 //
 //   - 未知子命令：Cobra 必须报 unknown command 并以非零码退出
 //   - 无参数：Cobra 对"没有 Run 的父命令"会打印帮助并返回 nil，因此退出码是 0
 //
 // 这里如实反映了 ggt 当前的行为：无参数不是错误，而是打印用法。
-// （任务描述期望"无参数非零"，与实测不符，已在交付报告中说明；
+// （任务描述期望“无参数非零”，与实测不符，已在交付报告中说明；
 // 用例按真实契约编写，避免验收时出现假红）
 func TestCLIBadInvocationContract(t *testing.T) {
 	unknown := runCLI(t, "definitely-not-a-command")
@@ -495,7 +495,7 @@ func TestCLIBadInvocationContract(t *testing.T) {
 
 // TestCLIInvalidLogLevelWarning 验证配置文件里写了非法 log_level 时的容错契约：
 // 命令**照常成功**（不因一个日志级别写错就整体不可用），但必须给出明确告警，
-// 因为静默降级会让用户以为设置生效了，而"日志怎么变少了"极难自查
+// 因为静默降级会让用户以为设置生效了，而“日志怎么变少了”极难自查
 //
 // 关于告警的落点：ggt 的 WarnMsg 走 pterm.Warning，其默认 Writer 是 stdout
 // （root.go 只把 pterm.Error.Writer 改成了 stderr）。因此相比"只看 stderr"，

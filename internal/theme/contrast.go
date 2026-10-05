@@ -1,4 +1,4 @@
-// 本文件是"对比度兜底"组件：主题给的一对前景/底色有时实在读不出来，这里只调前景色的明度。
+// 本文件是“对比度回退”组件：主题给的一对前景/底色有时实在读不出来，这里只调前景色的明度。
 //
 // 为什么需要它：实测 Catppuccin Latte 自带的 button.foreground #dce0e8 压在
 // button.background #df8e1d 上只有 1.98:1，而 WCAG 对正文的 AA 级要求是 4.5:1。
@@ -8,7 +8,7 @@
 // 用户看到的仍然是这套主题里的那个颜色，只是深了一档或浅了一档。
 //
 // 这个包将来要整包搬进共享库给别的项目复用，因此这里只有通用的颜色数学，
-// "哪些前景压在哪些底色上"属于各项目的页面概念，留在调用方（见 cmd/ui_theme.go）
+// “哪些前景压在哪些底色上”属于各项目的页面概念，留在调用方（见 cmd/ui_theme.go）
 package theme
 
 import (
@@ -18,7 +18,7 @@ import (
 	"strings"
 )
 
-// MinContrast 是判定"读得出来"的门槛：WCAG 2.x 对正文（非大字）的 AA 级要求是 4.5:1
+// MinContrast 是判定“读得出来”的门槛：WCAG 2.x 对正文（非大字）的 AA 级要求是 4.5:1
 const MinContrast = 4.5
 
 // rgba 是解析后的颜色：三个通道 0-255，透明度 0-1
@@ -27,7 +27,7 @@ type rgba struct{ r, g, b, a float64 }
 // parseColor 解析 #RGB / #RGBA / #RRGGBB / #RRGGBBAA。
 //
 // 只认这几种十六进制写法：VSCode 主题里的颜色几乎都是它们。其余形态（具名色、rgb() 函数）
-// 一律当作"解析不了"，由调用方原样保留——猜一个值出来比不动它危险得多
+// 一律当作“解析不了”，由调用方原样保留——猜一个值出来比不动它危险得多
 func parseColor(s string) (rgba, bool) {
 	t := strings.TrimSpace(s)
 	if !strings.HasPrefix(t, "#") {
@@ -131,7 +131,7 @@ func ratio(fg, bg rgba) float64 {
 }
 
 // Contrast 返回两色的 WCAG 对比度（1 到 21）。任一颜色解析不了时返回 0，
-// 调用方据此知道"这个值不该参与调整"
+// 调用方据此知道“这个值不该参与调整”
 func Contrast(fg, bg string) float64 {
 	f, okF := parseColor(fg)
 	b, okB := parseColor(bg)
@@ -143,12 +143,12 @@ func Contrast(fg, bg string) float64 {
 
 // EnsureContrast 在前景色与 bgs 里任一底色读不出来时，沿明度轴调整前景直到全部达标。
 //
-// 返回调整后的颜色与"是否真的调过"。三个刻意为之的取舍：
-//   - 底色一律不动：动底色等于改主题的设计；动"读不出来的那一档明度"才是我们该管的
+// 返回调整后的颜色与“是否真的调过”。三个刻意为之的取舍：
+//   - 底色一律不动：动底色等于改主题的设计；动“读不出来的那一档明度”才是我们该管的
 //   - 只调到刚过阈值：明度按 1% 步进、命中即停，尽可能少改，主题原本的深浅关系还在
 //   - 解析不了就原样返回：宁可放着不动，也不要拿一个没解析成功的颜色算出一个新色值
 //
-// 多个底色时按"最差的那一对"判定：按钮的前景既要压在常态底色上、也要压在 hover 底色上，
+// 多个底色时按“最差的那一对”判定：按钮的前景既要压在常态底色上、也要压在 hover 底色上，
 // 两个都得达标才算达标
 func EnsureContrast(fg string, bgs []string, min float64) (string, bool) {
 	f, ok := parseColor(fg)
@@ -178,7 +178,7 @@ func EnsureContrast(fg string, bgs []string, min float64) (string, bool) {
 		return fg, false
 	}
 
-	// 方向：往黑还是往白，取能让"最差那一对"更高的一端
+	// 方向：往黑还是往白，取能让“最差那一对”更高的一端
 	black := rgba{a: 1}
 	white := rgba{r: 255, g: 255, b: 255, a: 1}
 	towardWhite := worst(white) > worst(black)
@@ -207,11 +207,11 @@ func EnsureContrast(fg string, bgs []string, min float64) (string, bool) {
 			return cand.hex(), true
 		}
 	}
-	// 走到明度尽头都没达标（极端配色）：交出能做到的最好一档，并如实报告"动过"
+	// 走到明度尽头都没达标（极端配色）：交出能做到的最好一档，并如实报告“动过”
 	return best.hex(), true
 }
 
-// toHSL 转到 HSL（h 0-360，s/l 0-1）。保留色相与饱和度是"微调"的关键：
+// toHSL 转到 HSL（h 0-360，s/l 0-1）。保留色相与饱和度是“微调”的关键：
 // 只有明度变了，用户仍认得出那是主题里的哪个色
 func toHSL(c rgba) (h, s, l float64) {
 	r, g, b := c.r/255, c.g/255, c.b/255

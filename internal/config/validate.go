@@ -1,8 +1,8 @@
 // validate.go 实现 ggt config validate 的体检逻辑。
 //
-// 体检与运行期加载的容错策略刻意不同：LoadConfig 力求"永远能跑"，遇到非法值会静默
-// 回退默认；体检力求"把会被静默忽略的东西说出来"。因此每条问题都标明严重级别，
-// 并说明运行期会发生什么，用户才不会困惑于"为什么它说有问题但命令照样能跑"。
+// 体检与运行期加载的容错策略刻意不同：LoadConfig 力求“永远能跑”，遇到非法值会静默
+// 回退默认；体检力求“把会被静默忽略的东西说出来”。因此每条问题都标明严重级别，
+// 并说明运行期会发生什么，用户才不会困惑于“为什么它说有问题但命令照样能跑”。
 package config
 
 import (
@@ -39,7 +39,7 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 // ValidateAt 体检指定路径的配置文件。
 //
-// 返回的 error 只用于"连读都读不了"（权限不足、路径是目录等）——那种情况无从体检。
+// 返回的 error 只用于“连读都读不了”（权限不足、路径是目录等）——那种情况无从体检。
 // 文件不存在返回空清单：默认配置本来就允许不存在，不算问题。
 func ValidateAt(path string) ([]Issue, error) {
 	data, err := os.ReadFile(path)
@@ -93,7 +93,7 @@ func validateKeys(raw map[string]any) []Issue {
 			unknown = append(unknown, k)
 		}
 	}
-	sort.Strings(unknown) // 排序保证输出稳定，便于 diff 与脚本消费
+	sort.Strings(unknown) // 排序保证输出稳定，便于 diff 与脚本处理
 	for _, k := range unknown {
 		issues = append(issues, Issue{
 			Level:   LevelError,
@@ -240,8 +240,8 @@ func checkPathList(key string, v any, mustBeRepo bool) []Issue {
 // ValueText 把配置值（JSON 解码后的形态）转成裸文本，去掉 JSON 的引号与类型包装。
 //
 // 有两个用途：validate 里复用 Setting.Parse 校验文件中的取值（Parse 接收字符串），
-// 以及 ggt config get 打印标量。两处共用一份实现，避免"校验时认得的写法"与
-// "展示出来的写法"不一致。
+// 以及 ggt config get 打印标量。两处共用一份实现，避免“校验时认得的写法”与
+// “展示出来的写法”不一致。
 func ValueText(v any) string {
 	switch t := v.(type) {
 	case nil:

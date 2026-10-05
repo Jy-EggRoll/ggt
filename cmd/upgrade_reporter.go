@@ -30,9 +30,9 @@ type ptermReporter struct {
 
 // Info 输出过程性状态，走 output.go 的统一信息样式（含 pterm 的 INFO 前缀）。
 //
-// Reporter 的形参是「格式串 + 参数」，而 ggt 的输出封装只接收已渲染好的纯文本，
-// 因此在这里用 Sprintf 收口一次。格式串由升级器传入（恒为 "%s"），译文只作为参数参与渲染，
-// 不会被当作格式串解析，不存在 ggt 那条「译文里字面 % 被 fmt 吃掉」的隐患
+// Reporter 的形参是“格式串 + 参数”，而 ggt 的输出封装只接收已渲染好的纯文本，
+// 因此在这里用 Sprintf 统一处理一次。格式串由升级器传入（恒为 "%s"），译文只作为参数参与渲染，
+// 不会被当作格式串解析，不存在 ggt 那条“译文里字面 % 被 fmt 当成格式动词”的隐患
 func (r *ptermReporter) Info(format string, args ...any) {
 	InfoMsg(fmt.Sprintf(format, args...))
 }
@@ -51,7 +51,7 @@ func (r *ptermReporter) Success(format string, args ...any) {
 //
 // --yes 模式下直接同意，无需触碰终端；非交互环境下 pterm 的确认会读到 EOF 或直接挂住，
 // 因此先用 stdinIsTerminal（与 config reset --all 同一判定）拒绝并向上升级器返回错误，
-// 让升级器走「用户未能确认」的保守分支，而不是把命令永久挂起在等待输入上
+// 让升级器走“用户未能确认”的保守分支，而不是把命令永久挂起在等待输入上
 func (r *ptermReporter) Confirm(question string) (bool, error) {
 	if r.assumeYes {
 		return true, nil
@@ -80,7 +80,7 @@ const progressRefreshInterval = 100 * time.Millisecond
 //
 // 这里刻意不用 pterm 自带的进度条组件：它会自行接管光标与刷新节奏，
 // 与确认弹窗同时出现时会争夺同一片终端区域，而此处的绘制完全由 reporter 的暂停标志统一调度；
-// 实际的「就地重绘一行」动作则交给 output.go 的 ProgressLine 收口
+// 实际的“就地重绘一行”动作则交给 output.go 的 ProgressLine 统一处理
 type downloadProgress struct {
 	reporter *ptermReporter
 	label    string

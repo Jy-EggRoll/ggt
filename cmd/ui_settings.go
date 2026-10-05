@@ -2,7 +2,7 @@
 //
 // 为什么单独一个文件：这两个端点与仓库、分支图那些端点没有共同前提（不读快照、不跑 git、
 // 不碰仓库状态），它们只做两件事——读配置文件、按注册表写配置文件。放进 ui.go 只会让那个
-// 已经上千行的文件继续变长，也让"哪些端点会动仓库"这条分界线变模糊
+// 已经上千行的文件继续变长，也让“哪些端点会动仓库”这条分界线变模糊
 package cmd
 
 import (
@@ -24,7 +24,7 @@ type uiSettings struct {
 
 // uiSettingsRequest 是 POST /api/settings 的请求体。
 //
-// 一次可以改多项：面板在点"保存"时发一次请求，逐项往返会让"改三项"变成三次串行等待。
+// 一次可以改多项：面板在点“保存”时发一次请求，逐项往返会让“改三项”变成三次串行等待。
 // Values 只包含用户真正改过的项，Unset 是要求恢复默认（把键从文件里删掉）的项——
 // 与命令行的 "ggt config reset" 是同一件事：删键让内置默认值生效，而不是把默认值写进文件
 type uiSettingsRequest struct {
@@ -48,7 +48,7 @@ type uiSettingsResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// uiReloadKeys 列出"改完必须刷新页面才生效"的配置项。
+// uiReloadKeys 列出“改完必须刷新页面才生效”的配置项。
 //
 // 这几个键的值由服务端在渲染首页时注入（见 runUI 里的 renderIndex：主题解析成 CSS 写进
 // __GGT_THEME_CSS__，其余设置整份写进 __GGT_SETTINGS__ 供页面行为读用）。页面拿到的那份
@@ -60,7 +60,7 @@ type uiSettingsResult struct {
 // 语言刻意不在这里：Go 进程的语言在启动时由 l10n.Init 定下，刷新页面也还是旧语言，
 // 它需要的是重启 ggt。那件事由 settingNote 用一句话说清，不需要页面做任何动作
 //
-// 这是一份"页面已经烧进去"的键名清单，看起来与注册表分家了。之所以不放进注册表：
+// 这是一份“页面已经烧进去”的键名清单，看起来与注册表分家了。之所以不放进注册表：
 // 它描述的不是配置项自身的性质，而是本页面的渲染方式（哪些值被写死进了 HTML）。
 // 测试断言这里每个键都真实存在，删配置项不会留下悬空的名字
 var uiReloadKeys = []string{"theme", "theme_dark", "theme_light", "notify_timeout"}
@@ -92,7 +92,7 @@ func uiReloadsPage(key string) bool {
 // handleSettings 返回 /api/settings 的处理函数：GET 读、POST 写。
 //
 // path 由调用方传入，而不是在这里现算 config.GetDefaultConfigPath()：写入的落点必须显式，
-// 否则测试只能去动开发者自己的真实配置，而"测试不许碰真实配置"是这个项目一直守着的底线
+// 否则测试只能去动开发者自己的真实配置，而“测试不许碰真实配置”是这个项目一直守着的底线
 //
 // 写挂在 POST 上而不是 GET：基座的 writeGuard 只对非 GET/HEAD 做同源校验，
 // 把写动作挂在 GET 上等于自己把 CSRF 那道防线绕掉（与仓库那几个写端点同一条理由）
@@ -131,7 +131,7 @@ func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 	}
 
 	// 按注册表的顺序写，而不是按 map 的遍历顺序：Go 里 map 的顺序是随机的，
-	// 而"同时改两项、其中一项失败"时用户看到的报错顺序会一次一个样，问题很难复现
+	// 而“同时改两项、其中一项失败”时用户看到的报错顺序会一次一个样，问题很难复现
 	for _, s := range config.Settings() {
 		text, ok := req.Values[s.Key]
 		if !ok {

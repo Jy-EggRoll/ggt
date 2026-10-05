@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// syncResult 保存单个仓库的同步结果，用于区分「自动完成」和「需手动处理」。
+// syncResult 保存单个仓库的同步结果，用于区分“自动完成”和“需手动处理”。
 // 所有仓库的 output 会先顺序打印，最后再汇总 needsManual=true 的条目。
 type syncResult struct {
 	name        string // 仓库展示名（已含 [子] 前缀）
@@ -53,7 +53,7 @@ Examples:
 			repos := AllRepos(context.Background())
 			// 这里刻意用 InfoMsg（不带空行），而其余遍历型命令用的是 InfoLn（带空行）。
 			// 原因是 sync 的输出直接就是逐仓库明细、之间没有分隔线，加空行反而把首个
-			// 仓库从标题里割裂出去。这是有意为之，不要当成漏改而"顺手统一"
+			// 仓库从标题里割裂出去。这是有意为之，不要当成漏改而“顺手统一”
 			InfoMsg(l10n.T("Repositories: {{.Count}} — syncing...", map[string]any{"Count": len(repos)}))
 
 			t := NewDebugTimer(l10n.T("Sync (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
@@ -88,7 +88,7 @@ Examples:
 }
 
 // syncRepo 同步单个仓库（含子模块）：检查脏状态 → fetch → 分析 commit 关系 → 自动拉取或给出建议。
-// 返回 syncResult 而非纯字符串，以便主流程区分「自动完成」和「需手动处理」的仓库。
+// 返回 syncResult 而非纯字符串，以便主流程区分“自动完成”和“需手动处理”的仓库。
 // 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
 func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 	label := RepoLabel(e.Name, e.IsSubmodule)
@@ -135,7 +135,7 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 
 	remote, err := git.RunContext(ctx, e.Path, "rev-parse", "@{upstream}")
 	if err != nil {
-		// 通常是该分支未设置上游跟踪（@{upstream} 不存在），明确告知根因而非泛化的"获取失败"，
+		// 通常是该分支未设置上游跟踪（@{upstream} 不存在），明确告知根因而非泛化的“获取失败”，
 		// 避免用户误以为是网络或权限问题。
 		return warn(WarnStrLn(l10n.T("{{.Label}}: no upstream tracking branch (@{upstream} does not exist), skipping",
 			map[string]any{"Label": label})),

@@ -3,7 +3,7 @@
 // 本子树刻意遮蔽 root 的 PersistentPreRunE（见 newConfigCmd 的说明），因此这里
 // **一律不得调用 GetConfig()**（那个全局 cfg 是 nil），所有读写都直接落到配置文件。
 //
-// get 与 validate 的输出面向脚本消费，**全程不走 pterm**：pterm 不检测 TTY，
+// get 与 validate 的输出面向脚本处理，**全程不走 pterm**：pterm 不检测 TTY，
 // 会把 ANSI 转义写进管道，让 `ggt config show | jq` 之类的用法直接失败。
 package cmd
 
@@ -168,7 +168,7 @@ Examples:
 
 			// 校验与写入走 config.SetFromTextAt，与网页设置面板是同一份实现。
 			// 最后一个参数为假 = 宽松模式：命令行允许写候选之外的取值，
-			// 例如自定义主题文件的路径，候选只是"能直接点的那几个"
+			// 例如自定义主题文件的路径，候选只是“能直接点的那几个”
 			written, err := config.SetFromTextAt(config.GetDefaultConfigPath(), s.Key, value, false)
 			if err != nil {
 				return err
@@ -267,7 +267,7 @@ func resetAllConfig(writeDefaults, yes bool) error {
 	path := config.GetDefaultConfigPath()
 
 	// 删除是不可逆的，且会丢掉全部仓库记录，必须先让损失可见并取得确认。
-	// 写默认值这条路径是安全操作（结果与"从未配置过"等价），不需要确认
+	// 写默认值这条路径是安全操作（结果与“从未配置过”等价），不需要确认
 	if !writeDefaults {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			InfoMsg(l10n.T("There is no config file to delete: {{.Path}}", map[string]any{"Path": path}))
@@ -359,14 +359,14 @@ Examples:
 	}
 }
 
-// errSilent 表示"错误已经打印过，不要再包一层"。
+// errSilent 表示“错误已经打印过，不要再包一层”。
 // Execute 会识别它并跳过 "Execution failed:" 前缀，避免同一件事提示两遍。
 var errSilent = errors.New("error already reported")
 
 // settingNote 返回某一项写入之后要额外告诉用户的一句话，没有就返回空串。
 //
 // 放在这里而不是各调用方自己写：命令行的 set 与网页设置面板都要说这句话，
-// 各写一份就会出现"命令行提示了、页面却没提示"这种不对称，
+// 各写一份就会出现“命令行提示了、页面却没提示”这种不对称，
 // 而缺了这句话的用户会反复刷新页面等一个永远不会自己生效的改动
 func settingNote(key string) string {
 	if key == "language" {
@@ -377,7 +377,7 @@ func settingNote(key string) string {
 	return ""
 }
 
-// errUnknownKey 生成"未知键"的统一提示，顺带告诉用户怎么列出全部键。
+// errUnknownKey 生成“未知键”的统一提示，顺带告诉用户怎么列出全部键。
 func errUnknownKey(key string) error {
 	return errors.New(l10n.T("Unknown config key: {{.Key}} (run \"ggt config --help\" to see the available keys)",
 		map[string]any{"Key": key}))

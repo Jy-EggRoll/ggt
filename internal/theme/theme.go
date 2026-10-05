@@ -1,4 +1,4 @@
-// Package theme 把看板的配色从「写死在样式表里」改成「一份 VSCode 格式的主题文档 + 注册表默认值回落」。
+// Package theme 把看板的配色从“写死在样式表里”改成“一份 VSCode 格式的主题文档 + 注册表默认值回落”。
 //
 // 为什么直接兼容 VSCode 的主题格式：看板的视觉本来就逐项对齐 VSCode（出处清单见 style.css），
 // 而大家手上现成的主题——官方那十几套、以及 Catppuccin 这类第三方——都是 VSCode 主题文件。
@@ -14,12 +14,12 @@
 // 文件里，而在颜色注册表的默认值里——官方主题没写它们，VSCode 用的就是那些默认值。
 //
 // 内置的主题文件是逐字内嵌的上游文件（含 MIT 许可，见 builtin/*/LICENSE.txt），与用户自己
-// 放进来的主题走同一条解析路径，唯一的区别是"从哪儿读字节"。
+// 放进来的主题走同一条解析路径，唯一的区别是“从哪儿读字节”。
 //
 // 本包与具体页面的分界（这条分界是为了能整包搬进共享库 eggokit 给别的项目复用）：
 //   - 本包负责：解析机制、VSCode 颜色注册表的默认值、内置主题文件
-//   - 消费方负责：它自己要哪些颜色 id、id 到自家变量名的映射，以及 VSCode 里没有对应物的
-//     自有令牌（"卡片边框"这类页面概念）的取值
+//   - 使用方负责：它自己要哪些颜色 id、id 到自家变量名的映射，以及 VSCode 里没有对应物的
+//     自有令牌（“卡片边框”这类页面概念）的取值
 //
 // 因此本包里不该出现任何一个具体页面的视觉概念——出现即说明这条分界被打破了。
 package theme
@@ -37,7 +37,7 @@ import (
 	"strings"
 )
 
-// DefaultDarkID / DefaultLightID 是"跟随系统深浅"时用的两套内置主题。
+// DefaultDarkID / DefaultLightID 是“跟随系统深浅”时用的两套内置主题。
 //
 // 取的是 VSCode 当前的默认主题——vscode 的 ThemeSettingDefaults.COLOR_THEME_DARK 值为
 // "Dark 2026"、"Light 2026"（源码 src/vs/workbench/services/themes/common/workbenchThemeService.ts），
@@ -49,14 +49,14 @@ const (
 
 // builtinPrefix 是内置主题 id 的前缀。
 //
-// 为什么是"前缀 + 来源目录"：外部主题的 id 是它的绝对路径，而文件名可能与内置主题重名
-// （有人会把 dark_vs.json 复制出来改），带上前缀与来源目录就不存在"谁遮住谁"的歧义
+// 为什么是“前缀 + 来源目录”：外部主题的 id 是它的绝对路径，而文件名可能与内置主题重名
+// （有人会把 dark_vs.json 复制出来改），带上前缀与来源目录就不存在“谁遮住谁”的歧义
 const builtinPrefix = "builtin:"
 
 // builtinGroups 是内嵌主题的来源分组，顺序即主题选择器里的顺序。
 //
 // Label 是分组标题，直接用来源的名字、不翻译——它们是各自的品牌名（VSCode、Catppuccin），
-// 与"要不要翻译"无关；Dir 是 builtin/ 下的子目录，同时也进主题 id，
+// 与“要不要翻译”无关；Dir 是 builtin/ 下的子目录，同时也进主题 id，
 // 用来保证不同来源之间不会因为同名文件而打架
 var builtinGroups = []struct {
 	Label string
@@ -106,16 +106,16 @@ var builtinFS embed.FS
 //	gitDecoration.*                                      extensions/git/package.json 的 contributes.colors[].defaults
 //	scrollbarSlider.*                                    src/vs/platform/theme/common/colors/miscColors.ts
 //	                                                     上游写作 fromHex(...).transparent(0.4/0.7/0.4)，是
-//	                                                     "字面色 + 固定透明度"，换算成 8 位十六进制后仍可逐位核对
+//	                                                     “字面色 + 固定透明度”，换算成 8 位十六进制后仍可逐位核对
 //	                                                     （与 keybindingLabel.* 同一情形，不属于下面那条排除）
 //	ggt.*                                               本项目自有，VSCode 无对应物（见 cmd/ui_theme.go 的 themeOwnVars）
 //
-// 主题文件里写了同名令牌时以主题为准，这份只负责"主题没写的那些"——而 VSCode 的官方主题
+// 主题文件里写了同名令牌时以主题为准，这份只负责“主题没写的那些”——而 VSCode 的官方主题
 // 恰好就没写 gitDecoration.* 与 diffEditor.*，它们一直用的就是这里的默认值
 //
-// 只收"上游给得出字面值"的令牌：button.hoverBackground 这类在上游是 lighten()/darken()
+// 只收“上游给得出字面值”的令牌：button.hoverBackground 这类在上游是 lighten()/darken()
 // 算出来的，这里不收（收了就得把换算结果固化成字面量，日后与上游脱钩且无法逐条核对）。
-// 这类令牌在样式表里用 CSS 变量兜底，见 style.css 里 var(--btn-hover-bg, var(--hover-bg))
+// 这类令牌在样式表里由 CSS 变量回退，见 style.css 里 var(--btn-hover-bg, var(--hover-bg))
 //
 //go:embed defaults.json
 var defaultsJSON []byte
@@ -143,7 +143,7 @@ type Theme struct {
 	// Builtin 是否为内嵌的主题
 	Builtin bool
 	// Group 是来源分组标题：内置主题取来源名（VSCode、Catppuccin），
-	// 用户放进来的为空——空表示"我自己的"，标题由页面按当前语言给出
+	// 用户放进来的为空——空表示“我自己的”，标题由页面按当前语言给出
 	Group string
 }
 
@@ -151,7 +151,7 @@ type Theme struct {
 //
 // Colors 以 VSCode 的颜色 id 为键（形如 gitDecoration.modifiedResourceForeground），
 // 含主题链里写到的全部颜色，以及主题没写、但注册表里有默认值的那些。
-// 消费方按自己要用的 id 去取——本包不预设谁需要哪些颜色
+// 使用方按自己要用的 id 去取——本包不预设谁需要哪些颜色
 type Resolved struct {
 	Theme
 	Colors map[string]string
@@ -201,7 +201,7 @@ func Available(dirs []string) []Theme {
 // Resolve 按 id 解析一套主题。id 为内置主题的 id 或外部主题文件的绝对路径。
 //
 // 只把 cssVarNames 里列出的令牌解析出来：主题文件动辄几百个颜色，本项目一个都不用，
-// 全塞进页面只是白白撑大 HTML
+// 全写进页面只是白白撑大 HTML
 func Resolve(id string) (*Resolved, error) {
 	var src fsys
 	var rel string
@@ -228,7 +228,7 @@ func Resolve(id string) (*Resolved, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 注册表默认值打底，主题链里写的覆盖它——这是"与 VSCode 视觉一致"的关键一步：
+	// 以注册表默认值为准，主题链里写的覆盖它——这是"与 VSCode 视觉一致"的关键一步：
 	// 例如 2026-light 就没有写 diffEditor.*LineBackground，VSCode 用的正是注册表默认值
 	merged := make(map[string]string, len(base)+len(colors))
 	for id, v := range base {
@@ -273,7 +273,7 @@ func withinDir(base, inc string) bool {
 }
 
 // fsys 是读主题文件的口子：内置主题读内嵌 FS，外部主题读真实文件系统。
-// 抽出这一层，是因为两者的差别只有"从哪儿读字节"，include 链的解析逻辑完全共用
+// 抽出这一层，是因为两者的差别只有“从哪儿读字节”，include 链的解析逻辑完全共用
 type fsys interface {
 	Read(rel string) ([]byte, error)
 }
@@ -352,7 +352,7 @@ func loadChain(src fsys, rel string, seen map[string]bool) (map[string]string, s
 	return colors, declared, name, nil
 }
 
-// peek 只读到"够列进选择器"的程度：名字、类型与来源分组。
+// peek 只读到“够列进选择器”的程度：名字、类型与来源分组。
 // 解析失败时返回错误，由调用方跳过它。group 是来源分组的标题（内置主题才有）
 func peek(src fsys, rel, group string) (Theme, error) {
 	raw, err := src.Read(rel)

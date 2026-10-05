@@ -9,7 +9,7 @@ import (
 )
 
 // TestSanitizeJSONC 覆盖 JSONC 规整的四种情形。前两种是 VSCode 官方主题文件里真实存在的，
-// 后两种是"看着像注释"的坑：字符串里的 // 绝不能被当成注释
+// 后两种是“看着像注释”的问题：字符串里的 // 绝不能被当成注释
 func TestSanitizeJSONC(t *testing.T) {
 	tests := []struct {
 		name string
@@ -63,7 +63,7 @@ func TestOfficialThemesResolve(t *testing.T) {
 			if r.Group == "" {
 				t.Error("内置主题应当带上来源分组")
 			}
-			// 注册表默认值里登记的每个令牌都必须解析出值：缺一个，消费方取到的就是空字符串
+			// 注册表默认值里登记的每个令牌都必须解析出值：缺一个，使用方取到的就是空字符串
 			base, err := defaultsFor(r.Type)
 			if err != nil {
 				t.Fatal(err)
@@ -195,7 +195,7 @@ func TestResolveIncludeEscape(t *testing.T) {
 }
 
 // TestResolveRejectsNonPath 相对路径不是合法的主题标识：内置主题要带前缀、外部主题给绝对路径，
-// 含糊的值一律拒绝，免得"某个看起来像名字的东西"被当成路径去读文件
+// 含糊的值一律拒绝，免得“某个看起来像名字的东西”被当成路径去读文件
 func TestResolveRejectsNonPath(t *testing.T) {
 	if _, err := Resolve("some-theme.json"); err == nil {
 		t.Fatal("相对路径应当被拒绝")

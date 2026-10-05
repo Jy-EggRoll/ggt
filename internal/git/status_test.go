@@ -2,7 +2,7 @@
 //
 // 分成两类，理由不同：
 //   - ParseStatus 是纯函数，用固定样本断言每种记录类型与边界（含空格路径、重命名、
-//     游离 HEAD、空仓库、格式异常），这属于"契约测试"：样本即 git 输出格式的书面约定，
+//     游离 HEAD、空仓库、格式异常），这属于“契约测试”：样本即 git 输出格式的书面约定，
 //     一旦解析被改坏，这里会立刻失败而不必依赖真实 git
 //   - RunStatus 是集成测试，验证真实 git 确实产出了样本所假设的格式。只靠样本测试
 //     会漏掉"git 版本差异导致格式与假设不符"这一整类问题，而这类问题在样本里永远
@@ -221,11 +221,11 @@ func writeUntrackedFiles(t *testing.T, repo string, n int) {
 	}
 }
 
-// TestRunStatus_LimitHit 验证「条目数超过上限就截断并终止 git 子进程」这条保护路径。
+// TestRunStatus_LimitHit 验证“条目数超过上限就截断并终止 git 子进程”这条保护路径。
 //
 // 为什么必须走真实仓库：截断发生在子进程的输出流上（runWithRecordLimit 边读边数、超限
-// 杀进程），属于 I/O 行为，喂一段固定样本给 ParseStatus 永远碰不到它。这条路径的价值
-// 在于内存兜底——没有它，一个忘了写 .gitignore 的 node_modules 就能把几十 MB 读进内存。
+// 杀进程），属于 I/O 行为，传一段固定样本给 ParseStatus 永远碰不到它。这条路径的价值
+// 在于内存上限——没有它，一个忘了写 .gitignore 的 node_modules 就能把几十 MB 读进内存。
 //
 // 上限注入 5 这种小值，而不是真造一万个文件：runStatus 把 limit 做成参数正是为了这件事
 func TestRunStatus_LimitHit(t *testing.T) {

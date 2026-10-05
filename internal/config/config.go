@@ -45,10 +45,10 @@ type Config struct {
 	SizeUnit         string   `mapstructure:"size_unit" json:"size_unit"`
 	Language         string   `mapstructure:"language" json:"language"`
 	LogLevel         string   `mapstructure:"log_level" json:"log_level"`
-	// Theme 是网页看板选中的主题。空串表示跟随系统深浅（那是本节唯一的"有意义的零值"，
+	// Theme 是网页看板选中的主题。空串表示跟随系统深浅（那是本节唯一的“有意义的零值”，
 	// 因此 applyConfigDefaults 不需要为它补默认值——补了也是空串）
 	Theme string `mapstructure:"theme" json:"theme"`
-	// ThemeDark / ThemeLight 是"跟随系统"时深色与浅色各自用哪套主题，
+	// ThemeDark / ThemeLight 是“跟随系统”时深色与浅色各自用哪套主题，
 	// 对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme
 	ThemeDark  string `mapstructure:"theme_dark" json:"theme_dark"`
 	ThemeLight string `mapstructure:"theme_light" json:"theme_light"`
@@ -58,7 +58,7 @@ type Config struct {
 }
 
 // getConfigPath 计算配置文件的默认路径，失败时返回 error 而不终止进程。
-// 供 LoadLanguage 这类"必须永远可用"的路径使用——它们可能在 --help 之前被调用，
+// 供 LoadLanguage 这类“必须永远可用”的路径使用——它们可能在 --help 之前被调用，
 // 此时直接退出进程会导致连帮助都打印不出来。
 func getConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -69,7 +69,7 @@ func getConfigPath() (string, error) {
 }
 
 // GetDefaultConfigPath 返回配置文件的默认路径。
-// 主目录不可用时打印错误并退出进程——这是命令运行期的合理兜底，
+// 主目录不可用时打印错误并退出进程——这是命令运行期的合理处理，
 // 但不要把它用在 --help 之前会被触发的路径上（那种场合用 getConfigPath）。
 func GetDefaultConfigPath() string {
 	path, err := getConfigPath()
@@ -83,10 +83,10 @@ func GetDefaultConfigPath() string {
 }
 
 // ThemeDirs 返回用户主题可能存放的目录：配置目录本身，以及它的 themes 子目录。
-// 两个都看——"把主题文件丢进配置目录"是最自然的用法，主题多了之后又需要一个地方归置
+// 两个都看——“把主题文件丢进配置目录”是最自然的用法，主题多了之后又需要一个地方归置
 //
 // 为什么放在本包而不是看板那一层：可用主题同时决定配置项 theme 的候选取值（见 settings.go），
-// 两处各算一遍目录，迟早出现"命令行认得的主题、页面上选不到"这种错位
+// 两处各算一遍目录，迟早出现“命令行认得的主题、页面上选不到”这种错位
 func ThemeDirs() []string {
 	dir := filepath.Dir(GetDefaultConfigPath())
 	return []string{dir, filepath.Join(dir, "themes")}
@@ -100,7 +100,7 @@ func ThemeDirs() []string {
 //   - 只取一个字段，避免为纯展示路径做一次全量解码与默认值补全
 //
 // 这里刻意只做裸 JSON 解析，不引入 viper 这类包级全局单例：语言必须能在 --help
-// 路径上被读取，任何全局状态污染都会让"本次运行读到哪个语言"变得不可预测
+// 路径上被读取，任何全局状态污染都会让“本次运行读到哪个语言”变得不可预测
 // （本包已整体不使用 viper，原因详见 LoadConfigAt 的注释）。
 //
 // 配置文件不存在、不可读或格式非法时一律返回 error，由调用方回退到默认语言。
@@ -137,7 +137,7 @@ func LoadConfig() (*Config, error) {
 //   - 容错能力实际来自 mapstructure 的 WeaklyTypedInput，直接用 mapstructure 即可，
 //     不必为此引入一整层配置框架
 //
-// 取值规则是"以 settings 登记的默认值打底，再用文件里的键覆盖"，于是默认值只有
+// 取值规则是"以 settings 登记的默认值为准，再用文件里的键覆盖"，于是默认值只有
 // settings 一处真相，与 config show / config get 的取值完全同源。
 //
 // 配置文件不存在时返回全默认配置（不报错，首次运行属正常状态）；
@@ -148,7 +148,7 @@ func LoadConfigAt(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// 默认值打底：文件里缺哪个键，哪个键就保持 settings 里的默认值
+	// 默认值先取：文件里缺哪个键，哪个键就保持 settings 里的默认值
 	merged := DefaultRaw()
 	for k, v := range raw {
 		merged[k] = v
@@ -170,8 +170,8 @@ func LoadConfigAt(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// 文件里写了非法值（如 size_bucket_low_mb: 0、空串的语言）时的兜底。
-	// 这些值由 ggt config validate 作为问题报出，本函数只保证"报出之前程序仍然可用"
+	// 文件里写了非法值（如 size_bucket_low_mb: 0、空串的语言）时的回退。
+	// 这些值由 ggt config validate 作为问题报出，本函数只保证“报出之前程序仍然可用”
 	applyConfigDefaults(&cfg)
 
 	return &cfg, nil
@@ -185,16 +185,16 @@ func defaultConfig() *Config {
 	return cfg
 }
 
-// applyConfigDefaults 对"未设置或非法"的字段补上 settings 里登记的默认值：
+// applyConfigDefaults 对“未设置或非法”的字段补上 settings 里登记的默认值：
 //   - concurrency 为空 → "CPUHalf"（语义串，而非具体数字）
 //   - size_bucket_low_mb / size_bucket_high_mb <= 0 → 500 / 800
 //   - size_unit 为空 → "decimal"
 //   - language 为空 → locales.Default（"en"）
 //   - log_level 为空 → "warn"（注意**非法取值刻意不在这里改写**：它要留给命令层去告警，
-//     在这里静默替换掉，用户就再也看不到"你写的级别我没认"这条提示了）
+//     在这里静默替换掉，用户就再也看不到“你写的级别我没认”这条提示了）
 //   - repo_paths / parent_paths 为 nil → 空切片，使序列化结果是 [] 而不是 null
-//   - ignore_submodules 是 bool，零值 false 即"默认包含子模块"，无需补值
-//   - notify_timeout 是 int，零值 0 即"通知不自动消失"，无需补值
+//   - ignore_submodules 是 bool，零值 false 即“默认包含子模块”，无需补值
+//   - notify_timeout 是 int，零值 0 即“通知不自动消失”，无需补值
 //
 // 取值一律向 settings 注册表要，本函数不再出现任何默认值字面量：原先这里把
 // 500/800/"decimal"/"en" 又抄了一遍，与 settings[].Default 分叉时没有任何测试能拦住。
@@ -218,9 +218,9 @@ func applyConfigDefaults(cfg *Config) {
 	if strings.TrimSpace(cfg.LogLevel) == "" {
 		cfg.LogLevel = defaultStringOf("log_level")
 	}
-	// theme_dark / theme_light 与 theme 不同：它们的空串没有含义（跟随系统时"没有配色可渲染"），
+	// theme_dark / theme_light 与 theme 不同：它们的空串没有含义（跟随系统时“没有配色可渲染”），
 	// 因此和上面几项一样补默认值。漏了这两个分支时，LoadConfigAt（走注册表的通用路径）与
-	// 这里会给出不同答案，而 TestLoadConfigAt 的"全默认配置"断言正好抓住这个分叉
+	// 这里会给出不同答案，而 TestLoadConfigAt 的“全默认配置”断言正好抓住这个分叉
 	if strings.TrimSpace(cfg.ThemeDark) == "" {
 		cfg.ThemeDark = defaultStringOf("theme_dark")
 	}
@@ -251,7 +251,7 @@ func defaultIntOf(key string) int {
 
 // 关于"把整份 Config 写回文件"的能力：本项目刻意不提供。
 // 键名清单在 json/mapstructure tag、settings[].Key 之外本就已经足够多，再让一个
-// Config→raw 的转换器抄一遍键名，就会出现"加了字段却永远写不进文件"且无人报错的死角。
+// Config→raw 的转换器抄一遍键名，就会出现“加了字段却永远写不进文件”且无人报错的死角。
 // 需要落盘时一律走 store.go 的单键写入（SetKeyAt / UnsetKeyAt），只动调用方真正
 // 关心的那个键，文件里其他内容（含用户手写的未知键）原样保留。
 

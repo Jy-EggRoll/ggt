@@ -13,7 +13,7 @@ const (
 
 	// assetNamePrefix 是发布产物的固定文件名前缀，必须与 Taskfile 的构建输出名保持一致。
 	// ggt 各 build 任务的产物形如 build/ggt-<os>-<arch>[.exe]，因此这里取 "ggt"；
-	// 改名前缀或改名 Taskfile 时两处要一起改，否则升级器会找不到任何资产并误报"已是最新"
+	// 改名前缀或改名 Taskfile 时两处要一起改，否则升级器会找不到任何资产并误报“已是最新”
 	assetNamePrefix = "ggt"
 
 	// downloadProxyPrefix 是直连不稳定时供用户选择的备用下载代理前缀，与资产原始地址直接拼接。
@@ -23,7 +23,7 @@ const (
 )
 
 // supportedPlatforms 声明 ggt 实际发布产物的系统与架构组合，必须与 Taskfile 的 build-all 目标保持同步。
-// 少列组合会让对应平台的用户收到"尚未提供发布产物"的报错，多列则不存在的组合会被判为无可用资产
+// 少列组合会让对应平台的用户收到“尚未提供发布产物”的报错，多列则不存在的组合会被判为无可用资产
 // 并继续向前寻找旧版本——两种偏差都会让用户拿不到本该能装上的新版本
 var supportedPlatforms = map[string]map[string]bool{
 	"windows": {"386": true, "amd64": true, "arm64": true},
@@ -33,7 +33,7 @@ var supportedPlatforms = map[string]map[string]bool{
 }
 
 // ggtAssetName 返回指定平台对应的资产文件名前缀。
-// ok 为 false 表示 ggt 不为该平台发布产物，升级器会据此给出明确提示而不会误报"已是最新"
+// ok 为 false 表示 ggt 不为该平台发布产物，升级器会据此给出明确提示而不会误报“已是最新”
 func ggtAssetName(goos, goarch string) (string, bool) {
 	architectures, known := supportedPlatforms[goos]
 	if !known || !architectures[goarch] {

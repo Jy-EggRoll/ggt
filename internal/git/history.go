@@ -17,7 +17,7 @@ type HistoryRef struct {
 	Name string `json:"name"`
 	// Kind 取 head / remote / tag，配色与排序按它区分（见 graph.go）
 	Kind string `json:"kind"`
-	// Color 是配色（VSCode 的颜色 id），由 LayoutHistory 填；只有"当前分支"与"它的上游"有值，
+	// Color 是配色（VSCode 的颜色 id），由 LayoutHistory 填；只有“当前分支”与“它的上游”有值，
 	// 其余留空由页面用默认引用色
 	Color string `json:"color,omitempty"`
 }
@@ -46,7 +46,7 @@ type HistoryOptions struct {
 //
 // 字段之间用 NUL 分隔、提交之间用 RS(0x1e) 分隔：提交信息正文可以出现任何字符，
 // 只有 NUL 不会出现在 git 的输出里；RS 是惯用的记录分隔符，正文里同样不会出现。
-// 用换行或制表符分隔都会被正文搅乱（正文是多行的），这是"看起来能用、遇到带正文的提交就错行"的典型坑
+// 用换行或制表符分隔都会被正文搅乱（正文是多行的），这是“看起来能用、遇到带正文的提交就错行”的典型问题
 const historyLogFormat = "%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x1e"
 
 // LogHistory 采集一段提交历史，从新到旧。
@@ -89,7 +89,7 @@ func parseHistoryLog(out string, refs map[string][]HistoryRef) []HistoryItem {
 		}
 		fields := strings.SplitN(record, "\x00", 7)
 		if len(fields) < 7 {
-			// 字段数不对说明输出被截断或格式被改动，宁可跳过这一条，也不要把半个提交塞进图里
+			// 字段数不对说明输出被截断或格式被改动，宁可跳过这一条，也不要把半个提交写进图里
 			continue
 		}
 		ts, _ := strconv.ParseInt(strings.TrimSpace(fields[4]), 10, 64)
@@ -123,7 +123,7 @@ func parseHistoryLog(out string, refs map[string][]HistoryRef) []HistoryItem {
 // LocalBranches 列出现在本地全部分支名，按名字升序（git 的 for-each-ref 默认就按 refname 排）。
 //
 // 分支选择器用它：只列本地分支——切到远程分支得先建跟踪分支，那是另一件事，
-// 替用户决定"要不要顺手建一个"代价很高（建错对象要手动收拾）
+// 替用户决定“要不要顺手建一个”代价很高（建错对象要手动收拾）
 func LocalBranches(ctx context.Context, repoPath string) ([]string, error) {
 	out, err := RunContext(ctx, repoPath, "for-each-ref", "--format=%(refname:short)", "refs/heads")
 	if err != nil {
@@ -159,7 +159,7 @@ type CommitFile struct {
 //	二进制 -\t-\tbin.dat\0
 //	重命名 1\t0\t\0big.txt\0moved.txt\0   （第三个字段为空，紧跟旧、新两个路径）
 func CommitFiles(ctx context.Context, repoPath, hash string) ([]CommitFile, error) {
-	// 三个"为了让输出可解析"的选项与 diffText 同源：--no-color 去转义、--no-ext-diff 挡住
+	// 三个“为了让输出可解析”的选项与 diffText 同源：--no-color 去转义、--no-ext-diff 挡住
 	// 用户配置的外部 diff 工具、--no-textconv 挡住 textconv 过滤器（它会把这个文件当文本，
 	// git 于是不再报 "-"，二进制文件会被算出行数）
 	out, err := RunContext(ctx, repoPath, "show", "--numstat", "-z", "--format=",
@@ -255,7 +255,7 @@ func CountHistory(ctx context.Context, repoPath string, all bool) (int, error) {
 	return n, nil
 }
 
-// historyRefs 收集"哪个提交上有哪些引用"，供提交行显示分支与 tag 标签。
+// historyRefs 收集“哪个提交上有哪些引用”，供提交行显示分支与 tag 标签。
 //
 // 用 for-each-ref 而不是 git log --decorate：decorate 把标签拼进提交信息那一行，
 // 还得再把括号、颜色转义与"HEAD -> "这类前缀解析回来；for-each-ref 直接给一张表。
@@ -285,7 +285,7 @@ func historyRefs(ctx context.Context, repoPath string) (map[string][]HistoryRef,
 		case strings.HasPrefix(name, "refs/heads/"):
 			kind, short = "head", strings.TrimPrefix(name, "refs/heads/")
 		case strings.HasPrefix(name, "refs/remotes/"):
-			// 远程的 HEAD 是个符号引用（指向该远程的默认分支），它不是"一个分支"，
+			// 远程的 HEAD 是个符号引用（指向该远程的默认分支），它不是“一个分支”，
 			// 列出来只会让标签栏多一个 origin/HEAD
 			if strings.HasSuffix(name, "/HEAD") {
 				continue
@@ -308,7 +308,7 @@ func historyRefs(ctx context.Context, repoPath string) (map[string][]HistoryRef,
 
 // CurrentRefs 返回当前分支名、它的上游引用名与 HEAD 指向的提交。
 //
-// 上游取不到是常态（新分支还没 -u、detached HEAD），因此不报错：泳道配色只把它当作"有没有"
+// 上游取不到是常态（新分支还没 -u、detached HEAD），因此不报错：泳道配色只把它当作“有没有”
 // 的信息用（见 graph.go 的色表），拿不到就少一种颜色而已
 func CurrentRefs(ctx context.Context, repoPath string) (branch, upstream, head string) {
 	if out, err := RunContext(ctx, repoPath, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {

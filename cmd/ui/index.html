@@ -10,7 +10,7 @@
 
   注意：本注释里刻意不写出这两个占位符的字面量。写过一次，而当时 Go 端用的是"只替换第一处"的
   语义，结果注释里那处先被替换掉、真正的 <html lang> 反而原样留下，页面语言因此静默停在英文——
-  数据一切正常，只有文案全是英文，排查时很难想到是注释把占位符"吃掉"了。
+  数据一切正常，只有文案全是英文，排查时很难想到是注释把占位符也替换掉了。
 -->
 <html lang="__GGT_HTML_LANG__">
 <head>
@@ -19,7 +19,7 @@
 <title>ggt</title>
 <link rel="stylesheet" href="style.css">
 <!--
-  主题注入点：服务端把解析好的颜色变量拼成一条 :root 规则塞进这里（见 cmd/ui_theme.go）。
+  主题注入点：服务端把解析好的颜色变量拼成一条 :root 规则写进这里（见 cmd/ui_theme.go）。
   它必须排在样式表之后——样式表里只用变量、不再声明任何颜色值，这里的变量就是唯一来源。
   同一条规则在这里是唯一的注入点，页面上不再有第二处引用它（早期版本把占位符同时写在注释里，
   遇上"只替换第一处"的语义时，先被替换的是注释，真正的注入点反而原样留了下来）
@@ -31,11 +31,11 @@
 <link rel="icon" href="data:,">
 <script>window.__GGT_LANG__ = "__GGT_LANG_VALUE__";</script>
 <!-- 设置快照：页面行为要用的那几个取值（例如通知自动消失的时长）随首页一次带过来，
-     免得页面为了一个数字再发一次请求。它按配置注册表生成，页面里出现新的消费点时
+     免得页面为了一个数字再发一次请求。它按配置注册表生成，页面里出现新的使用点时
      不必动服务端。设置面板不用这份快照——面板每次打开都现取一次，否则命令行改过的
      值要刷新页面才看得见。
      占位符特意与前面的变量名不同名：同名的话 ReplaceAll 会把赋值左边也一起换掉，
-     生成一段语法错误的脚本（这一条踩过，见 renderIndexHTML 的注释） -->
+     生成一段语法错误的脚本（这一条遇到过，见 renderIndexHTML 的注释） -->
 <script>window.__GGT_SETTINGS__ = __GGT_SETTINGS_JSON__;</script>
 </head>
 <body>
@@ -46,7 +46,7 @@
 <main id="board" aria-busy="true"><div id="cont-layer"></div></main>
 <p id="empty" hidden></p>
 <!--
-  看板底栏，整宽固定在底部。左边是「数据多旧、这次采集花了多久」这行元信息，右边是看板层面的
+  看板底栏，整宽固定在底部。左边是“数据多旧、这次采集花了多久”这行元信息，右边是看板层面的
   动作与它们的结果。
 
   为什么收进一条底栏：#status 原来是个文档流里的 <p>，而看板的高度按视口算，它因此被顶到
@@ -134,7 +134,7 @@
     <span id="diff-esc"><kbd>Esc</kbd></span>
   </header>
   <!-- 最近一次写操作的结果：成功显示 git 的原话，失败显示 git 的原话或错误。
-      单独一行而不是塞进正文，是因为正文每次重载都会被重建，提示会被一起冲掉 -->
+      单独一行而不是写进正文，是因为正文每次重载都会被重建，提示会被一起冲掉 -->
   <p id="diff-op"></p>
   <div id="diff-body"></div>
 </div>
@@ -165,13 +165,13 @@
     <button id="graph-diff" class="btn btn--secondary" type="button"></button>
     <span id="graph-esc"><kbd>Esc</kbd></span>
   </header>
-  <!-- 提交信息与提交：VSCode 的源码管理视图里这两件也在最上方，与"改动列表"同处一个视图 -->
+  <!-- 提交信息与提交：VSCode 的源码管理视图里这两件也在最上方，与“改动列表”同处一个视图 -->
   <div id="graph-commit">
     <input id="graph-msg" type="text" autocomplete="off" spellcheck="false">
     <button id="graph-commit-btn" class="btn btn--primary" type="button"></button>
   </div>
   <!-- 取数失败或仓库操作的结果（git 的原话）。与 #diff-op 同样的角色，单独一行是因为
-       列表每次续取都会重建，塞进列表里会被冲掉 -->
+       列表每次续取都会重建，写进列表里会被冲掉 -->
   <p id="graph-op"></p>
   <div id="graph-body">
     <div id="graph-list" tabindex="0"></div>
@@ -181,7 +181,7 @@
   设置面板：底栏的设置按钮打开（VSCode 的设置也从齿轮那样的入口进）。
   形态与仓库卡片一致——铺满整页的浮层加居中的圆角卡片，关掉就回到刚才看的那一列。
 
-  为什么单独一个面板，而不塞进通知中心或某个卡片里：配置是页面级的东西，与任何一个仓库
+  为什么单独一个面板，而不放进通知中心或某个卡片里：配置是页面级的东西，与任何一个仓库
   都无关；挂在仓库卡片上会让"它只对当前仓库生效"变成一种很容易产生的误解。
 
   为什么排在这里（仓库卡片之后、提交详情卡之前）：它与那两个浮层同层（--z-diff），
@@ -197,8 +197,8 @@
     <span id="settings-title"></span>
     <span id="settings-esc"><kbd>Esc</kbd></span>
   </header>
-  <!-- 最近一次保存的结果（成功、失败、或"要刷新才生效"）：与 #diff-op、#graph-op 同样的角色。
-       面板正文每次保存后都会重建，提示塞进正文就会被一起冲掉 -->
+  <!-- 最近一次保存的结果（成功、失败、或“要刷新才生效”）：与 #diff-op、#graph-op 同样的角色。
+       面板正文每次保存后都会重建，提示写进正文就会被一起冲掉 -->
   <p id="settings-op"></p>
   <div id="settings-body"></div>
   <footer>

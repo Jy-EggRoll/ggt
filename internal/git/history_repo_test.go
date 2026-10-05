@@ -32,7 +32,7 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 //
 // 存在的理由：--topo-order 在多个提交时间戳相同时的先后次序属于 git 的实现细节——实测
 // 几个提交落在同一秒里时，`go test -race` 的负载一重就会变成侧分支的提交排在最前，
-// 于是"最新提交排第一"这类断言偶发失败。把时间显式钉住，次序才是确定的
+// 于是“最新提交排第一”这类断言偶发失败。把时间显式钉住，次序才是确定的
 func runGitDated(t *testing.T, dir, when string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -58,8 +58,8 @@ func hasRef(refs []HistoryRef, name string) bool {
 
 // TestLogHistory_RealRepo 在真仓库上走一遍：拓扑序、父提交、引用挂载、作者与时间、计数。
 //
-// 场景是一个标准的"分叉后合并"：主线上一个提交、feature 上一个提交、一个 --no-ff 合并提交，
-// 外加一个 tag 与一个没有被合并的游离分支（用来验证"只看当前分支"这个范围确实起作用）。
+// 场景是一个标准的“分叉后合并”：主线上一个提交、feature 上一个提交、一个 --no-ff 合并提交，
+// 外加一个 tag 与一个没有被合并的游离分支（用来验证“只看当前分支”这个范围确实起作用）。
 // 各提交的时间戳由用例显式钉住且严格递增，不依赖真实时钟——理由见 runGitDated
 func TestLogHistory_RealRepo(t *testing.T) {
 	dir := newTestRepo(t)

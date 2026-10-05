@@ -2,8 +2,8 @@ version: '3'
 
 vars:
   APP: ggt
-  # VERSION 与 BUILDTIME 必须写成「优先取环境变量、取不到才回退本机时间」的形态
-  # （即 ${VERSION:-<回退值>}），绝不能直接写成 sh: date ...，原因是一个很隐蔽的坑：
+  # VERSION 与 BUILDTIME 必须写成“优先取环境变量、取不到才回退本机时间”的形态
+  # （即 ${VERSION:-<回退值>}），绝不能直接写成 sh: date ...，原因是一个很隐蔽的问题：
   # Task 里用 sh: 定义的变量会**完全盖住**同名环境变量，直接写 date 的话，
   # CI 传进来的标签版本号（VERSION=1.2.3）会被无声丢弃，发布出去的二进制只会
   # 自报一个时间戳版本。后果不只是显示难看——ggt upgrade 靠版本号与上游 Release
@@ -28,7 +28,7 @@ tasks:
   # Task 会把任务误判为 up-to-date 而沿用旧版本：
   #   internal/locales/*.json  语言文件（漏了它，二进制里会是旧译文）
   #   cmd/ui/*                 WebUI 页面资产（漏了它，改了 app.js 页面却毫无变化——这是实际
-  #                            踩过的：前端改动全部"生效失败"，而构建一路报 OK，很难往这里想）
+  #                            遇到过的：前端改动全部“生效失败”，而构建一路报 OK，很难往这里想）
   # 以后新增任何被 embed 的资源目录，记得同步加进这里
   # 注意：build-all 已改为一条 buildall 命令，不做增量判断，因此不受此约束影响
   default:
@@ -154,7 +154,7 @@ tasks:
       - |
         set -e
         # VERSION 虽是全局变量、正常情况下会回退成时间戳而从不真正为空，这里仍做一次
-        # 防御性检查：漏传版本号时应当明确报错，而不是拿一个时间戳去生成"某年某月的更新日志"
+        # 防御性检查：漏传版本号时应当明确报错，而不是拿一个时间戳去生成“某年某月的更新日志”
         if [ -z "{{.VERSION}}" ]; then
           echo "错误: 需要 VERSION 参数，用法：task changelog VERSION=x.y.z [TYPE=release|dev]" >&2
           exit 1

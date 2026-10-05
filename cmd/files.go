@@ -41,7 +41,7 @@ Examples:
   ggt files -o out.txt   Write the file list to out.txt`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			repos := AllRepos(context.Background())
-			// 用 InfoLn 而非 InfoMsg：Ln 系列结尾会多留一个空行（"%s\n" 的细节收口在 output.go）
+			// 用 InfoLn 而非 InfoMsg：Ln 系列结尾会多留一个空行（"%s\n" 的细节统一在 output.go 处理）
 			InfoLn(l10n.T("Repositories: {{.Count}} — gathering file lists...", map[string]any{"Count": len(repos)}))
 
 			// 使用 worker.Map 并发获取每个仓库的文件列表

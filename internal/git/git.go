@@ -44,9 +44,9 @@ func Run(repoPath string, args ...string) (string, error) {
 // RunContext 与 Run 相同，但使用调用方传入的 ctx 控制超时与取消。
 // 当上层 ctx 被取消（如 worker.Map 的并发整体取消）时，正在执行的
 // git 命令会立即收到信号而中断，避免无谓等待到默认 120s 超时。
-// 若上层 ctx 未设截止时间，命令仍受默认超时兜底保护。
+// 若上层 ctx 未设截止时间，命令仍受默认超时保护。
 func RunContext(ctx context.Context, repoPath string, args ...string) (string, error) {
-	// 仅当上层 ctx 未设置截止时间时，叠加默认超时作为兜底
+	// 仅当上层 ctx 未设置截止时间时，叠加默认超时
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, defaultTimeout)
@@ -110,12 +110,12 @@ func runWithOutputEnv(ctx context.Context, repoPath string, extraEnv []string, a
 //
 // 计数口径有一处刻意的简化：这里数的是 NUL 记录数，而不是像上游那样数解析之后的条目数。
 // 重命名与复制（porcelain v2 的 "2" 记录）在 -z 下会多带一条旧路径记录，于是这类仓库的
-// 条目数略少于记录数，截断点会比上游稍早一点。对"防止内存被撑爆"这个目的而言可以接受；
-// 真要精确到条目，就得在这里内联一份解析逻辑，那等于把 ParseStatus 抄成两份。
+// 条目数略少于记录数，截断点会比上游稍早一点。对“防止内存被撑爆”这个目的而言可以接受；
+// 真要精确到条目，就得在这里内联一份解析逻辑，那等于把 ParseStatus 的解析逻辑重复写一遍。
 //
 // 与上游的另一处差别：上游按 limit 条做切片，这里按 limit 条记录裁掉多余的读取块——
 // 一个 32KB 的读取块可能一次装进上千条短记录，不裁的话返回的条目数会明显多于上限，
-// 界面上显示的数量就和"上限"这个说法对不上了。
+// 界面上显示的数量就和“上限”这个说法对不上了。
 func runWithRecordLimit(ctx context.Context, repoPath string, extraEnv []string, limit int, args ...string) (string, bool, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
@@ -138,7 +138,7 @@ func runWithRecordLimit(ctx context.Context, repoPath string, extraEnv []string,
 		if n > 0 {
 			buf = append(buf, chunk[:n]...)
 			records += bytes.Count(chunk[:n], []byte{0})
-			// 超限即杀：继续读完只会把正要防的那份内存吃进来
+			// 超限即杀：继续读完只会把正要防的那份内存读进来
 			if limit > 0 && records > limit {
 				hitLimit = true
 				_ = cmd.Process.Kill()
@@ -151,7 +151,7 @@ func runWithRecordLimit(ctx context.Context, repoPath string, extraEnv []string,
 	}
 
 	// 杀进程之后 Wait 返回的是信号错误，那正是本函数想要的路径，不能当失败上报；
-	// 只有"没超限却退出异常"才是真的失败（含 ctx 取消导致的终止）
+	// 只有“没超限却退出异常”才是真的失败（含 ctx 取消导致的终止）
 	waitErr := cmd.Wait()
 	if hitLimit {
 		return string(trimNulRecords(buf, limit)), true, nil

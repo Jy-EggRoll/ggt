@@ -1,8 +1,8 @@
-// upgrade_target_test 守护「发布清单」与「升级器的平台表」之间的一致性。
+// upgrade_target_test 守护“发布清单”与“升级器的平台表”之间的一致性。
 //
 // 这两处必须描述同一批平台：release.json 决定构建出哪些产物、发布说明里给哪些下载链接，
 // supportedPlatforms 决定升级器认哪些平台。任一处单独改动都可能造成静默故障——
-// 清单多一个平台而升级器不认，对应平台的用户会被判为"没有可用资产"；升级器多一个而
+// 清单多一个平台而升级器不认，对应平台的用户会被判为“没有可用资产”；升级器多一个而
 // 清单没有，用户会被引导去下载一个并不存在的产物。本测试是两者之间唯一的自动防线
 package cmd
 
@@ -47,7 +47,7 @@ func TestReleaseManifestMatchesSupportedPlatforms(t *testing.T) {
 	}
 
 	// 资产名一致：升级器按 ggtAssetName 拼出前缀去 Release 里找产物，构建按 AssetName 命名产物，
-	// 两者一旦不一致，升级就会"找不到任何资产"（windows 的 .exe 后缀属于命名的一部分）
+	// 两者一旦不一致，升级就会“找不到任何资产”（windows 的 .exe 后缀属于命名的一部分）
 	for _, p := range m.Platforms {
 		name, ok := ggtAssetName(p.OS, p.Arch)
 		if !ok {

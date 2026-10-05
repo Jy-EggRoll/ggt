@@ -1,12 +1,12 @@
-// store.go 负责配置文件的原始读写，本包对配置文件的 I/O 都收口在这里。
+// store.go 负责配置文件的原始读写，本包对配置文件的 I/O 都集中在这里。
 //
 // 为什么写不用 viper：viper 的 WriteConfig 走 AllSettings()，把内存里的全部键一次性
-// 落盘，**无法表达"把某个键删掉"**——而 reset 的默认模式正是删键。另外 viper.Set 会
+// 落盘，**无法表达“把某个键删掉”**——而 reset 的默认模式正是删键。另外 viper.Set 会
 // 往包级全局单例里写入永不失效的 override，污染后续调用。
 //
 // 读同样不走 viper（详见 LoadConfigAt）：弱类型容错实际来自 mapstructure 的
 // WeaklyTypedInput，大小写归一与重复键拒绝由本文件的 parseRaw / normalizeKeys 负责，
-// 读、写、体检因而共用同一套解析规则，不会分叉成"能跑但体检说不行"。
+// 读、写、体检因而共用同一套解析规则，不会分叉成“能跑但体检说不行”。
 package config
 
 import (
@@ -26,7 +26,7 @@ import (
 
 // ReadRawAt 读取配置文件的原始键值。
 //
-// 文件不存在时返回空 map 而非错误——首次写入总要能在"还没有文件"的状态下进行。
+// 文件不存在时返回空 map 而非错误——首次写入总要能在“还没有文件”的状态下进行。
 // 但**其他任何错误（权限、目录、JSON 语法）都必须返回 error**，让调用方拒绝写入：
 // 否则用户在损坏的文件上敲一次 set，就会把 repo_paths 整份丢掉。
 func ReadRawAt(path string) (map[string]any, error) {
@@ -43,7 +43,7 @@ func ReadRawAt(path string) (map[string]any, error) {
 
 // parseRaw 把配置文件的字节解析为规范化键名后的原始键值。
 // 单列出来是为了让体检（validate.go）能复用同一套解析与键名规范化，
-// 不必各自实现一遍——两套解析迟早会分叉成"能跑但体检说不行"。
+// 不必各自实现一遍——两套解析迟早会分叉成“能跑但体检说不行”。
 func parseRaw(data []byte) (map[string]any, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	// UseNumber 让数字保持字面量，避免未知键里的大整数被 float64 静默改写
@@ -90,7 +90,7 @@ func WriteRawAt(path string, raw map[string]any) error {
 
 // writeMu 串行化对配置文件的写入。
 //
-// 为什么需要这把锁：SetKeyAt 与 UnsetKeyAt 都是"读整份文件、改一个键、写回"的读-改-写序列，
+// 为什么需要这把锁：SetKeyAt 与 UnsetKeyAt 都是“读整份文件、改一个键、写回”的读-改-写序列，
 // 而原子写只保证文件不会被写坏，不保证两个并发的读-改-写不会互相覆盖——后写完的那次会把
 // 先写的那次整个抹掉。命令行是串行进程，从来碰不到这件事；看板的设置端点第一次让配置写入
 // 变成可并发（同时改两个键，结果只剩一个），因此锁加在这里而不是只加在端点那一层
@@ -127,10 +127,10 @@ func UnsetKeyAt(path, key string) error {
 
 // ResetAllAt 重置全部配置，两种模式：
 //
-//	writeDefaults=false → 删除配置文件，回到"从未配置过"的状态
+//	writeDefaults=false → 删除配置文件，回到“从未配置过”的状态
 //	writeDefaults=true  → 写入一份全默认值的配置文件
 //
-// 写默认值这条路径**刻意不是"删了再写"**：那样会留下"删成功、写失败"的窗口，
+// 写默认值这条路径**刻意不是“删了再写”**：那样会留下“删成功、写失败”的窗口，
 // 配置与仓库记录会一起消失。直接从空 map 起步做一次原子写，中途失败则原文件完好。
 func ResetAllAt(path string, writeDefaults bool) error {
 	writeMu.Lock()
@@ -152,7 +152,7 @@ func ResetAllAt(path string, writeDefaults bool) error {
 // DefaultRaw 返回一份全默认值的配置（键值形态），默认值取自 settings 注册表，
 // 因此与结构体形态的 defaultConfig() 必然同源。
 // 切片是空切片而非 nil，序列化结果是 "repo_paths": [] 而不是 null；结构体形态也在
-// applyConfigDefaults 里保证切片非 nil——两种形态对"空列表"的呈现必须一致，
+// applyConfigDefaults 里保证切片非 nil——两种形态对“空列表”的呈现必须一致，
 // 否则 config show 与 reset --defaults 写出来的文件会长得不一样。
 func DefaultRaw() map[string]any {
 	raw := make(map[string]any, len(settings))
@@ -165,7 +165,7 @@ func DefaultRaw() map[string]any {
 // normalizeKeys 把 map 的键统一小写，并拒绝大小写变体冲突。
 //
 // 小写是必需的：配置键按约定一律 snake_case 小写。若不归一，文件里已有的
-// {"Language": ...} 会在写入后变成 Language + language 两份，而"哪一份胜出"取决于
+// {"Language": ...} 会在写入后变成 Language + language 两份，而“哪一份胜出”取决于
 // map 的随机迭代顺序 → 每次运行读到的语言都可能不同。
 // 因此发现仅大小写不同的重复键时直接报错，而不是任选一个。
 func normalizeKeys(raw map[string]any) (map[string]any, error) {
@@ -240,7 +240,7 @@ func writeFileAtomic(target string, data []byte) error {
 // ErrUnknownKey 表示请求了一个未注册的配置项。
 var ErrUnknownKey = errors.New("unknown config key")
 
-// EffectiveAt 返回某个配置项"只看配置文件"意义上的生效值：
+// EffectiveAt 返回某个配置项“只看配置文件”意义上的生效值：
 // 文件里有就用文件的值，没有就用默认值。
 //
 // 刻意不采纳命令行 -c 这类临时覆盖——那只是本次运行的参数，不属于配置。若混进来，

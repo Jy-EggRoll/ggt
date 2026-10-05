@@ -1,7 +1,7 @@
 // settings.go 定义 ggt 配置项的注册表。
 //
 // get / set / reset / validate 四个操作共用这一份声明，避免四处各写一套
-// "这个键叫什么、什么类型、默认值是多少、什么算合法"——那种重复迟早会漂移成
+// “这个键叫什么、什么类型、默认值是多少、什么算合法”——那种重复迟早会漂移成
 // "set 能写进去、validate 说它非法"这类自相矛盾。
 //
 // 新增配置项时：在这里加一条，并在 Config 结构体上加同名的 json tag。
@@ -22,7 +22,7 @@ import (
 	"github.com/jy-eggroll/eggokit/logger"
 	"github.com/jy-eggroll/ggt/internal/locales"
 	// 主题偏好的默认值直接引用主题包里的常量，而不是在这里再抄一遍 "builtin:..." 这个 id 格式：
-	// 那个前缀是主题包自己的约定，抄一份就会出现"改了前缀、默认值指到不存在的主题"
+	// 那个前缀是主题包自己的约定，抄一份就会出现“改了前缀、默认值指到不存在的主题”
 	"github.com/jy-eggroll/ggt/internal/theme"
 )
 
@@ -52,25 +52,25 @@ const (
 	maxConcurrency = 1024
 	maxBucketMB    = 1_000_000
 	// maxNotifyTimeout 是通知自动消失时长的上界（秒）。
-	// 它没有内存安全的理由，纯是"别让用户填一个等于永不消失的数"——那种意图应当直接填 0
+	// 它没有内存安全的理由，纯是“别让用户填一个等于永不消失的数”——那种意图应当直接填 0
 	maxNotifyTimeout = 600
 )
 
 // Option 是配置项的一个候选取值。
 //
-// 用切片加结构体，而不是照抄 VSCode 那种"值数组 + 说明数组 + 显示名数组"的平行数组：
+// 用切片加结构体，而不是照抄 VSCode 那种“值数组 + 说明数组 + 显示名数组”的平行数组：
 // 平行数组要求几份长度严格一致，长度不一致在 Go 里要运行期才暴露；用结构体切片，
 // 对不齐这件事根本不可能发生
 // Option 是某一个候选取值。
 //
-// 字段名带 json 标签而不是用 Go 的字段名（默认大写）：这份结构只有 WebUI 一个消费者，
+// 字段名带 json 标签而不是用 Go 的字段名（默认大写）：这份结构只有 WebUI 一个使用方，
 // 页面按 o.value / o.label 取值。缺了标签时页面拿到的是 undefined——表现为下拉框里
 // 一排空白选项，而服务端这边的任何测试都发现不了（契约横跨两种语言，只有跑起来才看得见）
 type Option struct {
 	// Value 是写进配置文件的值
 	Value string `json:"value"`
 	// Label 是页面上的显示名，空表示直接显示 Value。
-	// 空值这一种特殊情况由页面按自己的文案补上（值本身是空串说明它代表"跟随系统"一类含义）
+	// 空值这一种特殊情况由页面按自己的文案补上（值本身是空串说明它代表“跟随系统”一类含义）
 	Label string `json:"label"`
 	// Note 是跟在候选取值后面的一句说明，空表示不显示
 	Note string `json:"note,omitempty"`
@@ -85,8 +85,8 @@ type Setting struct {
 	Key string
 	// Title 是给网页设置面板看的短标题
 	//
-	// 注册表里要放一句标题，是"新增配置项不必再改页面"这条要求的必然结果：面板的控件全部
-	// 由注册表长出来，若连"这一项叫什么"都得页面自己写一份，新增一项就又要改一处页面文案。
+	// 注册表里要放一句标题，是“新增配置项不必再改页面”这条要求的必然结果：面板的控件全部
+	// 由注册表长出来，若连“这一项叫什么”都得页面自己写一份，新增一项就又要改一处页面文案。
 	// 标题保持英文与 Expected 一致——两者都是嵌在本地化句子里的专有说明，先不为它们单独
 	// 开一条本地化管线（页面自带的那张翻译表只管界面自身的文案）
 	Title string
@@ -112,18 +112,18 @@ type Setting struct {
 	Options func() []Option
 	// AllowCustom 表示候选取值之外还接受别的写法。
 	// concurrency 就是这种：既能点选 CPUHalf 这类语义串，也能直接写具体数字。
-	// 页面据此把控件渲染成"输入框 + 候选"而不是纯下拉
+	// 页面据此把控件渲染成“输入框 + 候选”而不是纯下拉
 	AllowCustom bool
 	// Min / Max 是整数项的取值边界，nil 表示这一侧不设限。仅对 KindInt 有意义。
 	//
-	// 用指针而不是"0 表示不设限"，因为 0 本身是合法边界（notify_timeout 的下界就是 0）
+	// 用指针而不是“0 表示不设限”，因为 0 本身是合法边界（notify_timeout 的下界就是 0）
 	Min *int
 	Max *int
 }
 
 // settings 是全部配置项的注册表，顺序即 ggt config validate 与帮助里的展示顺序。
 //
-// Title 与 Expected 一律写成 l10n.T("英文原文", nil) 的形态，有两个作用：
+// Title 与 Expected 一律写成 l10n.T(“英文原文”, nil) 的形态，有两个作用：
 // 一是让这两段文案进得了语言文件——提取器只认源码里 T(...) 的字面量，写成加工过的变量
 // 它就看不见（见 eggokit/l10n 的 scan 包注释）；
 // 二是这里存下的就是英文源串本身，它同时是视图层与报错文案查表用的键
@@ -137,7 +137,7 @@ var settings = []Setting{
 		Default:  DefaultConcurrency,
 		Expected: l10n.T("CPUHalf, CPUFull, CPUQuarter, or a positive integer (max 1024)", nil),
 		Parse:    parseConcurrency,
-		// 三个语义串之外还接受任意正整数，因此候选只是"能直接点的几个"，
+		// 三个语义串之外还接受任意正整数，因此候选只是“能直接点的几个”，
 		// 不是全部合法取值
 		Options:     concurrencyOptions,
 		AllowCustom: true,
@@ -158,7 +158,7 @@ var settings = []Setting{
 		Expected: l10n.T("a positive integer (max 1000000)", nil),
 		Parse:    parsePositiveInt(maxBucketMB),
 		// 边界与解析器用的是同一个常量：解析器保证写得进去，边界让页面提前拦住，
-		// 两者分开写就会出现"页面允许填、提交后被拒"
+		// 两者分开写就会出现“页面允许填、提交后被拒”
 		Min: intPtr(1),
 		Max: intPtr(maxBucketMB),
 	},
@@ -209,13 +209,13 @@ var settings = []Setting{
 		Default:  "",
 		Expected: l10n.T("a theme id, or empty to follow the system", nil),
 		Parse:    parseTheme,
-		// 候选里含一个空值项，代表"跟随系统"：这一项允许清空这件事由清单本身表达，
+		// 候选里含一个空值项，代表“跟随系统”：这一项允许清空这件事由清单本身表达，
 		// 而不是另加一个字段
 		Options: themeOptions,
 	},
 	{
 		// 这两个键对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme：
-		// "跟随系统"时深色用哪套、浅色用哪套，各自可选。它们只在 theme 为空（跟随系统）时生效，
+		// “跟随系统”时深色用哪套、浅色用哪套，各自可选。它们只在 theme 为空（跟随系统）时生效，
 		// 与 VSCode 里"自动检测关闭时 preferred* 被忽略"是同一个模型
 		Key:      "theme_dark",
 		Title:    l10n.T("Dark theme", nil),
@@ -316,7 +316,7 @@ func parseBool(s string) (any, error) {
 // parseIntInRange 返回一个"整数且落在 [min, max] 内"的解析器。
 //
 // 下界做成参数而不是固定为 1，是因为有的项 0 是合法取值：通知自动消失的时长用 0 表示
-// "不自动消失"，而分桶阈值必须为正，传 1 即可——两种语义共用一处实现，
+// “不自动消失”，而分桶阈值必须为正，传 1 即可——两种语义共用一处实现，
 // 解析器与各项自己的 Min/Max 才不会各写一份、各自漂移
 func parseIntInRange(min, max int) func(string) (any, error) {
 	return func(s string) (any, error) {
@@ -337,7 +337,7 @@ func parsePositiveInt(max int) func(string) (any, error) {
 // 写进文件的永远是清单里的规范形态
 //
 // 用生成而不是各写一个 switch：合法取值在 switch 与候选清单里各留一份，两处迟早漂移，
-// 而漂移的表现正是"页面上能选、命令行却拒收"这种自相矛盾
+// 而漂移的表现正是“页面上能选、命令行却拒收”这种自相矛盾
 func enumParser(options func() []Option) func(string) (any, error) {
 	return func(s string) (any, error) {
 		v := strings.TrimSpace(s)
@@ -350,7 +350,7 @@ func enumParser(options func() []Option) func(string) (any, error) {
 	}
 }
 
-// intPtr 返回整数的地址，用于表达"这一侧不设边界"（nil）与"边界就是 0"的区别
+// intPtr 返回整数的地址，用于表达“这一侧不设边界”（nil）与“边界就是 0”的区别
 func intPtr(n int) *int { return &n }
 
 // concurrencyOptions 返回并发数能直接点选的三个语义值。
@@ -401,7 +401,7 @@ func themePreferenceOptions() []Option {
 }
 
 // availableThemeOptions 把主题包给出的清单翻成候选取值。
-// 显示名用主题自己的 name，分组标题用来源名；分组为空表示"用户自己放进去的"，
+// 显示名用主题自己的 name，分组标题用来源名；分组为空表示“用户自己放进去的”，
 // 那个标题由页面按当前语言给（主题来源名是品牌名，不翻译）
 func availableThemeOptions() []Option {
 	themes := theme.Available(ThemeDirs())
@@ -415,7 +415,7 @@ func availableThemeOptions() []Option {
 // parseLanguage 解析输出语言。
 //
 // 必须用 l10n.IsSupported 而不是 l10n.Normalize：后者对不认识的输入回退默认语言，
-// 照搬会把用户输入的 fr 静默改写成 en——而"我要法语"和"我要英语"显然不是一回事。
+// 照搬会把用户输入的 fr 静默改写成 en——而“我要法语”和“我要英语”显然不是一回事。
 // 校验通过后存入归一化结果，使文件里只有规范形态（zh 与 zh-Hans 都存成 zh-CN）。
 func parseLanguage(s string) (any, error) {
 	v := strings.TrimSpace(s)
@@ -429,7 +429,7 @@ func parseLanguage(s string) (any, error) {
 //
 // 刻意不在这里校验主题是否存在：主题文件是用户随手粘贴、随时增删的，写进配置的值日后
 // 可能指向一个已被删掉的文件；那种情况该在渲染页面时回退到跟随系统并告警（与 language
-// 的未知取值一样），而不是让 ggt config set 当场拒绝——否则"先删旧主题、再设新主题"
+// 的未知取值一样），而不是让 ggt config set 当场拒绝——否则“先删旧主题、再设新主题”
 // 这个再正常不过的顺序就做不成了。值可以是内置主题的 id（builtin: 前缀），
 // 也可以是外部主题文件的绝对路径
 func parseTheme(s string) (any, error) {
@@ -438,8 +438,8 @@ func parseTheme(s string) (any, error) {
 
 // parseLogLevel 解析诊断日志级别。
 //
-// 合法取值的唯一真相刻意放在 eggokit/logger：这里复用它同时供"校验"与"运行期解析"用。
-// 若在注册表里另立一套判定，两处迟早漂移成「set 说能写进去、运行期却回退默认级别」，
+// 合法取值的唯一真相刻意放在 eggokit/logger：这里复用它同时供“校验”与“运行期解析”用。
+// 若在注册表里另立一套判定，两处迟早漂移成“set 说能写进去、运行期却回退默认级别”，
 // 而那种矛盾没有任何测试能提前拦住。
 //
 // 写入时归一化为小写规范形态：logger 的解析大小写不敏感，允许用户写 WARN，
