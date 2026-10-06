@@ -171,12 +171,19 @@
     <button id="graph-sync" class="btn btn--secondary" type="button"></button>
     <button id="graph-push" class="btn btn--secondary" type="button"></button>
     <button id="graph-diff" class="btn btn--secondary" type="button"></button>
+    <!-- 删掉当前这棵工作树。当前卡片不是工作树时整条按钮隐藏 -->
+    <button id="graph-wt-remove" class="btn btn--secondary" type="button" hidden></button>
     <span id="graph-esc"><kbd>Esc</kbd></span>
   </header>
   <!-- 提交信息与提交：VSCode 的源码管理视图里这两件也在最上方，与“改动列表”同处一个视图 -->
   <div id="graph-commit">
     <input id="graph-msg" type="text" autocomplete="off" spellcheck="false">
     <button id="graph-commit-btn" class="btn btn--primary" type="button"></button>
+  </div>
+  <!-- 新建工作树：只需要一个分支名，目标位置由服务端按仓库推导，前端不自己拼路径 -->
+  <div id="graph-worktree">
+    <input id="graph-wt-branch" type="text" autocomplete="off" spellcheck="false">
+    <button id="graph-wt-add" class="btn btn--secondary" type="button"></button>
   </div>
   <!-- 取数失败或仓库操作的结果（git 的原话）。与 #diff-op 同样的角色，单独一行是因为
        列表每次续取都会重建，写进列表里会被冲掉 -->

@@ -141,3 +141,29 @@ func TestRemoveWorktreeRefusesDirtyWithoutForce(t *testing.T) {
 		t.Errorf("加 force 之后应当能删除，实际失败：%v", err)
 	}
 }
+
+// add 失败时不能留下孤儿分支。
+//
+// 目标目录被占住是最常见的失败原因，而 git 建出的分支不会自己收回去，
+// 于是留下一条没挂在任何工作树上的分支，用户改用新建分支重试同名时
+// 会撞上一句 "A branch named 'x' already exists"。
+func TestAddWorktreeRollsBackBranchOnFailure(t *testing.T) {
+	repo := initRepo(t)
+	ctx := context.Background()
+	path := DefaultWorktreePath(repo, "orphan")
+
+	// 用一个非空目录占住目标位置，让 add 必然失败
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "occupied.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := AddWorktree(ctx, repo, path, "orphan", true); err == nil {
+		t.Fatal("目标目录被占住时 add 应当失败")
+	}
+	if branchExists(ctx, repo, "orphan") {
+		t.Error("add 失败后留下了孤儿分支，用户重试同名会撞上 already exists")
+	}
+}

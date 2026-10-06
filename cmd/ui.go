@@ -762,7 +762,9 @@ type uiWriteRequest struct {
 	Message string `json:"message"`
 	// Branch 是分支名：切换分支，以及新建工作树时用
 	Branch string `json:"branch"`
-	// Path 是工作树路径：新建时留空则由服务端推导，删除时必填
+	// Path 是工作树路径，仅删除使用且必填。
+	// 新建工作树不接受这个字段：位置只由服务端按仓库推导，放开它就等于
+	// 允许调用方把工作树建到仓库外面去
 	Path string `json:"path"`
 	// CreateBranch 为真时新建分支，为假时检出已有分支，仅新建工作树使用
 	CreateBranch bool `json:"createBranch"`
@@ -826,11 +828,34 @@ func (c *uiCache) handleWrite(w http.ResponseWriter, r *http.Request, run func(c
 // 而症状是“界面说建在这里、实际建在别处”，这种分歧几乎不可能靠人工发现。
 func (c *uiCache) handleWorktreeAdd(w http.ResponseWriter, r *http.Request) {
 	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error) {
-		path := req.Path
-		if path == "" {
-			path = git.DefaultWorktreePath(repo.Path, req.Branch)
+		// 子模块上不能建：它的路径推出的目标落在父仓库的工作区里面
+		// （/super/sub 会推出 /super/sub.worktrees/），父仓库立刻多出一大片
+		// 未跟踪内容，而这棵工作树又不会被展开成条目，界面上根本看不到它
+		if repo.IsSubmodule {
+			return "", &uiParamError{
+				http.StatusBadRequest,
+				l10n.T("Cannot create a worktree on a submodule", nil),
+			}
 		}
-		return git.AddWorktree(ctx, repo.Path, path, req.Branch, req.CreateBranch)
+		// 目标位置只由服务端推导，不接受调用方给路径：那个值会被直接交给
+		// git worktree add，等于允许把工作树建到仓库外面（实测确实建得出来）
+		path := git.DefaultWorktreePath(repo.Path, req.Branch)
+		out, err := git.AddWorktree(ctx, repo.Path, path, req.Branch, req.CreateBranch)
+		// 分支名的问题在这里翻成人话：internal/git 不依赖 l10n，
+		// 也不知道界面用哪种语言，它只给出可判定的原因
+		if errors.Is(err, git.ErrEmptyBranchName) {
+			return out, &uiParamError{
+				http.StatusBadRequest,
+				l10n.T("A branch name is required", nil),
+			}
+		}
+		if errors.Is(err, git.ErrInvalidBranchName) {
+			return out, &uiParamError{
+				http.StatusBadRequest,
+				l10n.T("Git does not accept this branch name", nil),
+			}
+		}
+		return out, err
 	})
 }
 

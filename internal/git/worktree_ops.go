@@ -6,9 +6,20 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+)
+
+// 分支名校验的两种失败。
+//
+// 拆成哨兵错误而不是在这里拼一句人话：本层不该知道界面用哪种语言，
+// 文案由 cmd 层根据 errors.Is 翻译。先前的写法直接返回中文，
+// 结果是迁移清单里多出两条“未被翻译机制覆盖”的文案
+var (
+	ErrEmptyBranchName   = errors.New("branch name is empty")
+	ErrInvalidBranchName = errors.New("git rejected the branch name")
 )
 
 // ValidateBranchName 用 git 自己的规则校验分支名。
@@ -21,10 +32,10 @@ import (
 // 而分支名随后会被拼进工作树的目标路径，放过去就等于允许写到仓库外面。
 func ValidateBranchName(ctx context.Context, repoPath, branch string) error {
 	if strings.TrimSpace(branch) == "" {
-		return fmt.Errorf("分支名为空")
+		return ErrEmptyBranchName
 	}
 	if _, err := runWithCombinedOutput(ctx, repoPath, "check-ref-format", "--branch", branch); err != nil {
-		return fmt.Errorf("git 不接受这个分支名：%s", strings.TrimSpace(branch))
+		return fmt.Errorf("%w: %s", ErrInvalidBranchName, strings.TrimSpace(branch))
 	}
 	return nil
 }
@@ -61,13 +72,36 @@ func AddWorktree(ctx context.Context, repoPath, path, branch string, createBranc
 	if err := ValidateBranchName(ctx, repoPath, branch); err != nil {
 		return "", err
 	}
+
+	// 先记下这个分支原本在不在。建分支的 add 一旦失败（目标目录被占住是最常见的
+	// 原因），git 并不会把刚建出来的分支收回去，于是留下一条没挂在任何工作树上的
+	// 孤儿分支；用户改用新建分支重试同名时，拿到的是一句
+	// "A branch named 'x' already exists"，原因与他的操作看起来毫无关系
+	existed := createBranch && branchExists(ctx, repoPath, branch)
+
 	args := []string{"worktree", "add"}
 	if createBranch {
 		args = append(args, "-b", branch, path)
 	} else {
 		args = append(args, path, branch)
 	}
-	return RunCombinedContext(ctx, repoPath, args...)
+	out, err := RunCombinedContext(ctx, repoPath, args...)
+	if err != nil && createBranch && !existed {
+		// 尽力回滚，回滚失败也不替换主错误：用户要看的是 add 为什么没成。
+		// 用 -d 而不是 -D：这个分支刚建出来、还没有独立提交，
+		// 万一它其实带着内容，宁可留着也不要强删
+		_, _ = RunCombinedContext(ctx, repoPath, "branch", "-d", "--", branch)
+	}
+	return out, err
+}
+
+// branchExists 判断本地是否已有这个分支。
+//
+// 用 rev-parse --verify 而不是 branch --list：后者要解析输出文本，
+// 而分支名可以包含空格或前缀相似的写法，按行比对迟早出错。
+func branchExists(ctx context.Context, repoPath, branch string) bool {
+	_, err := runWithCombinedOutput(ctx, repoPath, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return err == nil
 }
 
 // RemoveWorktree 删掉一棵工作树。

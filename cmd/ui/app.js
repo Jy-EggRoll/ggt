@@ -280,6 +280,10 @@ const graphFetchEl = document.getElementById('graph-fetch');
 const graphSyncEl = document.getElementById('graph-sync');
 const graphPushEl = document.getElementById('graph-push');
 const graphDiffEl = document.getElementById('graph-diff');
+// 工作树的两件事：新建（只需要一个分支名）与删掉当前这一棵
+const graphWtAddEl = document.getElementById('graph-wt-add');
+const graphWtBranchEl = document.getElementById('graph-wt-branch');
+const graphWtRemoveEl = document.getElementById('graph-wt-remove');
 // 提交详情卡（悬浮即显，点一下固定）
 const graphPopupEl = document.getElementById('graph-popup');
 const boardOpEl = document.getElementById('op');
