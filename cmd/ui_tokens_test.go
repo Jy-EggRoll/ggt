@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// TestCSSVarFallbacksMatchTokens 把“同一个数字在 app.js 与 style.css 里各写一份”的那几处对起来。
+// TestUIFallbacksMatchTokens 把“同一个数字在 app.js 与 style.css 里各写一份”的那几处对起来。
 //
-// app.js 用 cssVar('--x', 回退值) 读设计令牌：取值要参与列高、行高与卡片高度的算术，
+// app.js 用 cssVar('--x', 回退值) 读布局令牌：取值要参与列高、行高与卡片高度的算术，
 // 因此除了读计算样式还必须带一个回退值——样式尚未结算、或某个令牌被删掉时，
 // 布局不至于拿到 NaN 而整块塌掉。
 //
@@ -18,8 +18,12 @@ import (
 // 在样式表里是 32，列高因此多算 2px，最后一行卡片正好被底栏压住一条边（肉眼看只是“少了一行”）。
 // 这类错不报任何异常，只在特定视口高度下少显示一行，所以由这条测试守住。
 //
+// 时长令牌（motionMs）同样在这里校：它错了不会塌布局，症状是动画时长与样式表不一致，
+// 而 Web Animations API 的 duration 只接受数字，所以它也必须带回退值。两类令牌分别到样式表的
+// “数字 + px”与“数字 + ms”声明里找校对对象，各看各的。
+//
 // 读的是 //go:embed 打进二进制的那份资产，而不是磁盘上的路径：要校验的应当是真正发出去的东西
-func TestCSSVarFallbacksMatchTokens(t *testing.T) {
+func TestUIFallbacksMatchTokens(t *testing.T) {
 	css := readUIAsset(t, "ui/style.css")
 	appJS := readUIAsset(t, "ui/app.js")
 
@@ -38,6 +42,23 @@ func TestCSSVarFallbacksMatchTokens(t *testing.T) {
 		t.Fatal("ui/style.css 里一个 px 令牌都没解析出来，说明这条测试的解析方式已经与样式表对不上")
 	}
 
+	// 时长令牌另收一表。毫秒不参与布局算术，但它和 px 一样是“两边各写一份”的数，
+	// 只是错开之后看得见的结果不同：列高塌掉 vs 动画时长与样式表不一致
+	durations := map[string]float64{}
+	durDecl := regexp.MustCompile(`(?m)^\s*(--[a-z0-9-]+)\s*:\s*(\d+(?:\.\d+)?)ms\s*;`)
+	for _, m := range durDecl.FindAllStringSubmatch(css, -1) {
+		v, err := strconv.ParseFloat(m[2], 64)
+		if err != nil {
+			t.Fatalf("解析 %s 的取值 %q 出错：%v", m[1], m[2], err)
+		}
+		durations[m[1]] = v
+	}
+	if len(durations) == 0 {
+		t.Fatal("ui/style.css 里一个毫秒令牌都没解析出来，说明这条测试的解析方式已经与样式表对不上")
+	}
+
+	// 两类读取器各按字面量令牌名匹配。motionMs 内部是用变量名转调 cssVar 的，
+	// 因此不会被上面那条正则收进来，同一个回退值不会在两个表里各校一遍
 	calls := regexp.MustCompile(`cssVar\('(--[a-z0-9-]+)',\s*(\d+(?:\.\d+)?)\)`).FindAllStringSubmatch(appJS, -1)
 	if len(calls) == 0 {
 		t.Fatal("ui/app.js 里一个 cssVar 调用都没解析出来，说明这条测试的解析方式已经与页面脚本对不上")
@@ -55,6 +76,26 @@ func TestCSSVarFallbacksMatchTokens(t *testing.T) {
 		if got != fallback {
 			t.Errorf("%s 在 ui/style.css 里是 %vpx，而 ui/app.js 的回退值是 %vpx：两处不一致时列高会少算一截，"+
 				"症状是最后一行卡片被底栏压住", m[1], got, fallback)
+		}
+	}
+
+	motionCalls := regexp.MustCompile(`motionMs\('(--[a-z0-9-]+)',\s*(\d+(?:\.\d+)?)\)`).FindAllStringSubmatch(appJS, -1)
+	if len(motionCalls) == 0 {
+		t.Fatal("ui/app.js 里一个 motionMs 调用都没解析出来，说明这条测试的解析方式已经与页面脚本对不上")
+	}
+	for _, m := range motionCalls {
+		fallback, err := strconv.ParseFloat(m[2], 64)
+		if err != nil {
+			t.Fatalf("解析 %s 的回退值 %q 出错：%v", m[1], m[2], err)
+		}
+		got, ok := durations[m[1]]
+		if !ok {
+			t.Errorf("ui/app.js 读的 %s 在 ui/style.css 里没有“数字 + ms”的声明，回退值 %v 无从校对", m[1], fallback)
+			continue
+		}
+		if got != fallback {
+			t.Errorf("%s 在 ui/style.css 里是 %vms，而 ui/app.js 的回退值是 %vms：两处不一致时，"+
+				"读不到计算样式的那一瞬动画时长会与样式表不同", m[1], got, fallback)
 		}
 	}
 }

@@ -473,7 +473,11 @@ await report.acrossViewports(async (preset) => {
       if (!(await page.locator('#notifications .notif--error').count())) throw new Error('错误提示被自动收走了')
       // 收尾：清干净，免得影响后面的断言
       await page.evaluate(() => { for (const it of notifItems.slice()) removeNotif(it) })
-      if (await page.locator('#notifications .notif').count()) throw new Error('清理后仍有提示挂在屏幕上')
+      // 与上面两条同类断言一样等一次：收起是淡出，元素要等退场动画播完才离开容器，
+      // 即时计数会把“正在淡出”误判成“没清掉”
+      await page
+        .waitForFunction(() => document.querySelectorAll('#notifications .notif').length === 0, null, { timeout: 8000 })
+        .catch(() => { throw new Error('清理后仍有提示挂在屏幕上') })
     }, { viewports: ['desktop'] })
 
     await report.check('改回默认后配置里不留这一项', async () => {
@@ -509,8 +513,8 @@ await report.acrossViewports(async (preset) => {
       for (let i = 0; i < 5; i++) {
         if (await page.locator('#diff.open').count()) {
           await page.locator('#diff-back').click()
-        } else if (await page.locator('#graph-popup:not([hidden]) .hovercard-top .icon-btn').count()) {
-          await page.locator('#graph-popup:not([hidden]) .hovercard-top .icon-btn').click()
+        } else if (await page.locator('#graph-popup.open .hovercard-top .icon-btn').count()) {
+          await page.locator('#graph-popup.open .hovercard-top .icon-btn').click()
         } else if (await page.locator('#graph.open').count()) {
           await page.locator('#graph-back').click()
         } else if (await page.locator('#settings.open').count()) {
