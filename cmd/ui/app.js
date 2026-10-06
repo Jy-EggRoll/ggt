@@ -38,6 +38,11 @@ const MSG = {
     // 分支信息一起挤走。完整含义交给 title 提示
     submodule: 'sub',
     submoduleTitle: 'A submodule of another repository',
+    // 工作树的徽章可以写全称：它的名字（分支名）本来就占了标题行的大半，
+    // 而且它和子模块一样属于身份标记，写短了反而让人要猜
+    worktree: 'worktree',
+    worktreeTitle: 'Another working copy of {{name}}',
+    worktreeMissing: 'worktree gone',
     ahead: '↑{{n}}',
     behind: '↓{{n}}',
     continued: '{{name}} (continued {{n}})',
@@ -113,6 +118,9 @@ const MSG = {
     detached: '游离 HEAD',
     submodule: '子',
     submoduleTitle: '这是另一个仓库的子模块',
+    worktree: '工作树',
+    worktreeTitle: '{{name}} 的另一份工作区',
+    worktreeMissing: '工作树已失效',
     ahead: '领先 {{n}}',
     behind: '落后 {{n}}',
     continued: '{{name}}（续 {{n}}）',
@@ -559,13 +567,21 @@ function iconGlyph(def) {
   return m ? String.fromCodePoint(parseInt(m[1], 16)) : '';
 }
 
+// baseName 取路径的最后一段。
+//
+// 同时接受 / 与 \：ggt 跨平台，而这里的路径既可能来自前端自己的常量，
+// 也可能来自服务端返回的宿主路径（Windows 上会是反斜杠）
+function baseName(p) {
+  return String(p || '').split(/[\\/]/).filter(Boolean).pop() || '';
+}
+
 // iconHTML 生成文件类型图标的 HTML。
 // 颜色用图标文档里的 fontColor（Seti 为每种类型配了色），因此图标颜色是“类型色”，
 // 与文件名、状态字母的“状态色”互不干扰——这正是 VSCode 里的观感
 function iconHTML(path) {
   const map = prefersLight.matches ? iconLight : iconDark;
   if (!map) return '';
-  const base = path.split('/').pop();
+  const base = baseName(path);
   let id = iconCache.get(base);
   if (id === undefined) {
     id = resolveIconId(base, map);
@@ -634,11 +650,29 @@ function buildSpecs(repos) {
     }
     // 干净仓库不再补说明行：实时状态已经在标题行上（分支、领先/落后、游离 HEAD、尚无提交）
 
-    // 标记卡片末行：CSS 靠它画下边框与圆角。跨列被切断的卡片，其上一段的末行不带这个标记，
-    // 视觉上自然表现为“还没结束，下接另一列”
-    specs[specs.length - 1].foot = true;
+    // 末行标记不在这里做：一张卡片可能由多个条目组成（见 cardOf）
+  }
+
+  // 标记卡片末行：CSS 靠它画下边框与圆角。跨列被切断的卡片，其上一段的末行不带这个标记，
+  // 视觉上自然表现为“还没结束，下接另一列”。
+  //
+  // 按卡片身份而不是按条目来标：一棵工作树在数据里是独立条目，页面上却属于宿主的卡片，
+  // 所以宿主的末行不能因为后面跟着工作树就被当成卡片结束——那样卡片会在工作树之前
+  // 先画一道下边框，看起来已经断了
+  for (let i = 0; i < specs.length; i++) {
+    const next = specs[i + 1];
+    if (!next || cardOf(specs[i]) !== cardOf(next)) specs[i].foot = true;
   }
   return specs;
+}
+
+// cardOf 取一行所属卡片的身份。
+//
+// 工作树在数据里是独立条目（有自己的路径、自己的改动、能单独点开 diff），但在看板上
+// 必须归进宿主的卡片：它是同一个仓库的另一份工作区，铺成两张并列卡片会让人以为那是
+// 两个互不相干的仓库。身份取宿主路径，没有宿主的条目就是它自己
+function cardOf(s) {
+  return s.repo.worktreeOf || s.repo.path;
 }
 
 // repoNameHTML 生成“仓库名（外加子模块标）”。
@@ -657,6 +691,18 @@ function repoNameHTML(r, nameClass) {
     html +=
       '<span class="badge sub" title="' + esc(t('submoduleTitle')) + '">' + esc(t('submodule')) + '</span>';
   }
+  if (r.worktreeOf) {
+    // 工作树与子模块是两种不同的身份，徽章自然不同：
+    // 子模块是**归属**（它是别人的一部分），工作树是**副本**（同一个仓库的另一份工作区）。
+    // 归属信息放进 title 而不写进徽章：卡片本身已经把它归在宿主名下，
+    // 徽章里再写一遍宿主名只会挤占标题行的宽度
+    html +=
+      '<span class="badge wt" title="' +
+      esc(t('worktreeTitle', { name: baseName(r.worktreeOf) })) +
+      '">' +
+      esc(t('worktree')) +
+      '</span>';
+  }
   return html;
 }
 
@@ -666,7 +712,11 @@ function rowHTML(s) {
     const r = s.repo;
     const parts = [repoNameHTML(r, 'name')];
 
-    if (r.error) {
+    if (r.worktreeState === 'missing') {
+      // 工作树的目录已经不在了。这不是采集失败（压根没去采集），
+      // 所以文案说的是“该清理了”，而不是显示成一个红色错误
+      parts.push('<span class="badge">' + esc(t('worktreeMissing')) + '</span>');
+    } else if (r.error) {
       parts.push('<span class="badge err">!</span>');
     } else if (r.files.length > 0) {
       parts.push('<span class="badge">' + r.files.length + '</span>');
@@ -681,7 +731,8 @@ function rowHTML(s) {
     const meta = [];
     if (r.noCommits) meta.push(t('noCommits'));
     else if (r.detached) meta.push(esc(r.branch || t('detached')));
-    else if (r.branch) meta.push(esc(r.branch));
+    // 工作树的展示名本身就是分支名，右侧再重复一遍没有信息量
+    else if (r.branch && !r.worktreeOf) meta.push(esc(r.branch));
     if (r.upstream && !r.noCommits) {
       if (r.ahead > 0) meta.push(t('ahead', { n: r.ahead }));
       if (r.behind > 0) meta.push(t('behind', { n: r.behind }));
@@ -762,6 +813,10 @@ function reconcile(specs) {
 
     const cls = ['row', s.kind];
     if (s.foot) cls.push('foot');
+    // 工作树的行用更淡的底色表示“它从属于上面那张卡片的宿主”。
+    // 不用左侧色条：那会在卡片内部凭空多出一竖条，而且工作树与宿主是同级的行，
+    // 一条竖线反而让人以为它是个可折叠的容器
+    if (s.repo && s.repo.worktreeOf) cls.push('wt');
     // 分组类：只用来给“已暂存 / 未暂存”两组铺不同的半透明底色（见 style.css）。
     // 状态类（st-*）负责文件自己的字母与文字颜色，两者互不干扰
     if (s.group) cls.push('g-' + s.group.id);
@@ -858,20 +913,33 @@ function layout(els, specs) {
 
   let col = 0;
   let used = 0;
-  let prevRepo = null;
+  let prevCard = null;
   const segments = new Map();
 
   for (let i = 0; i < specs.length; i++) {
     const s = specs[i];
     const el = els[i];
 
-    // 同一张卡片内部行行相连；换卡片时若不在列首，先让出卡片间距
-    if (s.repo.path !== prevRepo && used > 0) used += GAP;
-    prevRepo = s.repo.path;
+    // 同一张卡片内部行行相连；换卡片时若不在列首，先让出卡片间距。
+    // 比的是卡片身份而不是条目路径：工作树属于宿主的卡片，两者之间不该出现卡片间距
+    const newCard = cardOf(s) !== prevCard;
+    if (newCard && used > 0) used += GAP;
+    prevCard = cardOf(s);
 
     // 列尾放不下“标题 + 这张卡片最多三行内容”就整卡顺延。上限取三行是为了避免
     // 标题孤零零留在列尾，但下限必须按卡片自己的行数来，否则单行卡片会被白白推走
-    if (s.kind === 'head' && used > 0 && colH - used < headH + Math.min(tailRows[i], 3) * rowH) {
+    //
+    // 还必须以“这是本卡片的第一个标题行”为前提（newCard）：工作树的标题行同样是 head，
+    // 若只看行类型，一张卡片的第二段会再次触发换列，整张卡片在列尾被劈成两半——
+    // 宿主留在左列，它的工作树跑到下一列顶端。
+    // 这个错误只在工作树内容较多时才出现（实测 1 个改动文件不触发、3 个触发），
+    // 因此更容易被“看起来正常”的那一次运行蒙过去
+    if (
+      s.kind === 'head' &&
+      newCard &&
+      used > 0 &&
+      colH - used < headH + Math.min(tailRows[i], 3) * rowH
+    ) {
       col++;
       used = 0;
     }
@@ -883,8 +951,11 @@ function layout(els, specs) {
       col++;
       used = 0;
       if (s.kind !== 'head') {
-        const n = (segments.get(s.repo.path) || 1) + 1;
-        segments.set(s.repo.path, n);
+        // 续段计数按卡片算：一张卡片跨列被切断时，“续 n”说的是这张卡片的第 n 段，
+        // 与它内部有几个条目（宿主加若干工作树）无关
+        const card = cardOf(s);
+        const n = (segments.get(card) || 1) + 1;
+        segments.set(card, n);
 
         const cont = document.createElement('div');
         cont.className = 'cont';

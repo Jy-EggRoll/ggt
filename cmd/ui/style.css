@@ -628,6 +628,37 @@ body {
 }
 
 /*
+ * “工作树”：同一个仓库的另一份工作区（git worktree）。
+ *
+ * 徽章用中性色，不另占一个语义色：子模块用的是专用语义色，因为它表达的是**归属**
+ * （它是别人仓库的一部分）；工作树表达的是**副本**（同一仓库的另一份工作区），
+ * 与“哪里改了、推没推”这些真正的状态不是一类东西，抢了颜色反而像又一种待办。
+ * 掺色比例仍取 60%，与 sub / ahead 两枚一致：低于它色相看不出来，高于它白字压不住
+ */
+.badge.wt {
+  background: color-mix(in srgb, var(--text-dim) 60%, var(--badge-bg));
+}
+
+/*
+ * 工作树的标题行淡一层底色，表示它从属于上方那张卡片的宿主。
+ *
+ * 用 background-image 叠色而不是改 background：行 hover 的高亮走的也是 background-image，
+ * 两者分属不同属性，因此能自然叠加。若这里改用 background 简写，它会把 hover 那层重置掉，
+ * 而 .row.head.wt 的特异性（0,3,0）高于 .row:hover（0,2,0）——
+ * 结果是工作树的标题行鼠标扫过毫无反馈，与紧挨着的宿主行不一致。
+ *
+ * 淡色掺 transparent 而不是掺 var(--card-bg)：行本身的底色已由 .row 铺过，
+ * 这里只要再叠一层薄雾；掺进卡片底色等于把“卡片底色是什么”写死进来，
+ * 卡片底色一改就得同步改这里
+ */
+.row.head.wt {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--text-dim) 6%, transparent),
+    color-mix(in srgb, var(--text-dim) 6%, transparent)
+  );
+}
+
+/*
  * 变更文件行。结构：[类型图标] [路径] …… [行尾状态字母]
  *
  * 之所以用真实元素而不是 VSCode 的 ::after 承载状态字母：::after 的内容既不能被选中，
