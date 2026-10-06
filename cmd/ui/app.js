@@ -41,7 +41,7 @@ const MSG = {
     ahead: '↑{{n}}',
     behind: '↓{{n}}',
     continued: '{{name}} (continued {{n}})',
-    updated: 'updated {{time}} · {{ms}} ms',
+    updated: 'updated at {{time}}',
     loadFailed: 'Failed to load: {{err}}',
     failed: 'status failed',
     noRepos: 'No repositories configured — add one with "ggt repo add <path>"',
@@ -116,7 +116,7 @@ const MSG = {
     ahead: '领先 {{n}}',
     behind: '落后 {{n}}',
     continued: '{{name}}（续 {{n}}）',
-    updated: '更新于 {{time}} · {{ms}} 毫秒',
+    updated: '更新于 {{time}}',
     loadFailed: '加载失败：{{err}}',
     failed: '状态读取失败',
     noRepos: '尚未配置仓库 —— 用 "ggt repo add <路径>" 添加',
@@ -1572,10 +1572,11 @@ function notifIconSvg(level) {
   );
 }
 
-// notifTime 把时间戳格式化成时分秒。
-// 不走 toLocaleTimeString：它的输出随语言与系统设置变化，同一份数据在两台机器上显示不同，
-// 断言与截图也就没法比对。通知都是本次会话里发生的，日期没有信息量
-function notifTime(at) {
+// clockTime 把时间戳格式化成 24 小时制的时分秒。
+// 不走 toLocaleTimeString：它的输出随语言与系统设置变化（英文环境下会带上 AM/PM），
+// 同一份数据在两台机器上显示不同，断言与截图也就没法比对。
+// 通知与底栏共用这一份：两者说的都是本次会话里刚发生的事，日期没有信息量
+function clockTime(at) {
   const d = new Date(at);
   const pad = (n) => (n < 10 ? '0' + n : String(n));
   return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
@@ -1805,7 +1806,7 @@ function buildNotifRow(item) {
   text.textContent = item.text;
   const time = document.createElement('div');
   time.className = 'notif-row-time';
-  time.textContent = notifTime(item.at);
+  time.textContent = clockTime(item.at);
   body.append(text, time);
   row.append(icon, body, notifCloseButton('notifClear', () => removeNotif(item)));
   return row;
