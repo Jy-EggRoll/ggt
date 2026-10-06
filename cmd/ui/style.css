@@ -1566,9 +1566,8 @@ pre.diff .meta { color: var(--text-dim); }
   font-size: var(--fs-sm);
   line-height: var(--line-relaxed);
   /* 与 .overlay 同一套显隐机制：常驻 + .open 类驱动，收起时也能淡出而不是硬消失。
-     只做淡入淡出、不做位移与缩放：这张卡跟着鼠标走，一旦有位移或缩放，快速划过一排提交时
-     它会看起来在抖
-     进也用 --dur-fast（100ms）而不是浮层那 180ms：它属于“跟着手出现”的一类，慢一拍就会
+     这一层只管显隐，位移与内容交叉都由 .open 与 .hovercard-ghost 负责
+     进也用 --dur-fast 而不是浮层那 --dur-move：它属于“跟着手出现”的一类，慢一拍就会
      显得迟钝——每档时长对应哪一类变化，见 :root 的动效段注释
      退场期间必须立刻不接收指针事件：鼠标此时往往已经移到下一行，不关掉的话点到的是这条
      正在淡出的卡（见 app.js 里 hideCommitCard 对 hoverSuppressAt 的处理） */
@@ -1583,10 +1582,47 @@ pre.diff .meta { color: var(--text-dim); }
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
+  /* 位移走 --dur-move，与行位移、浮层进场同一档、同一条曲线。
+     换行时卡片不再硬跳，而是从上一处滑到新一处；点击固定时也从光标位置滑到行尾。
+     这里曾经刻意不做位移，理由是“这张卡跟着鼠标走，一旦有位移，快速划过一排提交时它会
+     看起来在抖”。改动的判断是：抖动的来源不是位移本身，而是位移的起点——上一次收起时
+     卡片停在别处，首次出现若也走位移就会从那里飞过来（处理见下面的 no-move）。
+     位置更新由 mouseover 触发（卡片并非逐帧跟手），相邻两次更新之间本来就是连续过渡，
+     所以不存在硬跳。若日后觉得追手有拖尾感，把这里的 left/top 两条与 no-move
+     一起删掉就能回到硬跳 */
+  transition:
+    opacity var(--dur-fast) var(--ease-decel),
+    left var(--dur-move) var(--ease-decel),
+    top var(--dur-move) var(--ease-decel),
+    visibility 0s;
+}
+/* 首次出现的瞬时落位：卡片上一次停在别处，首次出现若也走位移，它会先从那处滑过来——
+   用户没看见它移动，只看见它凭空飞一段。JS 在落位前挂上、落位后摘掉这个类
+   （见 app.js 的 showCommitCard）
+   必须写全 transition 简写，不能只改 transition-property：属性列表一旦与时长列表长度不等，
+   配对就会整体错位，visibility 会配到 --dur-move 的时长（它本该是 0s 的延迟切换） */
+.hovercard.open.no-move {
   transition:
     opacity var(--dur-fast) var(--ease-decel),
     visibility 0s;
 }
+/* 换到另一条提交时的内容交叉淡入：旧内容被搬进这一层淡出，新内容已经在它下面了。
+   为什么非要单独一层：旧内容必须脱离文档流，卡片高度才能立刻按新内容算出来——否则
+   commitCardPosition 会先拿旧高度定一次位，卡片再缩回去，位移的目标先错一次
+   inset: 0 相对的是卡片的 padding box，所以这一层自带一份与卡片相同的 padding，
+   旧内容的内缩才对得上，淡出时不会向左上跳一下
+   z-index 必须高过 .hovercard-top（sticky，z-index 1）：固定态的关闭按钮就在旧内容里，
+   不抬起来它会从这一层穿出来，淡出时看起来按钮没跟着走 */
+.hovercard-ghost {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  padding: var(--sp-4);
+  pointer-events: none;
+  transition: opacity var(--dur-fast) ease;
+}
+.hovercard-ghost.out { opacity: 0; }
 /* 固定之后用焦点色描一圈边表明“它现在是固定的” */
 .hovercard.pinned {
   border-color: var(--focus-ring);
@@ -1777,11 +1813,13 @@ pre.diff .meta { color: var(--text-dim); }
      这正是“减少动态效果”应有的行为。
      按钮与图标按钮的底色渐变是本轮之前就有的，本轮新增的按下态踩在它上面，一并关掉，
      降级模式下的反馈才是瞬时的。
-     整段列出而不是逐条挑：新增动画时一旦忘了这里，降级就会漏，而这类用户对位移动画敏感 */
+     整段列出而不是逐条挑：新增动画时一旦忘了这里，降级就会漏，而这类用户对位移动画敏感。
+     其中 .hovercard.open.no-move 要单独写全：它的权重（三个类）高过卡片自己的 .hovercard.open
+     （两个类），只列后者的话，卡片首次出现那一次淡入在降级下照旧会播 */
   .overlay, .overlay.open,
   body::before, body.overlay-open::before,
   #notif-center, #notif-center.open,
-  .hovercard, .hovercard.open,
+  .hovercard, .hovercard.open, .hovercard.open.no-move, .hovercard-ghost,
   #empty, #empty.show,
   .btn, .icon-btn, .act { transition: none; }
   /* 徽标的入场弹跳是 animation，与上面那组 transition 写的不是同一条属性。

@@ -3104,6 +3104,13 @@ const commitCardCache = new Map(); // 提交哈希 -> 文件清单：同一个�
 let hoverSeq = 0;
 let cardPinned = false;
 let hoverCardTimer = null;
+// cardShownHash 记录卡片此刻显示的是哪条提交：只有从一条提交换到另一条才算“换了内容”，
+// 同一条提交异步补上文件清单属于“同一份内容长出来”，不该再做一次交叉淡入
+let cardShownHash = '';
+// CARD_CROSSFADE_MS 是交叉淡入里那层旧内容的存活时长，必须与样式表的 --dur-fast 等值。
+// 不用 transitionend 收尾：降级模式（prefers-reduced-motion）下过渡被整段关掉，事件不会派发，
+// 那一层就会永远留在卡片里
+const CARD_CROSSFADE_MS = 200;
 // lastPointer 记录指针最后一次移动到的位置；hoverSuppressAt 是“刚收起卡片时指针所在的位置”。
 //
 // 为什么需要后者：收起卡片会让指针下方的元素从卡片换成泳道图的行，浏览器随后就地补派一次
@@ -3141,6 +3148,9 @@ function hideCommitCard(force) {
   hoverCardTimer = null;
   graphPopupEl.classList.remove('open');
   graphPopupEl.classList.remove('pinned');
+  // 收起即忘掉“刚才是哪条提交”：下次打开（哪怕是同一条）都算首次出现，
+  // 该瞬时落位、不该从上次的位置滑过来，也不该跟旧内容做交叉淡入
+  cardShownHash = '';
   // 收起时记住指针位置：卡片一消失，指针下方的元素就换成泳道图的行，浏览器会就地补派一次
   // mouseover 给新元素——那一处坐标与这里几乎相同，据此把它挡掉（见 hoverSuppressAt 的说明）
   hoverSuppressAt = { x: lastPointer.x, y: lastPointer.y };
@@ -3151,14 +3161,29 @@ function hideCommitCard(force) {
 function showCommitCard(vm, x, y, pinned) {
   cardPinned = !!pinned;
   graphPopupEl.classList.toggle('pinned', cardPinned);
+  // 首次出现（上一刻还收起着）必须瞬时落位，不能从上次停的那个位置滑过来。
+  // 这个类只在这一帧里起作用，落位完成后立刻摘掉：后续换行才走位移过渡
+  const first = !graphPopupEl.classList.contains('open');
+  if (first) graphPopupEl.classList.add('no-move');
   // 显隐改由 .open 类驱动：hidden 属性会让元素当场离开渲染树，退场淡出因此没机会播。
-  // 样式表那边同时把“没有 .open 时不接收指针事件”写死了，退场的那 100ms 里鼠标点不到它——
+  // 样式表那边同时把“没有 .open 时不接收指针事件”写死了，退场那一档里鼠标点不到它——
   // 这与 hoverSuppressAt 那段要处理的是同一件事，两边配合才成立，不能只留其中一个
   graphPopupEl.classList.add('open');
 
+  // 只有换到另一条提交才算换了内容：同一条提交异步补上文件清单是“同一份内容长出来”，
+  // 此时再交叉淡入一次，卡片会在原地无谓地闪一下
+  const changed = !first && cardShownHash !== '' && cardShownHash !== vm.item.hash;
+  cardShownHash = vm.item.hash;
+
   const cached = commitCardCache.get(vm.item.hash);
-  graphPopupEl.replaceChildren(renderCommitCard(vm, cached || null, cardPinned));
+  swapCommitCardContent(renderCommitCard(vm, cached || null, cardPinned), changed);
   commitCardPosition(x, y);
+  if (first) {
+    // 强制一次回流，让上面那次“无位移过渡”的落位先成为既成事实，再恢复过渡。
+    // 顺序反过来的话，left/top 会被当成“从上一个值过渡到新值”，卡片仍旧是飞过来的
+    void graphPopupEl.offsetWidth;
+    graphPopupEl.classList.remove('no-move');
+  }
   if (cached) return;
 
   const seq = ++hoverSeq;
@@ -3171,12 +3196,40 @@ function showCommitCard(vm, x, y, pinned) {
       const files = data && !data.error ? data : null;
       if (!files) return;
       commitCardCache.set(vm.item.hash, files);
-      graphPopupEl.replaceChildren(renderCommitCard(vm, files, cardPinned));
+      // 补内容不做交叉淡入，理由见上面 changed 那段
+      swapCommitCardContent(renderCommitCard(vm, files, cardPinned), false);
       commitCardPosition(x, y);
     })
     .catch(() => {
       // 文件清单取不到不影响元信息：那一半照常显示
     });
+}
+
+// swapCommitCardContent 换掉卡片正文。crossfade 为真时，旧正文先搬进一层浮层淡出，
+// 新正文已经在它下面——位置动画与内容切换因此同时发生，而不是“内容先硬切、位置再滑”。
+//
+// 为什么旧正文必须搬走而不是就地淡出：卡片高度由正文撑开，旧正文若还在文档流里，
+// 卡片会先按旧高度定一次位（commitCardPosition 拿的是 getBoundingClientRect），
+// 等新正文上屏再变一次高度，位移的目标就错了一次，看起来是“滑到半路又拐一下”
+function swapCommitCardContent(fragment, crossfade) {
+  if (!crossfade || !graphPopupEl.firstElementChild) {
+    graphPopupEl.replaceChildren(fragment);
+    return;
+  }
+  // 只搬非浮层的节点：连续快速换行时上一个浮层可能还在淡出，让它留在原地等自己的定时器收，
+  // 再搬一次就会把“正在淡出的旧内容”套进新浮层里，叠成洋葱
+  const ghost = mkEl('div', 'hovercard-ghost');
+  for (const node of Array.from(graphPopupEl.childNodes)) {
+    if (node.nodeType === 1 && node.classList.contains('hovercard-ghost')) continue;
+    ghost.appendChild(node);
+  }
+  graphPopupEl.replaceChildren(fragment, ghost);
+  // 强制回流后旧内容才有一帧“不透明”的起点，否则加 .out 可能被合并进同一帧，
+  // 透明度从 1 直接跳到 0，看着仍旧是硬切
+  void graphPopupEl.offsetWidth;
+  ghost.classList.add('out');
+  // 定时清理而不是等 transitionend：降级模式下过渡被关掉，那个事件不会来（见 CARD_CROSSFADE_MS）
+  setTimeout(() => ghost.remove(), CARD_CROSSFADE_MS);
 }
 
 // pinCommitCard 把某条提交固定住。键盘路径没有光标，因此贴着那一行定位
