@@ -841,6 +841,16 @@ func (c *uiCache) handleWorktreeAdd(w http.ResponseWriter, r *http.Request) {
 		// git worktree add，等于允许把工作树建到仓库外面（实测确实建得出来）
 		path := git.DefaultWorktreePath(repo.Path, req.Branch)
 		out, err := git.AddWorktree(ctx, repo.Path, path, req.Branch, req.CreateBranch)
+		// 建好之后再补内容，而且补的过程一律不影响 add 的结论：工作树已经建成了，
+		// 把“依赖目录没链上”报成“建工作树失败”，用户会以为这次操作白做、要重来一次
+		if err == nil {
+			if lines := attachIgnoredToWorktree(ctx, repo.Path, path); len(lines) > 0 {
+				if strings.TrimSpace(out) != "" {
+					out += "\n"
+				}
+				out += strings.Join(lines, "\n")
+			}
+		}
 		// 分支名的问题在这里翻成人话：internal/git 不依赖 l10n，
 		// 也不知道界面用哪种语言，它只给出可判定的原因
 		if errors.Is(err, git.ErrEmptyBranchName) {
@@ -857,6 +867,85 @@ func (c *uiCache) handleWorktreeAdd(w http.ResponseWriter, r *http.Request) {
 		}
 		return out, err
 	})
+}
+
+// attachIgnoredToWorktree 把主工作区里被忽略的目录与文件接进刚建好的工作树，
+// 返回要补在 add 输出后面的说明行（没有可说的就返回空）。
+//
+// 清单来自配置项，默认是空的，也就是默认什么都不做：该链接哪些目录、该复制哪些文件
+// 取决于各仓库自己的技术栈，替用户预设一份清单既越权，也必然漏掉他真正需要的那几种。
+//
+// 两条清单的处理方式不同（链接 / 复制），原因见 git.AttachMode 的注释。
+func attachIgnoredToWorktree(ctx context.Context, repoPath, wtPath string) []string {
+	cfg := GetConfig()
+	if cfg == nil {
+		return nil
+	}
+	var lines []string
+	steps := []struct {
+		mode     git.AttachMode
+		patterns []string
+	}{
+		{git.AttachLink, cfg.WorktreeLinkIgnored},
+		{git.AttachCopy, cfg.WorktreeCopyIgnored},
+	}
+	for _, step := range steps {
+		if len(step.patterns) == 0 {
+			continue
+		}
+		outcomes, err := git.AttachIgnoredPaths(ctx, repoPath, wtPath, step.patterns, step.mode)
+		if err != nil {
+			lines = append(lines, attachFailureText(err))
+			continue
+		}
+		done, problems := git.AttachSummary(outcomes)
+		if done > 0 {
+			if step.mode == git.AttachLink {
+				lines = append(lines, l10n.T("Linked {{.Count}} ignored paths into the new worktree",
+					map[string]any{"Count": done}))
+			} else {
+				lines = append(lines, l10n.T("Copied {{.Count}} ignored paths into the new worktree",
+					map[string]any{"Count": done}))
+			}
+		}
+		// 单条路径的问题逐条列出，而不是汇总成“N 条未处理”：用户接下来要按路径去处置，
+		// 只给一个数字他就得自己去比对哪几条没成
+		for _, p := range problems {
+			lines = append(lines, l10n.T("{{.Path}}: {{.Reason}}", map[string]any{
+				"Path":   p.Rel,
+				"Reason": attachReasonText(p.Err),
+			}))
+		}
+	}
+	return lines
+}
+
+// attachReasonText 把单条路径的结果翻成人话。
+//
+// 用哨兵错误逐项判定而不是直接展示 error 文本：internal/git 返回的是英文内部原因，
+// 而界面语言可能是中文；底层原因里还夹着 OS 的错误码，对用户没有意义。
+func attachReasonText(err error) string {
+	switch {
+	case errors.Is(err, git.ErrAttachExists):
+		return l10n.T("already exists in the new worktree", nil)
+	case errors.Is(err, git.ErrAttachSourceSymlink):
+		return l10n.T("the source is a symbolic link", nil)
+	case errors.Is(err, git.ErrAttachSourceKind):
+		return l10n.T("its type does not match this option", nil)
+	case errors.Is(err, git.ErrAttachLinkFailed):
+		return l10n.T("failed to create the symbolic link", nil)
+	case errors.Is(err, git.ErrAttachCopyFailed):
+		return l10n.T("failed to copy the file", nil)
+	}
+	return l10n.T("skipped", nil)
+}
+
+// attachFailureText 把整次接入的失败翻成人话。
+func attachFailureText(err error) string {
+	if errors.Is(err, git.ErrAttachInvalidPattern) {
+		return l10n.T("A configured worktree path is unusable: it must be relative to the repository and must not contain ..", nil)
+	}
+	return l10n.T("Failed to attach ignored paths to the new worktree", nil)
 }
 
 // handleWorktreeRemove 删掉一棵工作树。

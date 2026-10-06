@@ -60,6 +60,11 @@ type Config struct {
 	// NotifyTimeout 是网页通知自动消失的秒数。0 表示不自动消失，也就是零值即默认，
 	// 因此 applyConfigDefaults 同样不需要为它补值
 	NotifyTimeout int `mapstructure:"notify_timeout" json:"notify_timeout"`
+	// WorktreeLinkIgnored / WorktreeCopyIgnored 是新建工作树时接过去的被忽略路径清单，
+	// 对应 VSCode 的 git.worktreeIncludeFiles：清单为空即不做事，因此默认关闭。
+	// 刻意用“空清单”而不是再配一个布尔开关——两者等价，多一个键就多一处要维护的说法
+	WorktreeLinkIgnored []string `mapstructure:"worktree_link_ignored" json:"worktree_link_ignored"`
+	WorktreeCopyIgnored []string `mapstructure:"worktree_copy_ignored" json:"worktree_copy_ignored"`
 }
 
 // getConfigPath 计算配置文件的默认路径，失败时返回 error 而不终止进程。
@@ -237,6 +242,14 @@ func applyConfigDefaults(cfg *Config) {
 	}
 	if cfg.ParentPaths == nil {
 		cfg.ParentPaths = []string{}
+	}
+	// 两条工作树接入清单同样补空切片：nil 与 [] 在运行期等价，但序列化结果是 null 与 []，
+	// 而配置文件里出现 null 会让 config validate 把它当成类型不对的数组
+	if cfg.WorktreeLinkIgnored == nil {
+		cfg.WorktreeLinkIgnored = []string{}
+	}
+	if cfg.WorktreeCopyIgnored == nil {
+		cfg.WorktreeCopyIgnored = []string{}
 	}
 }
 
