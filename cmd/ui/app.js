@@ -215,10 +215,12 @@ const POLL_MS = 5000;
 // 列间距也从 CSS 变量读：它是布局参数，与 --col-w 一样只该有一处定义
 const GAP = cssVar('--col-gap', 16);
 
-// 滚轮平滑的参数。本轮动画的固定时长与曲线照抄宿主已有的
+// 滚轮平滑的参数。曲线照抄宿主已有的
 // AvaloniaDesktopKit/Behaviors/SmoothWheelScroll.cs（它又刻意与 Slint 1.18 对齐），
-// 详细理由见下方 smoothScrollBy 处注释
-const WHEEL_MS = 180;
+// 详细理由见下方 smoothScrollBy 处注释。
+// 时长必须与样式表的 --dur-move 同值：滚轮与浮层进退、行位移属于同一类变化，两边不一致就会
+// 出现两种时间感。CSS 没法引用 JS 常量，只能靠这条注释约束两处一起改
+const WHEEL_MS = 400;
 const NOMINAL_FRAME_MS = 1000 / 60;
 // DOM_DELTA_LINE 时一行折算的像素。与 Slint 的 line→60 逻辑像素对齐
 // （i-slint-backend-winit 的 LineDelta(lx, ly) => (lx * 60., ly * 60.)）
@@ -341,7 +343,7 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 function fadeIn(el) {
   if (reduceMotion.matches) return;
   el.animate([{ opacity: 0 }, { opacity: 1 }], {
-    duration: motionMs('--dur-move', 180),
+    duration: motionMs('--dur-move', 400),
     easing: motionEasing('--ease-decel', 'linear'),
   });
 }
@@ -1720,7 +1722,7 @@ function removeToastEl(el) {
     if (e.target === el) finish();
   };
   el.addEventListener('animationend', onEnd);
-  // 退场动画是 100ms，这里给 400ms：正常情况下它在动画结束时就已经先跑掉了
+  // 退场动画走 --dur-fast，这里的兜底宽限按它的两倍取：正常情况下它在动画结束时就已经先跑掉了
   setTimeout(finish, 400);
   el.classList.add('notif--out');
 }
@@ -2492,11 +2494,11 @@ prefersLight.addEventListener('change', () => {
 // 因此滚动（浏览器只在触控板横扫 / Shift+滚轮 时给出 deltaX），而纵向滚动已被禁用，
 // 不做转换的话滚轮会毫无反应，用户会以为页面卡死。
 //
-// 为什么不用 CSS 的 scroll-behavior: smooth：它由 UA 按滚动距离决定时长（明显长于 180ms），
+// 为什么不用 CSS 的 scroll-behavior: smooth：它由 UA 按滚动距离决定时长（明显长于 WHEEL_MS），
 // 而每拨一格都会重新发起一次滚动，连续拨动时表现为“上一段动画没走完就被生硬截断”。
 //
 // 曲线照抄宿主自己的 AvaloniaDesktopKit/Behaviors/SmoothWheelScroll.cs，它又刻意与
-// Slint 1.18 的 Flickable 对齐：固定 180ms 等减速——以恒定减速度走完全程、终点速度恰好
+// Slint 1.18 的 Flickable 对齐：固定时长（WHEEL_MS）等减速——以恒定减速度走完全程、终点速度恰好
 // 降到 0，归一化位置 p(u) = 2u - u²（u 为已过时长占比），起手最快、结尾干脆停住。
 // 每个滚轮事件都从“当前位置”重起一段曲线（Slint 本身就是这个行为，不是缺陷），
 // 并先按一个标称帧推进一次，保证即使下一帧还没到，拨动当帧也立刻有反馈

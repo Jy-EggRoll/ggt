@@ -120,14 +120,22 @@
 
   /* 动效由三档时长与一条曲线构成，全页面只有这一份定义。
      三档各管一类变化，新增动画一律往这三档里归，不另开数值：
-       --dur-fast  100ms  颜色一类的表面变化，以及所有退场
-       --dur-move  180ms  进场与位移（与 app.js 滚轮那条 180ms 同一时间感）
-       --dur-slow  900ms  无限循环的进度类动画
+       --dur-fast  颜色一类的表面变化，以及所有退场
+       --dur-move  进场与位移（与 app.js 滚轮那条同一时间感）
+       --dur-slow  无限循环的进度类动画
 
-     退场为什么复用 100ms 而不单开一档：Fluent 2 的时长档里 durationFaster 就是 100ms
+     三个数值由用户统一指定，不再照上游档位取。既然由人定，下面的注释就不再逐处复述毫秒数，
+     而是一律引用 token 名——否则每调一次时长都要满仓库改注释，改漏一处就是不实描述
+
+     退场为什么复用表面变化那一档、不单开一档，当初的依据（只作留档，现值已不照它取）：
+     Fluent 2 的时长档里 durationFaster 就是 100ms
      （packages/tokens/src/global/durations.ts），而 VSCode 自己的浮层进退是 250ms / 150ms、
-     比例 0.6，按本页 180ms 的进场折算得 108ms——两个来源都落在 100ms 上下。退场比进场快也是
+     比例 0.6，按当时的 180ms 进场折算得 108ms——两个来源都落在 100ms 上下。退场比进场快也是
      两家的共同做法：进场要让人看清是什么出现了，退场只要不突兀
+
+     现在的取值慢于上面这两个来源，这是统一调整的代价：跟手的那一类反馈（按钮变色、行 hover
+     高亮）也走这一档，鼠标快速扫过一排按钮或行时，颜色会追不上手。要恢复跟手又不动其它规则，
+     就把表面变化从这一档里拆出去单开一个更快的档——它与退场共用一个值，是本档唯一的已知取舍
 
      曲线只有一条。它的实际性质是“缓起、中段走完大部分、尾段拖得很长”：实测起点速度约 0.02、
      终点速度为 0，并不是等减速。别拿 ease 做位移——它的加速段会让“卡片滑到新位置”看起来犹豫。
@@ -141,9 +149,9 @@
      没有换成 VSCode 那条，原因是它的起手速度是现用曲线的两百多倍，换掉就等于把所有已有位移
      动画改成“一开场就冲出去”，而本项目的取舍是保住既有手感。页面内部是否统一，最终只由
      这一条曲线决定，因此新增动画一律复用 --ease-decel，不引入第二条 */
-  --dur-fast: 100ms;
-  --dur-move: 180ms;
-  --dur-slow: 900ms;
+  --dur-fast: 200ms;
+  --dur-move: 400ms;
+  --dur-slow: 800ms;
   --ease-decel: cubic-bezier(0.2, 0, 0, 1);
 
   /* 由主题令牌派生：样式表里因此仍然没有颜色字面量 */
@@ -320,10 +328,10 @@
      CONTEXT_VIEW_MENU_MOTION_*）。进退不对称是有意的——进场要让人看清是什么出现了，
      退场只要不突兀，收缩幅度因此小得多 */
   transform: scale(0.97);
-  /* 非打开态一律不接收指针事件：退场那 100ms 里元素仍然可见，不关掉的话它会挡住看板，
+  /* 非打开态一律不接收指针事件：退场那一档里元素仍然可见，不关掉的话它会挡住看板，
      用户想点下面的行会点在一条正在淡出的浮层上 */
   pointer-events: none;
-  /* 退场走 --dur-fast（100ms，依据见 :root 的动效段注释）；visibility 延迟到 100ms 之后才切，
+  /* 退场走 --dur-fast（依据见 :root 的动效段注释）；visibility 延迟到同一时长之后才切，
      让淡出真的播完 */
   transition:
     opacity var(--dur-fast) ease,
@@ -344,8 +352,8 @@
   opacity: 1;
   transform: none;
   pointer-events: auto;
-  /* 进场走 --dur-move（180ms）。时长与曲线与行位移同一条（--ease-decel），页面里不会出现
-     第二种时间感。打开时 visibility 立即生效（0s，不带延迟），否则进场要从头等 100ms */
+  /* 进场走 --dur-move。时长与曲线与行位移同一条（--ease-decel），页面里不会出现
+     第二种时间感。打开时 visibility 立即生效（0s，不带延迟），否则进场要从头等上退场那一档 */
   transition:
     opacity var(--dur-move) var(--ease-decel),
     transform var(--dur-move) var(--ease-decel),
@@ -367,9 +375,9 @@
    backdrop-filter 模糊到的就是那块不透明的底色，等于没模糊；放在 body 上背后才是真正的看板。
    模糊只给 2px：再强一点看板就被糊成一片色块，“透视”的意思就没了
 
-   与浮层同一套显隐机制（常驻 + visibility 过渡）。不这样处理的话，浮层淡出 100ms 而遮罩
+   与浮层同一套显隐机制（常驻 + visibility 过渡）。不这样处理的话，浮层还在淡出而遮罩
    一刀切，画面会出现“卡片还在淡出、背后的模糊已经没了”的断层。时长与浮层逐条对齐：
-   进场 180ms、退场 100ms，visibility 同样延迟到退场结束才切 */
+   进场走 --dur-move、退场走 --dur-fast，visibility 同样延迟到退场结束才切 */
 body::before {
   content: "";
   position: fixed;
@@ -379,7 +387,7 @@ body::before {
   backdrop-filter: blur(var(--scrim-blur));
   opacity: 0;
   visibility: hidden;
-  /* 收起态不接收指针事件：这条遮罩盖住整个视口，退场那 100ms 里它还在渲染，
+  /* 收起态不接收指针事件：这条遮罩盖住整个视口，退场那一档里它还在渲染，
      但点击已经该让给看板了（收起后 visibility 会变成 hidden，那时它本来就不接收，
      这一行管的是退场途中）。打开态必须另行收回，见下面那条规则 */
   pointer-events: none;
@@ -408,10 +416,11 @@ html {
   overflow-y: hidden;
   /*
    * 这里刻意不声明 scroll-behavior: smooth，平滑改由 app.js 统一负责。
-   * 原因是实测出来的：CSS 的 smooth 由 UA 按滚动距离决定时长（明显长于 180ms），
+   * 原因是实测出来的：CSS 的 smooth 由 UA 按滚动距离决定时长（明显长于 --dur-move），
    * 而滚轮每拨一格都会重新发起一次 scrollBy，于是连续拨动时表现为
    * “上一段动画没走完就被新的一段生硬截断”——正是用户明确不接受的那种手感。
-   * app.js 用固定 180ms 的等减速曲线接管后，缓动只有一处定义，也不会与 CSS 叠加。
+   * app.js 用固定时长（WHEEL_MS，与 --dur-move 同值）的等减速曲线接管后，缓动只有一处定义，
+   * 也不会与 CSS 叠加。
    *
    * 触控板横扫与 Shift+滚轮产生的 deltaX 不走那条路径，仍交给浏览器原生处理
    * （原生那条路径自带缓动，手感最好）
@@ -478,7 +487,7 @@ body {
      上沿与下沿分别由 .row.head 与 .row.foot 补上，拼起来正好是一整张卡片的一圈柔和阴影
      （shadow4 档，理由见 :root 的阴影段注释） */
   box-shadow: var(--shadow-card-x);
-  /* background-color 也在过渡列表里：hover 高亮（见 .row:hover）从硬切换变成 100ms 的渐变，
+  /* background-color 也在过渡列表里：hover 高亮（见 .row:hover）从硬切换变成 --dur-fast 的渐变，
      鼠标扫过一列时不再是一道道生硬的亮条 */
   transition:
     transform var(--dur-move) var(--ease-decel),
@@ -1099,7 +1108,7 @@ body {
   font-size: var(--fs-sm);
   line-height: var(--line-tight);
   /* 与 .overlay 同一套显隐机制（理由见那里）：常驻 + .open 类驱动，收起时也能淡出。
-     时长逐条对齐整页浮层（进场 180ms、退场 100ms）：它虽然只是一块面板，但和 diff、
+     时长逐条对齐整页浮层（进场 --dur-move、退场 --dur-fast）：它虽然只是一块面板，但和 diff、
      提交图同属“用户主动点开、会停下来看的浮层”，页面里因此只有一套进退节奏 */
   visibility: hidden;
   opacity: 0;
