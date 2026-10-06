@@ -906,7 +906,24 @@ body {
    层级取 --z-diff 而不是再新增一个令牌：它与 diff、仓库卡片本来就是同一层的东西，
    靠 DOM 顺序压在它们之上（见 index.html 里的说明）；低于底栏，因此面板开着时
    铃铛与它自己的入口仍然点得到 */
-#settings { z-index: var(--z-diff); }
+#settings {
+  z-index: var(--z-diff);
+  /* 面板内部的水平留白比通用间距宽两档（--sp-4 → --sp-6）。
+     被标记的行要铺一层淡底色，而底色离面板边、文字离底色边都需要余量，
+     通用的 12px 要同时分给这两处，怎么分都显挤。
+     收成一个局部变量是因为标题栏、提示行、正文、页脚四处都得分到，
+     漏掉一处就会出现“标题比正文左移一截” */
+  --settings-pad-x: var(--sp-6);
+}
+
+/* 上面那份留白里，只有标题栏需要在这里覆盖：它走通用规则 .overlay > header，
+   而 diff、仓库卡片等浮层共用同一条，直接改它会让整个应用的标题栏跟着变。
+   提示行、正文、页脚的选择器只服务设置面板，因此改的是它们各自的声明，
+   不在这里再写一遍覆盖——覆盖写法既要靠声明顺序取胜（同特异性下后写的赢，
+   上一版就因此被后面的原声明盖掉、白改一场），也让"这个值究竟由谁定"变得难查 */
+#settings > header {
+  padding-inline: var(--settings-pad-x);
+}
 
 /* 正文：在 flex 列布局里占满剩余高度并自己滚。
    用 flex:1 + min-height:0 而不是 max-height——后者在内容短时留出一块空白，长时又会溢到页脚上 */
@@ -914,22 +931,66 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--sp-2) var(--sp-4) var(--sp-4);
+  padding: var(--sp-2) var(--settings-pad-x) var(--sp-4);
 }
 
 /* 每一项：标题行（标题 + 键名 + 恢复默认）、控件、说明、以及这一项自己的错误行。
-   项之间用分隔线而不是各自一张卡片：一屏要看下十来项，卡片会把面板撑得很长 */
-.setting-row { padding: var(--sp-3) 0; border-bottom: 1px solid var(--card-border); }
+   项之间用分隔线而不是各自一张卡片：一屏要看下十来项，卡片会把面板撑得很长
+
+   左右各外扩 --sp-3、再用等量内边距把内容推回原位：净效果是文字位置一点没动，
+   而行的边框（也就是分隔线）连同底色一起比纯内容区宽出一圈，文字四周因此有了余量。
+   外扩必须给所有行一起加——只给被标记的那一行加，那条分隔线就会比别的行长出一截，
+   全列的分隔线不再是同一个长度 */
+.setting-row {
+  padding: var(--sp-3);
+  margin-inline: calc(var(--sp-3) * -1);
+  border-bottom: 1px solid var(--card-border);
+}
 .setting-row:last-child { border-bottom: 0; }
-/* 有未保存改动、或被服务端拒绝的项，在左侧留一条竖线：一屏十几项时只靠控件边框看不出是哪一项，
-   而这条线扫一眼就能定位（脏的是待保存，红的是被拒） */
+/* 有未保存改动、或被服务端拒绝的项，铺一层淡底色：一屏十几项时只靠控件边框看不出是哪一项，
+   而底色扫一眼就能定位（偏色的是待保存，偏红的是被拒）
+ *
+ * 为什么不用左侧竖线（曾经的 box-shadow: inset 3px 0 0）：那条线在行左端凭空多出 3 像素，
+ * 一屏十几项里只有个别行被顶偏，整列文字的左端就参差不齐——它比"标出这一项"这件事本身更抢眼，
+ * 用户明确反馈过这个观感。底色靠整行面积来提示，不侵占排版，所有行仍严格左对齐
+ *
+ * 配色沿用本文件既有的混色约定（见 .row.file.g-*）：令牌与**所在容器的底色**混出，
+ * 样式表里因此仍然没有任何颜色字面量。这里混的是 --panel-bg 而不是那些文件行用的 --card-bg，
+ * 因为设置行落在 .overlay 里，而 .overlay 的底色是 editorWidget.background；混错了底色，
+ * 这一行的淡底就会与面板底色对不上，显出一块突兀的方块
+ *
+ * 同时有 .dirty 与 .invalid 时以 .invalid 为准：被服务端拒绝比"还没保存"更需要先被看到，
+ * 而这个规则排在后面，同优先级下自然胜出
+ *
+ * 底色画在伪元素上、而不是行自己的 background 上：行的 border-bottom 就是项与项之间的分隔线，
+ * 底色若画在行上，就会连带那条线一起被裁到，行框一变线也跟着变
+ *
+ * 横向余量由 .setting-row 自己的 padding-inline 提供（同一处用等量负外边距抵消，文字位置不变），
+ * 伪元素只取行框的整个宽度。于是“底色宽度 = 分隔线宽度”，列表里每个元素共用同一条对齐参照
+ *
+ * 曾经让伪元素自己向左右各外扩 --sp-3 来留余量，那是错的：底色会比同列分隔线宽出一圈，
+ * 成为列表里唯一两头都不靠的元素（实测占面板内宽 99.2%，视觉上是一条没有参照的色带）。
+ * 那次独立界面审查还确认了做对的三件事：分隔线全列等长、文字严格左对齐、标记前后零位移 */
 .setting-row.dirty,
 .setting-row.invalid {
-  padding-left: var(--sp-3);
-  border-radius: var(--radius-xs);
-  box-shadow: inset 3px 0 0 var(--focus-border, var(--git-modified));
+  position: relative;
+  /* 建层叠上下文，让下面伪元素的 z-index: -1 只退到本行的背景层，
+     而不会一路掉到面板底色之下（那样底色就被盖住了） */
+  z-index: 0;
 }
-.setting-row.invalid { box-shadow: inset 3px 0 0 var(--git-conflicting); }
+.setting-row.dirty::before,
+.setting-row.invalid::before {
+  content: "";
+  position: absolute;
+  /* 上下贴边：纵向余量由 .setting-row 的 padding-block 交给文字，底色则与分隔线齐平 */
+  inset: 0;
+  border-radius: var(--radius-xs);
+  z-index: -1;
+  background: color-mix(in srgb, var(--focus-border, var(--git-modified)) 10%, var(--panel-bg, var(--bg)));
+}
+.setting-row.invalid::before {
+  background: color-mix(in srgb, var(--git-conflicting) 12%, var(--panel-bg, var(--bg)));
+}
 
 .setting-head { display: flex; align-items: center; gap: var(--sp-2); }
 .setting-title { font-weight: 600; }
@@ -964,7 +1025,10 @@ body {
 .setting-control input[type="number"] { max-width: 12em; }
 /* 布尔项是一个包着复选框的标签：宽度随内容，上面那条 width:100% 是给文本类控件的 */
 .setting-bool { display: flex; align-items: center; gap: var(--sp-2); cursor: pointer; }
-.setting-bool input { width: auto; min-height: 0; }
+/* margin: 0 归掉的是浏览器给复选框的默认外边距（Chromium 是 3px 3px 3px 4px）：
+   那个左 4px 会让勾选框比同一列的标题与输入框整体右移 4px，三类控件的左端对不齐。
+   与 width/min-height 写在一处，因为三者都是“把 UA 默认样式收回来” */
+.setting-bool input { width: auto; min-height: 0; margin: 0; }
 /* 只读项（仓库列表这类由别的命令管理的配置）：显示出来但不接受编辑 */
 .setting-control textarea:disabled {
   color: var(--text-dim);
@@ -983,7 +1047,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-3) var(--settings-pad-x);
   background: var(--card-bg);
   border-top: 1px solid var(--card-border);
 }
@@ -1002,7 +1066,7 @@ body {
 #settings-op {
   flex: none;
   margin: 0;
-  padding: var(--sp-2) var(--sp-4) 0;
+  padding: var(--sp-2) var(--settings-pad-x) 0;
   font-size: var(--fs-xs);
 }
 #settings-op:empty { display: none; }
