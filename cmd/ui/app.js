@@ -43,6 +43,12 @@ const MSG = {
     worktree: 'worktree',
     worktreeTitle: 'Another working copy of {{name}}',
     worktreeMissing: 'worktree gone',
+    worktreeAdd: 'New worktree',
+    worktreeBranchPlaceholder: 'New branch name',
+    worktreeRemove: 'Delete worktree',
+    worktreeRemoveTitle: 'Delete this worktree of {{name}}',
+    worktreeRemoveConfirm: 'Delete anyway',
+    filesWithWorktrees: '{{n}} in the main working copy, {{wt}} in its worktrees',
     ahead: '↑{{n}}',
     behind: '↓{{n}}',
     continued: '{{name}} (continued {{n}})',
@@ -121,6 +127,12 @@ const MSG = {
     worktree: '工作树',
     worktreeTitle: '{{name}} 的另一份工作区',
     worktreeMissing: '工作树已失效',
+    worktreeAdd: '新建工作树',
+    worktreeBranchPlaceholder: '新分支名',
+    worktreeRemove: '删除工作树',
+    worktreeRemoveTitle: '删除 {{name}} 的这棵工作树',
+    worktreeRemoveConfirm: '仍然删除',
+    filesWithWorktrees: '主工作区 {{n}} 处，工作树 {{wt}} 处',
     ahead: '领先 {{n}}',
     behind: '落后 {{n}}',
     continued: '{{name}}（续 {{n}}）',
@@ -627,8 +639,16 @@ const UI_GROUPS = [
 // 分组的行头也占一行（高度与其它行同为 22px），因此布局那套“行高即常量”的前提不受影响
 function buildSpecs(repos) {
   const specs = [];
+  // 宿主卡片把工作树的改动算在一起：用户想知道的是“这个仓库还有多少活”，
+  // 分成两个数字就得自己加。这里先一次遍历把合计算好，免得每张卡片各扫一遍全表
+  const wtFiles = new Map();
   for (const repo of repos) {
-    specs.push({ key: repo.path + '\u0000h', kind: 'head', repo });
+    if (!repo.worktreeOf || repo.error) continue;
+    wtFiles.set(repo.worktreeOf, (wtFiles.get(repo.worktreeOf) || 0) + repo.files.length);
+  }
+  for (const repo of repos) {
+    // 只有宿主卡片需要合计值，工作树卡片自己就是自己的全部
+    specs.push({ key: repo.path + '\u0000h', kind: 'head', repo, wtFiles: repo.worktreeOf ? 0 : wtFiles.get(repo.path) || 0 });
 
     if (repo.error) {
       // 采集失败的仓库必须显式说明失败，不能显示成“工作区干净”
@@ -722,8 +742,13 @@ function rowHTML(s) {
       parts.push('<span class="badge">' + esc(t('worktreeMissing')) + '</span>');
     } else if (r.error) {
       parts.push('<span class="badge err">!</span>');
-    } else if (r.files.length > 0) {
-      parts.push('<span class="badge">' + r.files.length + '</span>');
+    } else if (r.files.length > 0 || s.wtFiles > 0) {
+      // 数字里含工作树的改动。鼠标停上去能看明细，否则用户会以为这个数字只指主工作区
+      const total = r.files.length + s.wtFiles;
+      const title = s.wtFiles > 0 ? t('filesWithWorktrees', { n: r.files.length, wt: s.wtFiles }) : '';
+      parts.push(
+        '<span class="badge"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + total + '</span>',
+      );
     } else if (r.ahead > 0) {
       // “已提交但没推送”给这枚徽章上色（绿），和文件数那枚的灰区分开：
       // 前者是“你还有活没干完”，后者只是信息。颜色取自 --git-added，与 st-added 同一份令牌
@@ -3261,6 +3286,16 @@ function openRepoCard(spec) {
   commitMsgEl.placeholder = t('commitMsg');
   commitMsgEl.value = draftMsg.get(r.path) || '';
 
+  // 工作树：新建只要一个分支名，删除只对工作树本身开放。
+  // 删除按钮按当前卡片显示或隐藏，文案也在这里跟着卡片走
+  graphWtAddEl.textContent = t('worktreeAdd');
+  graphWtBranchEl.placeholder = t('worktreeBranchPlaceholder');
+  // 与分支选择器同样设一个可读的名字：placeholder 不是给辅助技术读的标签
+  graphWtBranchEl.setAttribute('aria-label', t('worktreeBranchPlaceholder'));
+  graphWtRemoveEl.textContent = t('worktreeRemove');
+  graphWtRemoveEl.hidden = !r.worktreeOf;
+  graphWtRemoveEl.title = r.worktreeOf ? t('worktreeRemoveTitle', { name: baseName(r.worktreeOf) }) : '';
+
   cardSelected = '';
   hideCommitCard(true);
   graphItems = [];
@@ -3657,3 +3692,44 @@ graphSyncEl.addEventListener('click', () => cardWrite('/api/sync', { repo: cardS
 graphPushEl.addEventListener('click', () => cardWrite('/api/push', { repo: cardSpec.repo.path }));
 // 全仓 diff 从卡片顶栏进：它浮在卡片之上，关掉回到卡片（不再占据“入口行”那样的对等地位）
 graphDiffEl.addEventListener('click', () => openDiff({ repo: currentRepo() }));
+
+// 新建工作树。成功后 cardWrite 会触发一次刷新，新条目以宿主为锚插入，不需要重开会话
+graphWtAddEl.addEventListener('click', async () => {
+  const branch = graphWtBranchEl.value.trim();
+  if (!branch) return;
+  const out = await cardWrite('/api/worktree-add', {
+    repo: cardSpec.repo.path,
+    branch,
+    createBranch: true,
+  });
+  // runWrite 在“已有写操作在飞”时返回 null，这时这次点击根本没发出去。
+// 因此判据写成 !out || !out.error：不把用户填的分支名留在框里，
+// 否则他会再点一次，然后撞上 git 的 already exists
+  if (!out || !out.error) graphWtBranchEl.value = '';
+});
+// 回车等同点击：这一行只有一个输入框，回车是最顺手的手势
+graphWtBranchEl.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') graphWtAddEl.click();
+});
+
+// 删掉当前这棵工作树。工作树里若有未提交内容，git 会拒绝，这时再点一次才带 force。
+// 那一步是明确的确认，而不是默认就把人家的改动删掉——删除操作跑在宿主仓库里，
+// 因为 git 不接受从工作树内部删掉它自己
+let wtRemoveArmed = false;
+graphWtRemoveEl.addEventListener('click', async () => {
+  const path = cardSpec.repo.path;
+  const out = await cardWrite('/api/worktree-remove', {
+    repo: cardSpec.repo.worktreeOf || path,
+    path,
+    force: wtRemoveArmed,
+  });
+  if (out && out.error) {
+    if (!wtRemoveArmed) {
+      wtRemoveArmed = true;
+      graphWtRemoveEl.textContent = t('worktreeRemoveConfirm');
+    }
+    return;
+  }
+  wtRemoveArmed = false;
+  closeRepoCard();
+});
