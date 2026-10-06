@@ -108,6 +108,14 @@ type uiRepo struct {
 	// Group 是排序分组，由服务端算好，页面只按数组顺序渲染，不再自己排序——
 	// 排序规则只有一处实现，避免前后端各有一套而慢慢对不上
 	Group int `json:"group"`
+	// WorktreeOf 非空表示这是一棵工作树，值是宿主（主工作区）的路径。
+	// 页面据此把它的行归进宿主卡片，而不是当成另一张卡片
+	WorktreeOf string `json:"worktreeOf,omitempty"`
+	// WorktreeName 是工作树的展示名：分支名，或游离 HEAD 的短 SHA
+	WorktreeName string `json:"worktreeName,omitempty"`
+	// WorktreeState 非空表示这棵工作树已失效，取值见 worktreeState* 常量。
+	// 失效的条目 Files 为空、也不带 Error——它不是采集失败，是已经不存在了
+	WorktreeState string `json:"worktreeState,omitempty"`
 }
 
 // uiPayload 是 /api/repos 的响应体。
@@ -167,10 +175,20 @@ func collectUIPayload(ctx context.Context) *uiPayload {
 
 	repos := worker.Map(ctx, entries, Concurrency(), func(ctx context.Context, e RepoEntry) uiRepo {
 		r := uiRepo{
-			Name:        e.Name,
-			Path:        e.Path,
-			IsSubmodule: e.IsSubmodule,
-			Files:       []uiFile{},
+			Name:          e.Name,
+			Path:          e.Path,
+			IsSubmodule:   e.IsSubmodule,
+			WorktreeOf:    e.WorktreeOf,
+			WorktreeName:  e.WorktreeName,
+			WorktreeState: e.WorktreeState,
+			Files:         []uiFile{},
+		}
+
+		if e.WorktreeState == worktreeStateMissing {
+			// 目录已经不在了：采不了状态，也不该显示成“干净”。归到需要处理的那一档，
+			// 具体文案由页面的 WorktreeState 决定——它不是采集失败，是这棵工作树该清理了
+			r.Group = uiGroupFailed
+			return r
 		}
 
 		st, err := git.RunStatus(ctx, e.Path)
@@ -213,12 +231,36 @@ func collectUIPayload(ctx context.Context) *uiPayload {
 	})
 
 	// 排序：先按分组，再按仓库名。SliceStable 让顺序相同的仓库保持采集顺序，
-	// 因此即便两个仓库同名（不同父目录下的同名目录），顺序也仍然稳定
-	sort.SliceStable(repos, func(i, j int) bool {
-		if repos[i].Group != repos[j].Group {
-			return repos[i].Group < repos[j].Group
+	// 因此即便两个仓库同名（不同父目录下的同名目录），顺序也仍然稳定。
+	//
+	// 工作树的排序键取宿主的，而不是它自己的：它必须始终待在宿主身边。
+	// 若按自己的分组排，它一旦从干净变成有改动就会从宿主身边跳走——轮询是 5 秒一轮，
+	// 用户看到的就是整屏重排。取相同的键之后，SliceStable 会保持采集顺序，
+	// 而采集顺序里工作树本来就紧跟宿主（见 appendWorktrees）
+	hostByPath := make(map[string]uiRepo, len(repos))
+	for _, r := range repos {
+		if r.WorktreeOf == "" {
+			hostByPath[r.Path] = r
 		}
-		return repos[i].Name < repos[j].Name
+	}
+	sortKey := func(r uiRepo) (int, string) {
+		if r.WorktreeOf == "" {
+			return r.Group, r.Name
+		}
+		// 宿主没被采集到时（宿主自身在去重中被剔除等）退回自己的键，
+		// 至少还能按自己的状态排到一个确定位置
+		if host, ok := hostByPath[r.WorktreeOf]; ok {
+			return host.Group, host.Name
+		}
+		return r.Group, r.Name
+	}
+	sort.SliceStable(repos, func(i, j int) bool {
+		gi, ni := sortKey(repos[i])
+		gj, nj := sortKey(repos[j])
+		if gi != gj {
+			return gi < gj
+		}
+		return ni < nj
 	})
 
 	if repos == nil {

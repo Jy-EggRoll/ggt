@@ -1,7 +1,13 @@
-// repos.go 定义 ggt 对“仓库”的统一抽象，以及唯一一处子模块发现逻辑。
-// 设计原则：子模块逻辑完全抽离到此文件，除 discoverSubmodules / expand 之外，
-// 任何业务命令都不再编写子模块专属代码——子模块在 ggt 眼里就是“另一个仓库”，
-// 只是带一个 IsSubmodule 标记用于展示时加 [子] 前缀、以及一个全局开关决定要不要包含它。
+// repos.go 定义 ggt 对“仓库”的统一抽象，以及唯一一处子模块与工作树的展开逻辑。
+// 设计原则：子模块与工作树逻辑完全抽离到此文件，除 discoverSubmodules / appendWorktrees /
+// expand 之外，任何业务命令都不再编写它们专属的代码——在 ggt 眼里两者都是“另一个仓库”，
+// 只是带标记用于展示与归属：子模块加 [子] 前缀，工作树跟随宿主。
+//
+// 子模块与工作树的区别，决定了它们在后端的表示方式不同：
+//   - 子模块是**归属关系**：父仓库的一个组成部分，嵌在父仓库内部，长期存在。
+//   - 工作树是**副本关系**：同一个仓库的另一份工作区，通常在仓库外部，随时增删。
+//
+// 共同点在于两者都有自己的工作区与索引，所以都必须作为独立条目参与采集。
 //
 // 子模块发现策略（性能优先）：
 //   - 通过解析 .gitmodules 文件获取子模块路径，而非启动 git 子进程，
@@ -34,7 +40,35 @@ type RepoEntry struct {
 	Name string
 	// IsSubmodule 标记该条目是否来自子模块。打印时据此决定加 [子] 前缀。
 	IsSubmodule bool
+	// WorktreeOf 非空时表示这个条目是一棵工作树，值为宿主（主工作区）的路径。
+	//
+	// 工作树以**独立条目**进入列表，而不是挂成宿主的子字段：ggt 的每个接口都按路径
+	// 定位，并把该路径直接当作 git 工作目录，所以工作树用自己的真实路径进来之后，
+	// diff / 暂存 / 提交 / 推送这些路径一行都不用改。挂成子字段则要为每个接口
+	// 重新实现一遍“先找宿主、再找子项”，而且每个工作区都有自己的索引，
+	// 跨路径的批量操作语义也会跟着变复杂。
+	WorktreeOf string
+	// WorktreeName 是工作树的展示名：在分支上取分支名，游离 HEAD 取短 SHA。
+	WorktreeName string
+	// WorktreeDetached 表示这棵工作树处于游离 HEAD。
+	// 采集层面它与普通条目没有区别，此字段只供展示层区分身份。
+	WorktreeDetached bool
+	// WorktreeState 描述这棵工作树是否还可用，取值见 worktreeState* 常量。
+	// 空字符串表示正常。已失效的条目不应当再被采集状态，否则每轮都失败，
+	// 页面上一片“采集失败”，而真实含义是“这棵工作树已经失效”。
+	WorktreeState string
 }
+
+// 工作树的可用状态。空字符串表示正常，其余取值由 worktreeState 判定。
+const (
+	// worktreeStateMissing 表示这棵工作树的目录已经不在。
+	// git 对“目录被删掉且没加锁”的工作树会报 prunable；但加锁之后删掉目录时，
+	// 实测 git 仍然只报 locked、不报 prunable，所以判定不能只看 prunable
+	worktreeStateMissing = "missing"
+	// worktreeStateLocked 表示被 git worktree lock 锁住。
+	// 锁住的工作树不会被自动清理，因此它的目录删掉之后仍会长期留在列表里
+	worktreeStateLocked = "locked"
+)
 
 // discoverSubmodules 是全局唯一发现子模块的地方。
 // 通过解析 .gitmodules 文件获取子模块路径列表，无需启动 git 子进程。
@@ -129,12 +163,13 @@ func isSubmoduleInitialized(path string) bool {
 	return true
 }
 
-// expand 把“顶层仓库路径列表”展开为“顶层 + 子模块”的扁平条目列表。
+// expand 把“顶层仓库路径列表”展开为“顶层 + 子模块 + 工作树”的扁平条目列表。
 // ignoreSubmodules 为 true 时完全跳过子模块，是全局唯一控制“是否忽略子模块”的接口
-// （对应配置项 ignore_submodules）。
-// 返回的切片中，顶层仓库 IsSubmodule=false，子模块 IsSubmodule=true。
+// （对应配置项 ignore_submodules）。它**不**影响工作树——那是另一件事，该由别的开关管。
+// 返回的切片中，顶层仓库与工作树的 IsSubmodule=false，子模块为 true；
+// 工作树额外带 WorktreeOf / WorktreeName 表示归属。
 //
-// 子模块发现通过 worker.Map 并发执行（并发度取配置的 concurrency 值），
+// 子模块与工作树的发现都通过 worker.Map 并发执行（并发度取配置的 concurrency 值），
 // 尽管 .gitmodules 解析本身很快（<1ms），但递归发现嵌套子模块涉及文件系统 I/O，
 // 并发可进一步缩短总耗时。worker.Map 保证结果按原始顺序返回。
 func expand(ctx context.Context, topPaths []string, ignoreSubmodules bool) []RepoEntry {
@@ -148,28 +183,142 @@ func expand(ctx context.Context, topPaths []string, ignoreSubmodules bool) []Rep
 		})
 	}
 
-	if ignoreSubmodules {
-		return entries
-	}
-
-	// 第二步：并发发现所有顶层仓库的子模块。
-	subsForEach := worker.Map(ctx, topPaths, Concurrency(),
-		func(_ context.Context, top string) []string {
-			return discoverSubmodules(top)
-		})
-
-	// 第三步：按顺序将子模块条目追加到 entries 中。
-	for i, subs := range subsForEach {
-		for _, subRel := range subs {
-			entries = append(entries, RepoEntry{
-				Path:        filepath.Join(topPaths[i], subRel),
-				Name:        subRel,
-				IsSubmodule: true,
+	if !ignoreSubmodules {
+		// 第二步：并发发现所有顶层仓库的子模块。
+		subsForEach := worker.Map(ctx, topPaths, Concurrency(),
+			func(_ context.Context, top string) []string {
+				return discoverSubmodules(top)
 			})
+
+		// 第三步：按顺序将子模块条目追加到 entries 中。
+		for i, subs := range subsForEach {
+			for _, subRel := range subs {
+				entries = append(entries, RepoEntry{
+					Path:        filepath.Join(topPaths[i], subRel),
+					Name:        subRel,
+					IsSubmodule: true,
+				})
+			}
 		}
 	}
 
-	return entries
+	// 第四步：把各仓库的工作树追加进来。
+	return appendWorktrees(ctx, entries, topPaths)
+}
+
+// appendWorktrees 把各顶层仓库的工作树追加为独立条目，紧跟在自己的宿主之后。
+//
+// 紧跟宿主不是排版偏好，而是看板渲染的前提：看板按数组顺序铺卡片，卡片边界按
+// “同一个宿主的行”计算。工作树一旦排到远处，就会与宿主变成两张卡片，中间还会夹进
+// 别的仓库的行，看起来像平白多出一个仓库。
+//
+// 只对顶层仓库展开、不碰子模块：子模块里的工作树在 git 输出里报的第一条路径是
+// 父仓库的 .git/modules/... 而不是真实工作区路径，按字符串推不出归属——
+// 宁可不展开，也不能把归属展错。
+func appendWorktrees(ctx context.Context, entries []RepoEntry, topPaths []string) []RepoEntry {
+	// 探测与展开合成一个并发任务：先用一次 os.Stat 把绝大多数仓库挡掉（实测一批仓库里
+	// 通常只有个别几个建过工作树），探不到的连 git 进程都不启动
+	wtsForEach := worker.Map(ctx, topPaths, Concurrency(),
+		func(ctx context.Context, top string) []RepoEntry {
+			if !git.HasWorktrees(top) {
+				return nil
+			}
+			wts, err := git.ListWorktrees(ctx, top)
+			if err != nil {
+				// 工作树只是附加信息，拿不到就当这个仓库没有工作树，
+				// 不该让整个仓库发现流程失败
+				return nil
+			}
+			return worktreeEntries(top, wts)
+		})
+
+	// 按宿主归拢，避免在 entries 里边遍历边查找。
+	// 用 Path 而不是下标当键：下标会在后面重建列表时失效
+	byHost := make(map[string][]RepoEntry, len(topPaths))
+	for i, wts := range wtsForEach {
+		if len(wts) > 0 {
+			byHost[topPaths[i]] = wts
+		}
+	}
+	if len(byHost) == 0 {
+		return entries
+	}
+
+	// 重建列表顺便去重：配置里重复写同一个仓库时（GetRepoList 本身不去重），
+	// 展开会把它名下的工作树也重复一遍，而按路径定位的接口只认第一个匹配
+	result := make([]RepoEntry, 0, len(entries)+len(byHost))
+	seen := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		if seen[entry.Path] {
+			continue
+		}
+		seen[entry.Path] = true
+		result = append(result, entry)
+		for _, wt := range byHost[entry.Path] {
+			if seen[wt.Path] {
+				continue
+			}
+			seen[wt.Path] = true
+			result = append(result, wt)
+		}
+	}
+	return result
+}
+
+// worktreeEntries 把 git 报出的工作树转成仓库条目，跳过宿主自己。
+func worktreeEntries(host string, wts []git.Worktree) []RepoEntry {
+	var result []RepoEntry
+	for _, wt := range wts {
+		// 主工作区就是宿主自己（git 保证它排在第一位），不是额外的工作树。
+		// 比路径而不是比下标：语义更明确，也不依赖 git 的输出顺序
+		if filepath.Clean(wt.Path) == filepath.Clean(host) {
+			continue
+		}
+		name := worktreeDisplayName(wt)
+		result = append(result, RepoEntry{
+			Path:             wt.Path,
+			Name:             name,
+			WorktreeOf:       host,
+			WorktreeName:     name,
+			WorktreeDetached: wt.Detached,
+			WorktreeState:    worktreeState(wt),
+		})
+	}
+	return result
+}
+
+// worktreeState 判定一棵工作树是否还可用。
+//
+// 顺序上先看 git 报的 prunable，再用“目录是否存在”兜底：
+// 加锁之后把目录删掉时，实测 git 仍然只报 locked，不会报 prunable。
+// 少了这层兜底，那个已不存在的路径每轮都会被拿去跑一次 git status 并失败，
+// 页面显示成“采集失败”，而用户需要知道的其实是“这棵工作树已经失效、可以清掉了”。
+func worktreeState(wt git.Worktree) string {
+	if wt.Prunable {
+		return worktreeStateMissing
+	}
+	if _, err := os.Stat(wt.Path); err != nil {
+		return worktreeStateMissing
+	}
+	if wt.Locked {
+		return worktreeStateLocked
+	}
+	return ""
+}
+
+// worktreeDisplayName 取工作树的展示名。
+//
+// 在分支上用分支名而不是目录名：Agent 常把工作树建在 /tmp/xxx-wt/<随手起的名字> 这种
+// 与分支对不上的位置，目录名说明不了“它在做哪件事”。游离 HEAD 没有分支名可用，
+// 退回短 SHA，至少能跟提交对上。
+func worktreeDisplayName(wt git.Worktree) string {
+	if wt.Branch != "" {
+		return wt.Branch
+	}
+	if len(wt.Head) > 7 {
+		return wt.Head[:7]
+	}
+	return wt.Head
 }
 
 // AllRepos 按当前配置取全部仓库条目（含子模块，除非配置要求忽略）。
