@@ -52,7 +52,7 @@
      放在哪个容器下都不影响坐标）。把它独立成一层是为了让“换掉全部续段标识”变成
      一次 replaceChildren，而不是逐个增删——后者在几万行的看板上代价很大，见 app.js 的 layout -->
 <main id="board" aria-busy="true"><div id="cont-layer"></div></main>
-<p id="empty" hidden></p>
+<p id="empty"></p>
 <!--
   看板底栏，整宽固定在底部。左边是“数据多旧、这次采集花了多久”这行元信息，右边是看板层面的
   动作与它们的结果。
@@ -113,7 +113,7 @@
   盖住右下一角即可，背后该看的还能看（这也是 VSCode 通知中心的形态）。
   结构写死在 HTML 里：面板结构与数据无关，写在这里能让“页面上有哪几个可聚焦元素”一眼看全
 -->
-<div id="notif-center" hidden>
+<div id="notif-center">
   <header>
     <span id="notif-title"></span>
     <button id="notif-clear-all" class="btn btn--secondary" type="button"></button>
@@ -218,7 +218,7 @@
   提交详情卡：鼠标移到泳道图上某条提交时贴着光标出现，点一下即固定（固定之后不随鼠标移动消失）。
   它挂在 body 上而不是卡片内部：定位要跟光标走，放在有 transform/overflow 的容器里会被裁掉
 -->
-<div id="graph-popup" class="hovercard" hidden></div>
+<div id="graph-popup" class="hovercard"></div>
 <!--
   行内 diff 的引擎：收编自 VSCode 的 diff 算法，来源、许可证与再生成步骤见该文件抬头。
   它必须排在 app.js 之前——app.js 是经典脚本，到这一行就同步执行，它算行内高亮时要用这个文件

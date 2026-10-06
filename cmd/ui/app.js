@@ -308,6 +308,59 @@ function cssVar(name, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+// motionEasing 读样式表里的缓动曲线，原样交给 Web Animations API。
+// 与 cssVar 分开是因为后者要 parseFloat 成数字、只适合长度；曲线是 cubic-bezier(...) 这样的
+// 字符串，写死一份在本文件里就等于把动效参数抄成了两处
+function motionEasing(name, fallback) {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name);
+  return raw.trim() || fallback;
+}
+
+// motionMs 读样式表里的时长令牌并转成毫秒数（Web Animations API 的 duration 要数字）。
+//
+// 实现就是 cssVar——两者都只是把自定义属性 parseFloat 一下。分成两个名字是因为校对去处不同：
+// cssVar 读布局长度，回退值到样式表里的“数字 + px”声明中校对（错开会让列高少算一截，
+// 症状只是最后一行卡片被底栏压住，不报任何异常）；motionMs 读时长，回退值到“数字 + ms”
+// 声明中校对。两类令牌各校各的，混在一起会让那条测试报出“无从校对”
+function motionMs(name, fallback) {
+  return cssVar(name, fallback);
+}
+
+// reduceMotion 是系统“减少动态效果”偏好。页面里所有由 JS 驱动的动画都要先问它一句：
+// CSS 那一侧由样式表末尾的 @media 段落负责，两处必须成对维护——关掉了 CSS 动画却仍由 JS
+// 播一段，等于降级只做了一半
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+// fadeIn 让一段刚换上的内容淡入，避免内容“啪”一下跳变。
+//
+// 为什么用 Web Animations API，而不是“加个类、靠 CSS 动画重放”：类没变时 CSS 动画不会重放，
+// 想重放就得先读一次布局属性（例如 offsetWidth）把样式强制结算一遍，而 diff 正文可能有上万行，
+// 那一次结算的代价不小。WAAPI 每次调用都独立播一遍，也不触发样式结算
+//
+// 时长与曲线仍从样式表读，参数因此只有 style.css 一处定义（与 cssVar 同一路数）
+function fadeIn(el) {
+  if (reduceMotion.matches) return;
+  el.animate([{ opacity: 0 }, { opacity: 1 }], {
+    duration: motionMs('--dur-move', 180),
+    easing: motionEasing('--ease-decel', 'linear'),
+  });
+}
+
+// loadingBlock 造一个“正在读取”的占位：转动的圈加一行文字。
+// 文字复用既有的 diffLoading 键（中英各一条），不新增文案；它替代的是原来那句纯文字，
+// 让“还在跑、不是卡住了”看得出来
+function loadingBlock() {
+  const box = document.createElement('div');
+  box.className = 'loading';
+  const spinner = document.createElement('span');
+  spinner.className = 'loading-spinner';
+  spinner.setAttribute('aria-hidden', 'true');
+  const text = document.createElement('span');
+  text.textContent = t('diffLoading');
+  box.append(spinner, text);
+  return box;
+}
+
 // viewportSize 返回真实的视口尺寸（布局视口，CSS 像素）。
 //
 // 为什么不能直接用 window.innerWidth / innerHeight：页面内容一旦横向或纵向溢出，Chromium
@@ -1335,6 +1388,10 @@ function renderDiff(repo, spec, out) {
   }
 
   diffBodyEl.innerHTML = blocks.join('');
+  // 正文换上来时淡入：它可能一下换成上千行，硬切就是一整片的跳变。
+  // 只让新内容淡入，不给上面那个占位做淡出——占位是被整块替换掉的，让它淡出就得与替换抢时序，
+  // 反而容易闪
+  fadeIn(diffBodyEl);
 }
 
 // diffSpec 是覆盖层当前展示的那一行（仓库 + 可选文件）。
@@ -1352,7 +1409,9 @@ const draftMsg = new Map();
 async function loadDiff() {
   const spec = diffSpec;
   const seq = ++diffSeq;
-  diffBodyEl.textContent = t('diffLoading');
+  // 取数期间摆一个“正在读取”的占位（转动的圈加一行文字），而不是原来那句静止的“加载中”：
+  // 这里正是本地接口也可能要等一会儿的地方，一个在动的指示能说明“还在跑、不是卡住”
+  diffBodyEl.replaceChildren(loadingBlock());
 
   const params = new URLSearchParams({ repo: spec.repo.path });
   if (spec.file) params.set('file', spec.file.path);
@@ -1547,7 +1606,11 @@ function renderToasts() {
   // 清场：超限丢掉的那些、以及被清除掉的，元素都该离开容器
   const keep = new Set(notifItems.filter((it) => !it.dismissed).map((it) => it.el));
   for (const el of Array.from(notificationsEl.children)) {
-    if (!keep.has(el)) el.remove();
+    if (keep.has(el)) continue;
+    // 正在退场的元素交给 removeToastEl 自己收尾：在这里再摘一次，退场动画会当场断掉，
+    // 反而比不做动画更难看
+    if (el.classList.contains('notif--out')) continue;
+    el.remove();
   }
 }
 
@@ -1566,10 +1629,8 @@ function notify(text, severity) {
   while (notifItems.length > NOTIF_MAX) {
     const dropped = notifItems.shift();
     stopToastCountdown(dropped);
-    if (dropped.el) {
-      dropped.el.remove();
-      dropped.el = null;
-    }
+    // 被上限挤掉的那条也要淡出，不然整排通知会毫无征兆地少一条
+    dropToastEl(dropped);
   }
   renderToasts();
   // 面板开着的时候用户正看着，直接算已读；否则累加未读并在铃铛上显示
@@ -1625,11 +1686,54 @@ function startToastCountdown(item) {
 // 这也是本文件里 dismissed 与 removeNotif 两套动作并存的原因
 function dismissToast(item) {
   stopToastCountdown(item);
-  if (item.el) {
-    item.el.remove();
-    item.el = null;
-  }
   item.dismissed = true;
+  // 元素引用要与元素一起收掉，理由见 dropToastEl
+  dropToastEl(item);
+}
+
+// removeToastEl 把一条提示从右下角摘掉，摘之前先让它淡出。
+//
+// 为什么不是直接 el.remove()：硬切正好发生在用户刚做完一次写操作、目光会移过去的地方。
+//
+// 四条路径都走这里（收起、从历史里清除、被上限挤掉、全部清除），其中后两条是必须的：
+//   - 正常情况：加 .notif--out 触发退场动画，animationend 时摘除
+//   - 系统开了“减少动态效果”：样式表把那一段动画关掉了，animationend 因此永远不会来，
+//     此时直接摘除——只靠事件收尾的话，降级模式下通知会一条条永远留在屏幕上
+//   - 动画没跑起来时（元素此刻不可见、或被别的动作打断）animationend 同样不会来，
+//     再用一个略长于动画的定时器收尾。上限 50 条，漏一条不会成灾，但“通知消不掉”会被看见
+function removeToastEl(el) {
+  if (!el) return;
+  if (reduceMotion.matches) {
+    el.remove();
+    return;
+  }
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    el.removeEventListener('animationend', onEnd);
+    el.remove();
+  };
+  // 只认这条通知自己的动画：animationend 会冒泡，直接挂在整条元素上意味着日后往通知里放一个
+  // 自带动画的子元素时，子元素先结束的那次事件会把整条通知提前摘掉，退场动画当场断掉
+  const onEnd = (e) => {
+    if (e.target === el) finish();
+  };
+  el.addEventListener('animationend', onEnd);
+  // 退场动画是 100ms，这里给 400ms：正常情况下它在动画结束时就已经先跑掉了
+  setTimeout(finish, 400);
+  el.classList.add('notif--out');
+}
+
+// dropToastEl 收掉某条通知在右下角的元素，并切断条目对它的引用。
+//
+// 四条路径都必须成对做这两件事：只收元素而不切断引用，renderToasts 的清场会按 item.el 把它
+// 认成“还该在屏幕上”的那一条、又 append 回容器，退场动画做到一半被拽回去；
+// 只切断引用而不收元素，它会一直留在屏幕上
+function dropToastEl(item) {
+  const el = item.el;
+  item.el = null;
+  removeToastEl(el);
 }
 
 // removeNotif 从历史里彻底清掉一条：面板里那一行的 × 与“全部清除”走这条。
@@ -1642,10 +1746,8 @@ function removeNotif(item) {
   if (i === -1) return;
   notifItems.splice(i, 1);
   stopToastCountdown(item);
-  if (item.el) {
-    item.el.remove();
-    item.el = null;
-  }
+  // 与 dismissToast 同一处理：从历史里清掉时，屏幕上那条也应该淡出而不是硬消失
+  dropToastEl(item);
   renderToasts();
   renderBell();
   renderNotifCenter();
@@ -1701,7 +1803,9 @@ function renderNotifCenter() {
 // 收起时回铃铛（否则焦点掉在 body 上，下一次 Tab 从页首开始）
 function openNotifCenter() {
   notifCenterOpen = true;
-  notifCenterEl.hidden = false;
+  // 显隐改由 .open 类驱动（样式表里配了进出场过渡）：hidden 属性会让元素当场离开渲染树，
+  // 退场动画因此没机会播
+  notifCenterEl.classList.add('open');
   // 打开即视为已读：面板里已经能看到全部内容，铃铛上再挂个数字只会让人以为还有没看的
   notifUnread = 0;
   renderBell();
@@ -1714,7 +1818,7 @@ function openNotifCenter() {
 function closeNotifCenter(returnFocus) {
   if (!notifCenterOpen) return;
   notifCenterOpen = false;
-  notifCenterEl.hidden = true;
+  notifCenterEl.classList.remove('open');
   if (returnFocus) bellEl.focus();
 }
 
@@ -1725,12 +1829,13 @@ bellEl.addEventListener('click', () => {
 
 notifClearAllEl.addEventListener('click', () => {
   for (const item of notifItems) {
-    if (item.el) {
-      item.el.remove();
-      item.el = null;
-    }
+    // 全部清除是一次清掉一整排，逐条淡出比整块瞬间消失平稳
+    dropToastEl(item);
   }
   notifItems.length = 0;
+  // 与另外三条路径一样重绘一次：清场会跳过正在退场的元素（见 renderToasts 里的那条判断），
+  // 不会把动画打断，这样“容器里装的就是正在管理的通知”在四条路径上都成立
+  renderToasts();
   notifUnread = 0;
   renderBell();
   renderNotifCenter();
@@ -2305,6 +2410,9 @@ document.addEventListener('keydown', (e) => {
 
 // ——— 主循环 ———
 
+// boardShown 记录看板是否已经画过第一份数据：只用来决定要不要做那一次首屏淡入（见 render）
+let boardShown = false;
+
 // render 把一份仓库数据画到页面上。与取数分开，是为了图标主题晚一步就绪时
 // 可以拿同一份数据重画一次，而不必再打一次接口
 function render(repos) {
@@ -2317,9 +2425,19 @@ function render(repos) {
 
   if (repos.length === 0) {
     emptyEl.textContent = t('noRepos');
-    emptyEl.hidden = false;
+    // 用类而不是 hidden 属性切换（样式表里配了淡入淡出）：空状态是一整块文字，硬切很突兀
+    emptyEl.classList.add('show');
   } else {
-    emptyEl.hidden = true;
+    emptyEl.classList.remove('show');
+  }
+
+  // 首屏第一份数据画上去时让整块看板淡入。在此之前页面是空的（aria-busy 期间），
+  // 一屏卡片“啪”地出现是整页最明显的一次跳变。
+  // 只在第一次做：之后每 5 秒的轮询刷新走的是行位移过渡（reconcile 与 layout 那套），
+  // 本身已经是平滑的，再叠一层淡入会让每次轮询都闪一下
+  if (!boardShown) {
+    boardShown = true;
+    fadeIn(board);
   }
 }
 
@@ -2382,7 +2500,7 @@ prefersLight.addEventListener('change', () => {
 // 降到 0，归一化位置 p(u) = 2u - u²（u 为已过时长占比），起手最快、结尾干脆停住。
 // 每个滚轮事件都从“当前位置”重起一段曲线（Slint 本身就是这个行为，不是缺陷），
 // 并先按一个标称帧推进一次，保证即使下一帧还没到，拨动当帧也立刻有反馈
-const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+// reduceMotion 定义在文件靠前的常量区：这里的平滑滚动与 fadeIn 等 JS 驱动的动画共用它
 let scrollAnim = null;
 let scrollRaf = 0;
 
@@ -2781,7 +2899,11 @@ function renderGraphRows() {
     frag.appendChild(tail);
   }
 
+  // 只有从“正在读取”的占位换成真内容时才淡入（也就是首次填充）。
+  // 续取时这里同样整表重建，但前面的行位置不动、只是尾部接上一批，再淡入一次会让整块图闪一下
+  const fromLoading = !!(graphListEl.firstElementChild && graphListEl.firstElementChild.classList.contains('loading'));
   graphListEl.replaceChildren(frag);
+  if (fromLoading) fadeIn(graphListEl);
   graphCountEl.textContent = graphTotal > 0 ? t('graphCount', { shown: graphItems.length, total: graphTotal }) : '';
 }
 
@@ -2811,6 +2933,9 @@ async function loadGraph(more) {
     if (seq !== cardSeq || !cardOpen) return;
     if (data.error) {
       setGraphOp(data.error, true);
+      // 失败时把占位撤掉：留着一个“正在读取”的圈在转，会让人以为还在等，而它已经不会来了。
+      // 错误原话在上面的状态行里，列表空着才是此刻该有的样子
+      graphListEl.replaceChildren();
       return;
     }
 
@@ -2830,7 +2955,11 @@ async function loadGraph(more) {
     graphStateEl.textContent = repoStateText(repo);
     renderGraphRows();
   } catch (err) {
-    if (seq === cardSeq) setGraphOp(err.message, true);
+    if (seq === cardSeq) {
+      setGraphOp(err.message, true);
+      // 与上面 data.error 那条同理：占位不能留在一个已经失败的请求上
+      graphListEl.replaceChildren();
+    }
   }
 }
 
@@ -2896,7 +3025,9 @@ function openRepoCard(spec) {
   graphLimit = 0;
   graphCountEl.textContent = '';
   setGraphOp('');
-  graphListEl.replaceChildren();
+  // 先摆上“正在读取”的占位：/api/log 要跑一次 git log，仓库大时不是瞬时的，
+  // 列表空着会让人以为这个仓库没有提交
+  graphListEl.replaceChildren(loadingBlock());
 
   cardOpen = true;
   graphEl.classList.add('open');
@@ -3006,7 +3137,7 @@ function hideCommitCard(force) {
   cardPinned = false;
   if (hoverCardTimer) clearTimeout(hoverCardTimer);
   hoverCardTimer = null;
-  graphPopupEl.hidden = true;
+  graphPopupEl.classList.remove('open');
   graphPopupEl.classList.remove('pinned');
   // 收起时记住指针位置：卡片一消失，指针下方的元素就换成泳道图的行，浏览器会就地补派一次
   // mouseover 给新元素——那一处坐标与这里几乎相同，据此把它挡掉（见 hoverSuppressAt 的说明）
@@ -3018,7 +3149,10 @@ function hideCommitCard(force) {
 function showCommitCard(vm, x, y, pinned) {
   cardPinned = !!pinned;
   graphPopupEl.classList.toggle('pinned', cardPinned);
-  graphPopupEl.hidden = false;
+  // 显隐改由 .open 类驱动：hidden 属性会让元素当场离开渲染树，退场淡出因此没机会播。
+  // 样式表那边同时把“没有 .open 时不接收指针事件”写死了，退场的那 100ms 里鼠标点不到它——
+  // 这与 hoverSuppressAt 那段要处理的是同一件事，两边配合才成立，不能只留其中一个
+  graphPopupEl.classList.add('open');
 
   const cached = commitCardCache.get(vm.item.hash);
   graphPopupEl.replaceChildren(renderCommitCard(vm, cached || null, cardPinned));
@@ -3031,7 +3165,7 @@ function showCommitCard(vm, x, y, pinned) {
     .then((res) => res.json())
     .then((data) => {
       // 用户可能已经移到别的提交、或把卡片收起来了：只在卡片还开着时补内容
-      if (seq !== hoverSeq || graphPopupEl.hidden) return;
+      if (seq !== hoverSeq || !graphPopupEl.classList.contains('open')) return;
       const files = data && !data.error ? data : null;
       if (!files) return;
       commitCardCache.set(vm.item.hash, files);

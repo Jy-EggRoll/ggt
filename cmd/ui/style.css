@@ -118,9 +118,29 @@
   --line-tight: 1.4;
   --line-relaxed: 1.6;
 
-  /* 动效三条时长各管一类：颜色 100ms、位移 180ms（与 app.js 滚轮的 180ms 同一时间感）、
-     无限循环的进度类动画 900ms。曲线用近似的等减速——别拿 ease 做位移，它的加速段会让
-     “卡片滑到新位置”看起来犹豫 */
+  /* 动效由三档时长与一条曲线构成，全页面只有这一份定义。
+     三档各管一类变化，新增动画一律往这三档里归，不另开数值：
+       --dur-fast  100ms  颜色一类的表面变化，以及所有退场
+       --dur-move  180ms  进场与位移（与 app.js 滚轮那条 180ms 同一时间感）
+       --dur-slow  900ms  无限循环的进度类动画
+
+     退场为什么复用 100ms 而不单开一档：Fluent 2 的时长档里 durationFaster 就是 100ms
+     （packages/tokens/src/global/durations.ts），而 VSCode 自己的浮层进退是 250ms / 150ms、
+     比例 0.6，按本页 180ms 的进场折算得 108ms——两个来源都落在 100ms 上下。退场比进场快也是
+     两家的共同做法：进场要让人看清是什么出现了，退场只要不突兀
+
+     曲线只有一条。它的实际性质是“缓起、中段走完大部分、尾段拖得很长”：实测起点速度约 0.02、
+     终点速度为 0，并不是等减速。别拿 ease 做位移——它的加速段会让“卡片滑到新位置”看起来犹豫。
+     下面三个上游取值一并留档，免得日后有人想换曲线时再查一遍：
+       VSCode 浮层进出   cubic-bezier(0.22, 1, 0.36, 1)，起点速度 4.54，起手最快、结尾缓停
+                         （src/vs/base/browser/ui/contextview/contextview.ts）
+       Fluent 2          curveDecelerateMid(0, 0, 0, 1) 与 curveAccelerateMin(0.8, 0, 0.78, 1)
+                         （packages/tokens/src/global/curves.ts）
+       app.js 滚轮        p(u) = 2u − u²，起点速度 2，同样是起手最快、结尾缓停
+
+     没有换成 VSCode 那条，原因是它的起手速度是现用曲线的两百多倍，换掉就等于把所有已有位移
+     动画改成“一开场就冲出去”，而本项目的取舍是保住既有手感。页面内部是否统一，最终只由
+     这一条曲线决定，因此新增动画一律复用 --ease-decel，不引入第二条 */
   --dur-fast: 100ms;
   --dur-move: 180ms;
   --dur-slow: 900ms;
@@ -253,6 +273,16 @@
   border-color: var(--card-border);
 }
 .btn--secondary:hover { background: var(--btn-secondary-hover-bg, var(--hover-bg)); }
+/* 按下态：底色在悬停色上再向文字色靠一档。缺了它，按下与悬停是同一种反馈，“这一下到底点中没有”
+   只能靠结果去猜。按下色由悬停色派生、不另取令牌：上游的按钮令牌只有常态与悬停两档，
+   自拟一个新的颜色令牌等于在主题里多加一个没人维护的键。
+   两条规则都写在 :hover 之后：specificity 相同，靠顺序压住悬停色才生效 */
+.btn--primary:active {
+  background: color-mix(in srgb, var(--btn-hover-bg, var(--btn-bg)) 80%, var(--text));
+}
+.btn--secondary:active {
+  background: color-mix(in srgb, var(--btn-secondary-hover-bg, var(--hover-bg)) 80%, var(--text));
+}
 /* 禁用不用 opacity：浅色主题下半透明的蓝底会把文字糊掉，而上游有专门的禁用前景令牌 */
 .btn:disabled,
 .btn:disabled:hover {
@@ -263,8 +293,11 @@
 }
 
 /*
- * 浮层结构：#graph（仓库卡片）与 #diff 共用——两者是同一类东西（浮在看板之上的一张卡片），
- * 差别只在层级与内容。几何、底色、圆角、阴影、标题栏都收在这里，两处不再各写一份
+ * 浮层结构：#diff（diff 视图）、#graph（提交图）与 #settings（设置面板）共用——三者是同一类
+ * 东西（浮在看板之上的一张卡片），差别只在层级与内容。几何、底色、圆角、阴影、标题栏都收在
+ * 这里，三处不再各写一份
+ *
+ * 显隐由 .open 类驱动（app.js 只切这个类与 aria-hidden），进出场动画也在下面一起定义
  */
 .overlay {
   position: fixed;
@@ -273,8 +306,29 @@
      底边再额外让出一条底栏的高度：底栏现在压在浮层之上（见 #tools 的层级），不让的话
      卡片最下面一行会被它盖住 */
   inset: var(--overlay-inset) var(--overlay-inset) calc(var(--overlay-inset) + var(--statusbar-h));
-  display: none;
+  /* 常驻元素 + 过渡，而不是 display: none 一刀切。原因是 display 从 flex 变回 none 会让元素
+     当场离开渲染树，退场动画在物理上没机会播——只有进场能看见，退场永远是硬切。
+     visibility 是离散属性但可以参与过渡（配一个延迟切换），于是“动画播完那一刻才真正隐藏”
+     交给 CSS 自己完成，不需要 JS 定时器，也就没有“动画没播完就被摘掉”这类竞态。
+     visibility: hidden 的元素不绘制、不接收指针事件、也不进无障碍树，与 display: none 的差别
+     只在于它仍占布局位置——而浮层是 fixed + inset，不参与看板布局，这一点没有任何影响 */
+  display: flex;
   flex-direction: column;
+  visibility: hidden;
+  opacity: 0;
+  /* 缩放的起止幅度取自 VSCode 原版：进场从 0.97 起、退场收到 0.99（见 contextview.ts 的
+     CONTEXT_VIEW_MENU_MOTION_*）。进退不对称是有意的——进场要让人看清是什么出现了，
+     退场只要不突兀，收缩幅度因此小得多 */
+  transform: scale(0.97);
+  /* 非打开态一律不接收指针事件：退场那 100ms 里元素仍然可见，不关掉的话它会挡住看板，
+     用户想点下面的行会点在一条正在淡出的浮层上 */
+  pointer-events: none;
+  /* 退场走 --dur-fast（100ms，依据见 :root 的动效段注释）；visibility 延迟到 100ms 之后才切，
+     让淡出真的播完 */
+  transition:
+    opacity var(--dur-fast) ease,
+    transform var(--dur-fast) var(--ease-decel),
+    visibility 0s linear var(--dur-fast);
   /* 浮层底色取 editorWidget.background：VSCode 的浮层用它，比 editor.background 略亮，
      正好把卡片从底下的看板里“抬”起来 */
   background: var(--panel-bg, var(--bg));
@@ -286,15 +340,16 @@
   overflow: hidden;
 }
 .overlay.open {
-  display: flex;
-  /* 入场动效：淡入加极轻微的放大，是 Fluent 浮层打开的标志性观感；
-     时长与曲线与行位移同一条（--dur-move / --ease-decel），页面里不会出现第二种时间感。
-     display 从 none 切到 flex 会重启动画，因此每次打开都会播一次，无需额外的类来触发 */
-  animation: overlay-in var(--dur-move) var(--ease-decel);
-}
-@keyframes overlay-in {
-  from { opacity: 0; transform: scale(0.985); }
-  to { opacity: 1; transform: none; }
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  /* 进场走 --dur-move（180ms）。时长与曲线与行位移同一条（--ease-decel），页面里不会出现
+     第二种时间感。打开时 visibility 立即生效（0s，不带延迟），否则进场要从头等 100ms */
+  transition:
+    opacity var(--dur-move) var(--ease-decel),
+    transform var(--dur-move) var(--ease-decel),
+    visibility 0s;
 }
 .overlay > header {
   flex: none;
@@ -310,14 +365,39 @@
 /* 浮层背后的遮罩层：类由 app.js 的 syncScrollLock 切换（与滚动锁同一处，免得出现“层关了、
    模糊还留着”）。放在 body 上而不是浮层内部：负 z-index 的后代会被父元素自己的背景盖住，
    backdrop-filter 模糊到的就是那块不透明的底色，等于没模糊；放在 body 上背后才是真正的看板。
-   模糊只给 2px：再强一点看板就被糊成一片色块，“透视”的意思就没了 */
-body.overlay-open::before {
+   模糊只给 2px：再强一点看板就被糊成一片色块，“透视”的意思就没了
+
+   与浮层同一套显隐机制（常驻 + visibility 过渡）。不这样处理的话，浮层淡出 100ms 而遮罩
+   一刀切，画面会出现“卡片还在淡出、背后的模糊已经没了”的断层。时长与浮层逐条对齐：
+   进场 180ms、退场 100ms，visibility 同样延迟到退场结束才切 */
+body::before {
   content: "";
   position: fixed;
   inset: 0;
   z-index: var(--z-scrim);
   background: var(--scrim-bg);
   backdrop-filter: blur(var(--scrim-blur));
+  opacity: 0;
+  visibility: hidden;
+  /* 收起态不接收指针事件：这条遮罩盖住整个视口，退场那 100ms 里它还在渲染，
+     但点击已经该让给看板了（收起后 visibility 会变成 hidden，那时它本来就不接收，
+     这一行管的是退场途中）。打开态必须另行收回，见下面那条规则 */
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) ease,
+    visibility 0s linear var(--dur-fast);
+}
+body.overlay-open::before {
+  opacity: 1;
+  visibility: visible;
+  /* 打开时必须收回指针事件：这条遮罩比浮层大一圈（浮层的 inset 四周各留 --overlay-inset，
+     露出一圈看板），旧写法没有声明 pointer-events、默认就是接收，于是浮层打开时那圈带子上的
+     点击被遮罩吃掉。只关基态而这里不收回的话，点那圈带子会穿透到看板的行上、在已有浮层的
+     情况下又开一层，而新开的那层 z-index 更低、被压在下面，用户要关掉当前浮层才会发现 */
+  pointer-events: auto;
+  transition:
+    opacity var(--dur-move) var(--ease-decel),
+    visibility 0s;
 }
 
 * { box-sizing: border-box; }
@@ -668,22 +748,61 @@ body {
   position: fixed;
   inset: 0;
   margin: 0;
+  /* 改成常驻 + .show 类驱动，而不是靠 [hidden] 属性。两个原因：
+     一是原来的写法要求“基础规则里绝不能写 display: flex”，否则 [hidden] 的 UA 规则会被作者
+     样式盖过、本元素即使隐藏也照旧铺满全屏——这种约束靠记性维持，改一次就错一次；
+     二是 display 一刀切看不到退场，而它出现与消失的都是整块内容，硬切很突兀
+     常驻写法带来的老问题要重新防一次：它带着 inset: 0，铺满全屏，处于显示态时如果不接收
+     指针事件就没人点得动看板（表现为“点了没反应”，控制台也不报错）——这里与原设计保持一致，
+     显示时接收（文字可以选中复制），隐藏时彻底放开 */
+  display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-dim);
   font-size: 14px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-move) var(--ease-decel),
+    visibility 0s linear var(--dur-move);
+}
+#empty.show {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity var(--dur-move) var(--ease-decel),
+    visibility 0s;
 }
 
 /*
- * 只在没有 hidden 属性时才铺满全屏。
- * 不能把 display: flex 直接写进上面那条规则：[hidden] 的 UA 规则（display: none）会被
- * 任何作者样式的 display 声明盖过，于是本元素即使 hidden 也照旧铺满全屏——它带着 inset: 0，
- * 于是静默地吞掉整页的点击（表现为“点了没反应”，控制台也没有报错）。
- * 这一条是补上的：本轮新增“点行看 diff”之后才暴露出来。此前看板上没有任何可点的东西，
- * 覆盖全屏也碍不着谁，因此一直没被发现
+ * 取数期间的占位：一小段文字配一个转动的圈，由 app.js 在等接口返回时摆上（见 loadingBlock）。
+ * 它替代的是原来那句纯文字：等 diff、等提交图都是唯一一次“页面上什么都没有”的时刻，
+ * 给一个明确在动的指示，比一行静止的“加载中”更能说明“还在跑，不是卡住了”
  */
-#empty:not([hidden]) {
+.loading {
   display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  color: var(--text-dim);
+}
+.loading-spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  /* 圈圈由“只给上边着色”做出来：四条边一条有颜色，转起来就是一个缺口 */
+  border: 2px solid color-mix(in srgb, var(--text-dim) 35%, transparent);
+  border-top-color: var(--text-dim);
+  border-radius: 50%;
+  /* 这是全页面唯一用 linear 的地方，且用对了：Fluent 2 官方对 linear 的说法是它“只在需要恒定
+     速率的场合才用，比如旋转”（fluent2.microsoft.design/motion）。时长走 --dur-slow，
+     也就是三档里专给无限循环动画的那一档 */
+  animation: loading-spin var(--dur-slow) linear infinite;
+}
+@keyframes loading-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* 底栏左侧的一行元信息：数据多旧、这次采集花了多久、以及出错原因。
@@ -872,6 +991,19 @@ body {
    作者样式一定压过浏览器默认表里的 [hidden]，不写这条的话铃铛上会一直挂着一个空徽标
    （实测就是这样：徽标里没有数字，却有一圈底色） */
 #bell-count[hidden] { display: none; }
+/* 未读数从 0 变有时弹一下：它贴在铃铛上，又正好是用户刚做完一次写操作会去瞄的地方，
+   直接蹦出来很突兀。缩放取 0.6 而不是浮层那些 0.97——它尺寸小，同样的收缩比例在小元素上
+   几乎看不出来。
+   收起不做退场动画、仍走 hidden 属性：徽标是按钮里的一个 flex 子项，改成常驻（opacity 那一套）
+   会让铃铛一直宽出一个徽标的宽度，底栏排布跟着变，那是可见的退步。而徽标收起只有
+   “点开通知中心”这一种场景，那时注意力已经在面板上，瞬间消失不会被察觉 */
+#bell-count:not([hidden]) {
+  animation: bell-in var(--dur-fast) var(--ease-decel);
+}
+@keyframes bell-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: none; }
+}
 .bell-icon {
   flex: none;
   display: block;
@@ -906,6 +1038,18 @@ body {
   line-height: var(--line-tight);
   box-shadow: var(--shadow-pop);
   animation: notif-in var(--dur-move) var(--ease-decel);
+}
+/* 退场：滑回右下并淡出，播完由 app.js 摘掉元素（见 removeToastEl）。
+   用 forwards 保持终态：动画结束到元素被摘掉之间还差一个 animationend 回调，
+   不保持的话那一瞬间会闪回原样。
+   退场期间不再接收指针事件：它正在消失，此刻点到它只会让人以为“点了没反应” */
+.notif--out {
+  pointer-events: none;
+  animation: notif-out var(--dur-fast) var(--ease-decel) forwards;
+}
+@keyframes notif-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(var(--sp-2)); }
 }
 .notif-icon {
   flex: none;
@@ -954,9 +1098,30 @@ body {
   box-shadow: var(--shadow-pop);
   font-size: var(--fs-sm);
   line-height: var(--line-tight);
+  /* 与 .overlay 同一套显隐机制（理由见那里）：常驻 + .open 类驱动，收起时也能淡出。
+     时长逐条对齐整页浮层（进场 180ms、退场 100ms）：它虽然只是一块面板，但和 diff、
+     提交图同属“用户主动点开、会停下来看的浮层”，页面里因此只有一套进退节奏 */
+  visibility: hidden;
+  opacity: 0;
+  /* 从右下角展开而不是整块凭空出现：它贴着铃铛，展开方向因此指向铃铛那一角 */
+  transform: scale(0.97);
+  transform-origin: bottom right;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) ease,
+    transform var(--dur-fast) var(--ease-decel),
+    visibility 0s linear var(--dur-fast);
 }
-/* 必须显式写：上面的 id 选择器比浏览器默认表里的 [hidden] 更具体，不写这条面板收不起来 */
-#notif-center[hidden] { display: none; }
+#notif-center.open {
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  transition:
+    opacity var(--dur-move) var(--ease-decel),
+    transform var(--dur-move) var(--ease-decel),
+    visibility 0s;
+}
 #notif-center > header {
   display: flex;
   align-items: center;
@@ -1003,16 +1168,7 @@ body {
 }
 #notif-empty[hidden] { display: none; }
 
-/* 尊重“减少动态效果”的系统设置：这类用户对位移动画敏感，动画会让界面难以使用。
-   滚轮那条平滑在这里管不到（它已改由 app.js 驱动），app.js 会用同一个媒体查询
-   把动画时长降为 0，两处必须保持一致 */
-@media (prefers-reduced-motion: reduce) {
-  .row, .cont { transition: none; }
-  /* 通知的入场位移也在这里关掉：这类用户对位移动画敏感，通知又是“随时可能冒出来”的东西 */
-  .notif { animation: none; }
-  /* 浮层的入场缩放同理：打开设置面板、diff 这类大浮层时，缩放动画对前庭敏感的用户最不友好 */
-  .overlay.open { animation: none; }
-}
+/*
 
 /*
  * ——— diff 视图 ———
@@ -1400,13 +1556,31 @@ pre.diff .meta { color: var(--text-dim); }
   box-shadow: var(--shadow-pop);
   font-size: var(--fs-sm);
   line-height: var(--line-relaxed);
-  /* 出现只做淡入、不做位移：跟手的卡片一旦有位移，快速划过一排提交时会看起来在抖 */
-  animation: hovercard-in var(--dur-fast) var(--ease-decel);
+  /* 与 .overlay 同一套显隐机制：常驻 + .open 类驱动，收起时也能淡出而不是硬消失。
+     只做淡入淡出、不做位移与缩放：这张卡跟着鼠标走，一旦有位移或缩放，快速划过一排提交时
+     它会看起来在抖
+     进也用 --dur-fast（100ms）而不是浮层那 180ms：它属于“跟着手出现”的一类，慢一拍就会
+     显得迟钝——每档时长对应哪一类变化，见 :root 的动效段注释
+     退场期间必须立刻不接收指针事件：鼠标此时往往已经移到下一行，不关掉的话点到的是这条
+     正在淡出的卡（见 app.js 里 hideCommitCard 对 hoverSuppressAt 的处理） */
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) ease,
+    visibility 0s linear var(--dur-fast);
 }
-/* 固定之后不再重复淡入，并用焦点色描一圈边表明“它现在是固定的” */
+.hovercard.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition:
+    opacity var(--dur-fast) var(--ease-decel),
+    visibility 0s;
+}
+/* 固定之后用焦点色描一圈边表明“它现在是固定的” */
 .hovercard.pinned {
   border-color: var(--focus-ring);
-  animation: none;
 }
 /*
  * 固定态的关闭按钮：固定之后卡片不再随鼠标移开而消失，它是这张卡唯一的可见出口
@@ -1451,10 +1625,6 @@ pre.diff .meta { color: var(--text-dim); }
 .icon-btn:hover {
   background: var(--toolbar-hover-bg, var(--hover-bg));
   color: var(--text);
-}
-@keyframes hovercard-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
 }
 .hovercard h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-md); }
 .hovercard dl {
@@ -1576,4 +1746,40 @@ pre.diff .meta { color: var(--text-dim); }
   width: 7px;
   height: 7px;
   border-radius: var(--radius-pill);
+}
+
+/*
+ * 尊重“减少动态效果”的系统设置：这类用户对位移动画敏感，动画会让界面难以使用。
+ * 滚轮那条平滑在这里管不到（它已改由 app.js 驱动），app.js 会用同一个媒体查询把动画时长降为 0，
+ * 两处必须保持一致
+ *
+ * 这一段必须留在样式表最末尾：它与被覆盖的那些规则权重相同，靠源码顺序取胜。放在中间的话，
+ * 任何定义在它后面的动画都照播不误，而且不报任何异常——提交详情卡的淡入淡出就这样漏过一回
+ */
+@media (prefers-reduced-motion: reduce) {
+  .row, .cont { transition: none; }
+  /* 通知的入场位移在这里关掉：这类用户对位移动画敏感，通知又是“随时可能冒出来”的东西。
+     .notif--out 必须一并关掉——退场动画没了，animationend 也就不会触发，而元素的摘除挂在
+     那个事件上，只是关掉入场的话，通知会一条条永远留在屏幕上（见 app.js 的 removeToastEl，
+     它在降级时改走直接摘除这条路） */
+  .notif, .notif--out { animation: none; }
+  /* 浮层、遮罩、通知中心、提交详情卡、空状态的新增过渡全部关掉。
+     它们的显隐都靠 visibility 的延迟切换，transition 一关，那个延迟也一并消失、显隐立刻生效，
+     这正是“减少动态效果”应有的行为。
+     按钮与图标按钮的底色渐变是本轮之前就有的，本轮新增的按下态踩在它上面，一并关掉，
+     降级模式下的反馈才是瞬时的。
+     整段列出而不是逐条挑：新增动画时一旦忘了这里，降级就会漏，而这类用户对位移动画敏感 */
+  .overlay, .overlay.open,
+  body::before, body.overlay-open::before,
+  #notif-center, #notif-center.open,
+  .hovercard, .hovercard.open,
+  #empty, #empty.show,
+  .btn, .icon-btn, .act { transition: none; }
+  /* 徽标的入场弹跳是 animation，与上面那组 transition 写的不是同一条属性。
+     选择器必须带上 :not([hidden])：入场动画那条是 #bell-count:not([hidden])（一个 id 加一个
+     属性选择器），权重比单个 #bell-count 高，这里不写全的话降级关不掉它 */
+  #bell-count:not([hidden]) { animation: none; }
+  /* 进度指示那一圈转动也停掉：它幅度虽小却一直在动，而持续运动正是这类用户最难受的一类。
+     文字那半仍在，加载状态因此不会失去提示 */
+  .loading-spinner { animation: none; }
 }
