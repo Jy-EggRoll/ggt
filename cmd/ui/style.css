@@ -265,8 +265,18 @@
     background-color var(--dur-fast) ease,
     color var(--dur-fast) ease,
     /* 次要态按钮有一道边框，禁用与恢复时它也会变，漏掉它那次变化是硬切换 */
-    border-color var(--dur-fast) ease;
+    border-color var(--dur-fast) ease,
+    /* 悬停缩放（见下面的 .btn:not(:disabled):hover）。几何变化走 --ease-decel，
+       与前面几条颜色不同：页面里所有位移与缩放共用这一条曲线 */
+    transform var(--dur-fast) var(--ease-decel);
 }
+/* 悬停时整体微微放大。只缩放、不位移：transform 不参与布局，按钮自身的位置与尺寸、相邻元素、
+   后面的文字全都不动，鼠标周围的版面不会因为悬停而变化。
+   幅度 1.03 的取舍：小到文字与图标不会发糊，又足够让人看出“这里能点”；再大（1.05 以上）
+   会让 .row .acts 里只隔 2px 的图标按钮互相压边。
+   走 --dur-fast 而不是位移那一档：它同属“鼠标划过的即时反馈”，慢了就像颜色追不上手
+   禁用态排除在外：禁用按钮不该有任何反馈（见下面的 .btn:disabled） */
+.btn:not(:disabled):hover { transform: scale(1.03); }
 .btn--primary {
   background: var(--btn-bg);
   color: var(--btn-fg);
@@ -1425,14 +1435,22 @@ pre.diff .meta { color: var(--text-dim); }
   /* 与 .btn 同一套时长：hover 与离开始终是硬切换的话，鼠标扫过一行按钮像在闪 */
   transition:
     background-color var(--dur-fast) ease,
-    color var(--dur-fast) ease;
+    color var(--dur-fast) ease,
+    /* 悬停缩放，幅度的取舍见 .btn:not(:disabled):hover */
+    transform var(--dur-fast) var(--ease-decel);
 }
 .row:hover .act { visibility: visible; }
 /* 分组行头上的整组动作常亮：它们不是“鼠标移到这一行才出现”的行内动作，而是这一组的常设入口 */
 .act.always { visibility: visible; }
-/* 图标按钮的 hover 取 toolbar.hoverBackground：它才是“工具条上的动作”那个语义，
-   行的 list.hoverBackground 是“列表行”的语义 */
-.act:hover { background: var(--toolbar-hover-bg, var(--hover-bg)); color: var(--text); }
+/* 行内动作按钮与图标按钮是同一类“工具条上的小动作”，悬停反馈逐条相同，因此共用一份声明：
+   分开写两遍的话，改一处就会漏另一处。底取 toolbar.hoverBackground：它才是“工具条上的动作”
+   那个语义，行的 list.hoverBackground 是“列表行”的语义 */
+.act:hover,
+.icon-btn:hover {
+  background: var(--toolbar-hover-bg, var(--hover-bg));
+  color: var(--text);
+  transform: scale(1.03);
+}
 
 /* 写操作进行中：禁止再点动作按钮（避免同一文件连点两次），并把光标换成进行中 */
 #board.busy { cursor: progress; }
@@ -1665,12 +1683,11 @@ pre.diff .meta { color: var(--text-dim); }
   /* 与 .btn 同一套时长，理由见 .act */
   transition:
     background-color var(--dur-fast) ease,
-    color var(--dur-fast) ease;
+    color var(--dur-fast) ease,
+    /* 悬停缩放，幅度的取舍见 .btn:not(:disabled):hover */
+    transform var(--dur-fast) var(--ease-decel);
 }
-.icon-btn:hover {
-  background: var(--toolbar-hover-bg, var(--hover-bg));
-  color: var(--text);
-}
+/* 悬停时的反馈（底色、颜色、缩放）与 .act 共用一份声明，见 .act:hover 处的理由 */
 .hovercard h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-md); }
 .hovercard dl {
   margin: 0 0 var(--sp-4);
