@@ -751,8 +751,8 @@ func writeUIDiffJSON(w http.ResponseWriter, out uiDiff) {
 //   - 失败原因一律把 git 的原话透给页面，不翻译成“操作失败”：push 失败可能是没 upstream、
 //     可能是网络、可能是权限，笼统的提示等于让用户自己去猜
 
-// uiWriteRequest 是四个写端点共用的请求体。
-// 不拆成四个结构：字段少且同名同义，拆开只会让前端多记几种形状
+// uiWriteRequest 是全部写端点共用的请求体。
+// 不按端点拆成多个结构：字段少且同名同义，拆开只会让前端多记几种形状
 type uiWriteRequest struct {
 	// Repo 是仓库绝对路径，必须与 /api/repos 返回的一致
 	Repo string `json:"repo"`
@@ -760,8 +760,15 @@ type uiWriteRequest struct {
 	File string `json:"file"`
 	// Message 是提交信息，仅提交使用
 	Message string `json:"message"`
-	// Branch 是分支名，仅切换分支使用
+	// Branch 是分支名：切换分支，以及新建工作树时用
 	Branch string `json:"branch"`
+	// Path 是工作树路径：新建时留空则由服务端推导，删除时必填
+	Path string `json:"path"`
+	// CreateBranch 为真时新建分支，为假时检出已有分支，仅新建工作树使用
+	CreateBranch bool `json:"createBranch"`
+	// Force 仅删除工作树使用：工作树里还有未提交内容时 git 默认拒绝删除，
+	// 加它才能删。前端必须把这一项做成一次明确的确认，不能默认打开
+	Force bool `json:"force"`
 }
 
 // uiWriteResult 是四个写端点的统一响应。
@@ -810,6 +817,44 @@ func (c *uiCache) handleWrite(w http.ResponseWriter, r *http.Request, run func(c
 		return
 	}
 	writeUIWrite(w, http.StatusOK, uiWriteResult{Output: out})
+}
+
+// handleWorktreeAdd 在目标仓库上新建一棵工作树。
+//
+// 目标路径默认由服务端推导（见 git.DefaultWorktreePath），前端只给分支名：
+// 路径规则只有一份实现，放在服务端。前端各拼一份的话两边迟早不一致，
+// 而症状是“界面说建在这里、实际建在别处”，这种分歧几乎不可能靠人工发现。
+func (c *uiCache) handleWorktreeAdd(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error) {
+		path := req.Path
+		if path == "" {
+			path = git.DefaultWorktreePath(repo.Path, req.Branch)
+		}
+		return git.AddWorktree(ctx, repo.Path, path, req.Branch, req.CreateBranch)
+	})
+}
+
+// handleWorktreeRemove 删掉一棵工作树。
+//
+// 路径必须显式给出，不按分支名去推：用户要删的是他看见的那一棵，
+// 而“同一个分支名在别的仓库下可能指向完全不同的目录”，推出来的路径未必是他指的那棵。
+func (c *uiCache) handleWorktreeRemove(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error) {
+		if strings.TrimSpace(req.Path) == "" {
+			return "", &uiParamError{
+				http.StatusBadRequest,
+				l10n.T("A worktree path is required", nil),
+			}
+		}
+		return git.RemoveWorktree(ctx, repo.Path, req.Path, req.Force)
+	})
+}
+
+// handleWorktreePrune 清掉目录已经不在的工作树记录。
+func (c *uiCache) handleWorktreePrune(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error) {
+		return git.PruneWorktrees(ctx, repo.Path)
+	})
 }
 
 // handleStage 暂存一个文件。
@@ -1149,6 +1194,11 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	// 另有各自的端点，见上面那几行
 	mux.HandleFunc("/api/log", cache.handleLog)
 	mux.HandleFunc("/api/commit-files", cache.handleCommitFiles)
+	// 工作树的增删与清理。删掉一棵还有未提交内容的工作树时 git 会拒绝，
+	// 除非明确带上 force——那个拒绝是保护而不是故障：那些内容不在任何提交里，删了就没了
+	mux.HandleFunc("/api/worktree-add", cache.handleWorktreeAdd)
+	mux.HandleFunc("/api/worktree-remove", cache.handleWorktreeRemove)
+	mux.HandleFunc("/api/worktree-prune", cache.handleWorktreePrune)
 	// 设置面板：GET 读全部配置项（由注册表投影而来），POST 写。
 	// 它不碰仓库，只读写配置文件，因此与上面那些端点没有共同前提
 	mux.HandleFunc("/api/settings", handleSettings(config.GetDefaultConfigPath()))
