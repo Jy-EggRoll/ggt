@@ -924,10 +924,11 @@ function layout(els, specs) {
 // “不做语法高亮”说的是不按语言着色，与行内（词级）高亮不冲突：后者只标出这一行里哪几个字符
 // 变了，颜色仍然取自主题的增删令牌，见下面“行内（词级）比对”一节。
 
-// diffOpen 为真表示覆盖层正打开。它同时关掉三件事，各自的理由不同：
-//   - 轮询：看板被盖住，刷了也没人看，而每次刷新都要让服务端为每个仓库起一趟 git
+// diffOpen 为真表示覆盖层正打开。它同时关掉两件事，理由都与刷新无关：
 //   - resize 重排：看板仍是“被盖住但仍在布局中”，尺寸没有变化，重排纯属白花
 //   - 滚轮转横向：覆盖层里滚轮应当滚动 diff 正文，被抢去滚看板会让 diff 滚不动
+// 轮询曾经也在这个列表里，理由是“看板被盖住，刷了也没人看”。那条已经删掉：
+// 看板被盖住时照样刷新，见下面“刷新心跳”一节
 let diffOpen = false;
 // 打开前的横向滚动位置。看板在覆盖层关闭后要回到用户刚才看的那一列，
 // 否则关掉 diff 会莫名跳回最左
@@ -955,13 +956,6 @@ function syncScrollLock() {
   const overlayOpen = anyOverlayOpen();
   document.documentElement.style.overflow = overlayOpen ? 'hidden' : '';
   document.body.classList.toggle('overlay-open', overlayOpen);
-}
-
-// resume 在浮层都关掉之后恢复看板：补一次取数（期间工作区可能已经变了）并恢复轮询
-function resume() {
-  if (anyOverlayOpen()) return;
-  refresh();
-  startPolling();
 }
 
 // diffLineClass 按行首字符判定这一行属于哪一类。
@@ -1348,7 +1342,9 @@ function diffFileSections(text, files) {
 // renderDiff 把 /api/diff 的响应画进覆盖层。
 // spec 是这次请求的那一行（仓库 + 可选文件 + 可选提交），只用于标题与“要不要提示未跟踪文件”，
 // 正文一律来自响应——页面不猜“应该有哪些改动”
-function renderDiff(repo, spec, out) {
+// auto 为真表示这次是心跳触发的后台更新（不是用户刚点开）：此时不淡入。
+// 滚动位置与用户的选区由 applyDiffUpdate 负责保住
+function renderDiff(repo, spec, out, auto) {
   const blocks = [];
   const file = spec.file || null;
 
@@ -1419,8 +1415,42 @@ function renderDiff(repo, spec, out) {
   diffBodyEl.innerHTML = blocks.join('');
   // 正文换上来时淡入：它可能一下换成上千行，硬切就是一整片的跳变。
   // 只让新内容淡入，不给上面那个占位做淡出——占位是被整块替换掉的，让它淡出就得与替换抢时序，
-  // 反而容易闪
-  fadeIn(diffBodyEl);
+  // 反而容易闪。
+  // 后台更新不淡入：那种更新每变一次就闪一下，而用户读的还是同一篇内容
+  if (!auto) fadeIn(diffBodyEl);
+}
+
+// applyDiffUpdate 是心跳里 diff 源的落笔处，三件事按顺序做：先看用户有没有正在拖选文字，
+// 再记住滚动位置，最后重绘并把位置放回去。
+// 少做哪一件，自动刷新对正在读 diff 的人都是纯破坏：每 5 秒把他弹回顶部、清掉他正要复制的
+// 选区，比不刷新更糟
+function applyDiffUpdate(out) {
+  const spec = diffSpec;
+  if (!spec || !diffOpen) return;
+  // 取数出错时保留已有正文：把用户正在读的 diff 换成一行报错，比不刷新更糟。
+  // 下一轮心跳若恢复正常会自己续上
+  if (out.error) return;
+
+  const sel = window.getSelection();
+  // 用户正在正文里拖选文字：这一轮跳过，下一个心跳自然重试（是推后，不是丢弃）
+  if (sel && !sel.isCollapsed && diffBodyEl.contains(sel.anchorNode)) return;
+
+  const top = diffBodyEl.scrollTop;
+  const height = diffBodyEl.scrollHeight;
+  renderDiff(spec.repo, spec, out, true);
+  // 等两帧再落位：正文里的 .diff-file 带着 content-visibility: auto，刚插进去时整段处于
+  // “跳过后排版”的状态，此刻 diffBodyEl.scrollHeight 只是个估算值——浏览器会按它先把
+  // scrollTop 夹紧，我们自己读到它也会把落位算错（实测 6650 被夹成了 111）。
+  // 读一次 offsetHeight 强制布局不管用：被跳过的段落不会被这一次读触发排版。
+  // 内容变短时按比例落位，变长时原地不动
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      diffBodyEl.scrollTop =
+        diffBodyEl.scrollHeight < height
+          ? Math.round((height > 0 ? top / height : 0) * diffBodyEl.scrollHeight)
+          : top;
+    });
+  });
 }
 
 // diffSpec 是覆盖层当前展示的那一行（仓库 + 可选文件）。
@@ -1442,23 +1472,32 @@ async function loadDiff() {
   // 这里正是本地接口也可能要等一会儿的地方，一个在动的指示能说明“还在跑、不是卡住”
   diffBodyEl.replaceChildren(loadingBlock());
 
-  const params = new URLSearchParams({ repo: spec.repo.path });
-  if (spec.file) params.set('file', spec.file.path);
-  if (spec.commit) params.set('commit', spec.commit.hash);
-
-  let out;
-  try {
-    const res = await fetch('/api/diff?' + params.toString(), { headers: authHeaders, cache: 'no-store' });
-    out = await res.json();
-    if (!res.ok && !out.error) out = { error: 'HTTP ' + res.status };
-  } catch (err) {
-    out = { error: err.message };
-  }
+  const out = await fetchDiff(spec);
 
   // 用户在响应到达之前按了 Esc（或又点开了别的）就把这次结果丢掉，
   // 否则会出现“已经回到看板却又被旧结果写了一次”
   if (seq !== diffSeq || !diffOpen || spec !== diffSpec) return;
   renderDiff(spec.repo, spec, out);
+  // 这一份已经画上去了，把指纹记到 diff 源上：紧接着的那轮心跳不必再重画一次
+  diffSource.fingerprint = JSON.stringify({ spec, out });
+}
+
+// fetchDiff 按 spec 取一次 diff 的原始数据。
+// 出错时返回 { error } 而不抛错：首次打开要能把错误写进正文（见 renderDiff 的错误分支），
+// 不能把“正在读取”的占位永远留在那里。与“画出来”分开，是因为心跳要反复取同一份，
+// 而取数不该带上打开的副作用（摆占位、改标题、抢焦点）
+async function fetchDiff(spec) {
+  const params = new URLSearchParams({ repo: spec.repo.path });
+  if (spec.file) params.set('file', spec.file.path);
+  if (spec.commit) params.set('commit', spec.commit.hash);
+
+  try {
+    const res = await fetch('/api/diff?' + params.toString(), { headers: authHeaders, cache: 'no-store' });
+    const out = await res.json();
+    return !res.ok && !out.error ? { error: 'HTTP ' + res.status } : out;
+  } catch (err) {
+    return { error: err.message };
+  }
 }
 
 // openDiff 打开某个仓库（file 为空 → 整个仓库）或某个文件的 diff。
@@ -1472,7 +1511,7 @@ async function openDiff(spec) {
   const shown = file ? (file.origPath ? file.origPath + ' → ' + file.path : file.path) : '';
   const scope = spec.commit ? shortHash(spec.commit.hash) : '';
   diffTitleEl.innerHTML =
-    '<span>' + esc(repo.name) + '</span>' +
+    repoNameHTML(repo) +
     (scope ? '<span class="dir"> ' + esc(scope) + '</span>' : '') +
     (shown ? '<span class="dir"> ' + esc(shown) + '</span>' : '');
   // 上一次的写操作结果属于上一个仓库，不该带到这次来
@@ -1485,7 +1524,6 @@ async function openDiff(spec) {
   diffEl.setAttribute('aria-hidden', 'false');
   // 看板仍是布局中的元素，只是被盖住；不锁住 html 的话滚轮与方向键还能滚它
   syncScrollLock();
-  stopPolling();
   diffBackEl.focus();
 
   await loadDiff();
@@ -1501,8 +1539,7 @@ function closeDiff() {
   syncScrollLock();
   diffBodyEl.textContent = ''; // 释放大 diff 占用的 DOM
   window.scrollTo(diffScrollX, 0);
-  // 覆盖层期间没有刷新过看板，关闭时补一次再恢复轮询（期间工作区可能已经变了）
-  resume();
+  // 这里不再补刷：看板在覆盖层期间一直跟着心跳在刷，本来就是最新的
 }
 
 // ——— 通知 ———
@@ -1945,7 +1982,9 @@ async function runWrite(path, body, show) {
     for (const el of writable) el.disabled = false;
     graphBranchEl.disabled = graphBranchEl.options.length === 0;
     fetchBtnEl.disabled = false;
-    refresh();
+    // 写操作之后所有源都该重取：看板、正开着的 diff、卡片的提交图都可能已经变了。
+    // 心跳本来每 5 秒就跑一次，这里补一次是为了让结果立刻可见，不必等下一轮
+    heartbeat();
   }
   return out;
 }
@@ -2329,7 +2368,6 @@ async function openSettings() {
   settingsEl.setAttribute('aria-hidden', 'false');
   // 视口锁与遮罩由 syncScrollLock 统一决定，这里不自己改样式
   syncScrollLock();
-  stopPolling();
   settingsBackEl.focus();
   await loadSettings();
 }
@@ -2340,7 +2378,6 @@ function closeSettings() {
   settingsEl.classList.remove('open');
   settingsEl.setAttribute('aria-hidden', 'true');
   syncScrollLock();
-  resume();
   if (settingsFocusReturn && settingsFocusReturn.focus) settingsFocusReturn.focus();
   settingsFocusReturn = null;
 }
@@ -2471,31 +2508,127 @@ function render(repos) {
   }
 }
 
-async function refresh() {
-  try {
-    const payload = await fetchRepos();
-    const repos = Array.isArray(payload.repos) ? payload.repos : [];
-    lastRepos = repos;
-    render(repos);
+// ——— 刷新心跳 ———
+//
+// 页面每 POLL_MS 走一轮心跳，把每条“数据源”重新取一遍。三条约定：
+//
+// 一是浮层不再停心跳。原先 diff、仓库卡片、设置一打开就 stopPolling，理由是“看板被盖住，
+// 刷了也没人看，而每次刷新要为每个仓库起一趟 git”。实测这条不成立：37 个仓库全量采集
+// 43.6ms，5 秒一次的占空比 0.87%。而这个项目的用途就是同时盯着多个 Agent 改仓库——
+// 打开 diff 审阅时看到的是旧内容，等于把最该看的那个东西冻住了。
+//
+// 二是新增面板不必再碰轮询代码。把取数与重绘注册成一条数据源即可；这里不再有
+// “哪个浮层开着就不刷”的分支——那种写法每加一个浮层就得补一次，漏一处就是
+// “打开某个面板就不刷新了”的毛病。
+//
+// 三是内容没变就不重绘。重绘会重置滚动位置、清掉用户正在拖选的文字，而绝大多数心跳拿到的
+// 数据与上一次完全相同。所以每条源记住上一次的指纹，一样就跳过。指纹直接用响应原文拼成的
+// 字符串：几 KB 到几十 KB 的量级，比它自己算 hash 更快，也少一层实现。
+const sources = [];
 
-    statusEl.classList.remove('error');
-    statusEl.textContent = t('updated', {
-      time: new Date(payload.generatedAt).toLocaleTimeString(),
-      ms: payload.durationMs,
-    });
-  } catch (err) {
-    // 失败时保留上一次的行不动（旧数据好过空白），只在角落里说明状态，
-    // 避免网络抖动就让整屏内容消失
-    statusEl.classList.add('error');
-    statusEl.textContent = t('loadFailed', { err: err.message });
+// registerSource 登记一条数据源。
+//   open    此刻要不要刷它（浮层关着就别白刷）
+//   fetch   取数，失败时抛错
+//   apply   拿到数据后重绘
+//   onError 取数失败时的提示；缺省表示保留页面上的旧内容，交给对应的状态行去说
+function registerSource(source) {
+  const entry = { ...source, fingerprint: null, seq: 0 };
+  sources.push(entry);
+  return entry;
+}
+
+// heartbeat 跑一轮心跳。各源依次取数：一个源失败不影响其它源，也不清空它已经画出来的内容——
+// 网络抖一下就把用户正在读的 diff 换成错误页，比不刷新更糟
+async function heartbeat() {
+  for (const s of sources) {
+    if (s.open && !s.open()) continue;
+    const seq = ++s.seq;
+    let data;
+    try {
+      data = await s.fetch();
+    } catch (err) {
+      if (s.onError) s.onError(err);
+      continue;
+    }
+    // 迟到的响应作废：用户可能已经关掉面板，或把目标换成了另一个仓库
+    if (seq !== s.seq) continue;
+    const fingerprint = JSON.stringify(data);
+    if (fingerprint === s.fingerprint) continue;
+    s.fingerprint = fingerprint;
+    s.apply(data);
   }
 }
 
+// 看板恒刷：被 diff 或卡片盖住时照样采集，关掉浮层的那一刻看到的就是最新状态
+registerSource({
+  open: () => true,
+  fetch: fetchRepos,
+  apply: (payload) => {
+    const repos = Array.isArray(payload.repos) ? payload.repos : [];
+    lastRepos = repos;
+    render(repos);
+    statusEl.classList.remove('error');
+    // 时间走 clockTime：24 小时制，且不随系统语言变成 AM/PM。
+    // 耗时不再显示——它本是给排障用的，对看板用户没有信息量，要查的时候看日志
+    statusEl.textContent = t('updated', { time: clockTime(payload.generatedAt) });
+  },
+  // 失败时保留上一次的行不动（旧数据好过空白），只在角落里说明状态，
+  // 避免网络抖动就让整屏内容消失
+  onError: (err) => {
+    statusEl.classList.add('error');
+    statusEl.textContent = t('loadFailed', { err: err.message });
+  },
+});
+
+// diff 源：只在覆盖层开着时才取。diffSource 这个名字要留住——loadDiff 首次画完之后会把
+// 指纹记在它身上，免得紧接着的那轮心跳把同一份内容再画一遍
+const diffSource = registerSource({
+  open: () => diffOpen && !!diffSpec,
+  // 把“这份数据属于哪个 spec”一起带回来：取数与落笔之间用户可能已经换到了另一个文件，
+  // 那时拿 A 的内容去画 B 的正文就是串数据
+  fetch: async () => ({ spec: diffSpec, out: await fetchDiff(diffSpec) }),
+  apply: (r) => {
+    if (r.spec !== diffSpec) return;
+    applyDiffUpdate(r.out);
+  },
+});
+
+// 卡片源：graphLimit 为 0 表示第一批还没回来，此时没有可刷的内容。
+// 取数沿用当前已请求的条数，而不是重新按 100 条拉——用户滚到底续取到 400 条之后，
+// 一次刷新不该把他打回 100 条
+registerSource({
+  open: () => cardOpen && !!cardSpec && graphLimit > 0,
+  // 与 diff 源同理：取数与落笔之间用户可能已经换到了另一个仓库
+  fetch: async () => ({ spec: cardSpec, limit: graphLimit, data: await fetchLog(cardSpec, graphLimit) }),
+  apply: (r) => {
+    if (r.spec !== cardSpec || r.limit !== graphLimit) return;
+    applyGraphData(r.data, r.limit);
+  },
+});
+
+// 设置源：用户正在改配置（settingsDirty 非空）时不刷——重画面板会把他还没保存的改动
+// 一起抹掉。保存之后 dirty 清空，心跳自然接着刷
+registerSource({
+  open: () => settingsOpen && settingsDirty.size === 0,
+  fetch: fetchSettingsView,
+  apply: (out) => {
+    // 取数出错时保留面板上已有的内容，只在面板的状态行说明原因
+    if (out.error) {
+      setSettingsOp(t('loadFailed', { err: out.error }), true);
+      return;
+    }
+    renderSettings(out);
+  },
+});
+
 function startPolling() {
   if (pollTimer !== null) return;
-  pollTimer = window.setInterval(refresh, POLL_MS);
+  heartbeat();
+  pollTimer = window.setInterval(heartbeat, POLL_MS);
 }
 
+// stopPolling 只服务一个场景：页面切到后台（见下面的 visibilitychange）。那时没有眼睛在看，
+// 而每 5 秒要起 37 个 git 进程。它不再是“浮层打开时先停一下”的开关
 function stopPolling() {
   if (pollTimer === null) return;
   window.clearInterval(pollTimer);
@@ -2503,8 +2636,8 @@ function stopPolling() {
 }
 
 // 窗口尺寸变化会改变列高，必须重新布局（不重新取数）。
-// 浮层打开期间不重排：面板盖住看板时尺寸变化根本看不到，重排还要量一遍行高、纯属白花；
-// 关掉浮层时各自会走 resume → refresh，布局在那时补上。判据走 anyOverlayOpen
+// 浮层打开期间不重排：面板盖住看板时尺寸变化根本看不到，重排还要量一遍行高、纯属白花。
+// 判据走 anyOverlayOpen；布局也不会长期滞后——心跳每 5 秒就会重画一次看板
 window.addEventListener('resize', () => {
   if (!anyOverlayOpen() && lastSpecs.length > 0) layout(lastEls, lastSpecs);
 });
@@ -2600,17 +2733,14 @@ window.addEventListener(
   { passive: false },
 );
 
-// 页面不可见时停掉轮询：后台标签页没人看，继续采集只是白白占用 CPU 与磁盘
+// 页面切到后台时停掉心跳：那时没有眼睛留在页面上，而每 5 秒要起 37 个 git 进程。
+// 回到前台立刻补跑一轮再恢复定时，否则切回来看到的还是切走那一刻的旧数据。
+// 注意这里与浮层无关：打开任何面板都不停刷，见“刷新心跳”一节
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     stopPolling();
     return;
   }
-  // 浮层打开期间由各自的关闭函数统一恢复（它们会先 refresh 再 startPolling），
-  // 这里不能抢先启动，否则看板会在浮层后面偷偷刷新。判据走 anyOverlayOpen：
-  // 原先这里自己拼了两个标志、漏掉设置面板，于是开着设置切走再回来会在面板后面刷新
-  if (anyOverlayOpen()) return;
-  refresh();
   startPolling();
 });
 
@@ -2621,7 +2751,7 @@ document.title = 'ggt';
 loadIconTheme().then(() => {
   if (lastRepos.length > 0) render(lastRepos);
 });
-refresh();
+// startPolling 内部会先跑一轮心跳，不需要在它前面再取一次数
 startPolling();
 
 // ——— 分支图 ———
@@ -2947,50 +3077,58 @@ function setGraphOp(text, isError) {
 // 而不是 skip：泳道是逐行递推的，只取第二页会让整页的线从最左边重新开始
 async function loadGraph(more) {
   if (!cardSpec) return;
-  const repoPath = cardSpec.repo.path;
   const seq = ++cardSeq;
   const nextLimit = more ? Math.min(graphLimit * 2, graphMaxLimit) : 100;
 
   try {
-    const params = new URLSearchParams({
-      repo: repoPath,
-      limit: String(nextLimit),
-      all: graphAllRefs ? '1' : '0',
-    });
-    const res = await fetch('/api/log?' + params.toString(), { cache: 'no-store', headers: authHeaders });
-    const data = await res.json();
+    const data = await fetchLog(cardSpec, nextLimit);
     // 用户可能已经关掉卡片或换了仓库：这一份响应就作废
     if (seq !== cardSeq || !cardOpen) return;
-    if (data.error) {
-      setGraphOp(data.error, true);
-      // 失败时把占位撤掉：留着一个“正在读取”的圈在转，会让人以为还在等，而它已经不会来了。
-      // 错误原话在上面的状态行里，列表空着才是此刻该有的样子
-      graphListEl.replaceChildren();
-      return;
-    }
-
-    setGraphOp('');
-    graphLimit = nextLimit;
-    graphItems = data.items || [];
-    graphTotal = data.total || 0;
-    graphMaxLimit = data.maxLimit || graphMaxLimit;
-    if (data.branch) cardSpec.repo.branch = data.branch;
-    fillBranchSelect(data.branches || [], data.branch || '');
-    // 头部随仓库状态更新：切了分支、提交或推送之后，标题上的分支与领先/落后必须跟着变。
-    // 这也是“切分支成功了吗”在页面上唯一看得见的结果
-    const repo = currentRepo();
-    graphTitleEl.innerHTML =
-      '<span>' + esc(repo.name) + '</span>' +
-      (data.branch ? '<span class="dir"> ' + esc(data.branch) + '</span>' : '');
-    graphStateEl.textContent = repoStateText(repo);
-    renderGraphRows();
+    applyGraphData(data, nextLimit);
   } catch (err) {
     if (seq === cardSeq) {
       setGraphOp(err.message, true);
-      // 与上面 data.error 那条同理：占位不能留在一个已经失败的请求上
+      // 失败时把占位撤掉：留着一个“正在读取”的圈在转，会让人以为还在等，而它已经不会来了。
+      // 错误原话在上面的状态行里，列表空着才是此刻该有的样子
       graphListEl.replaceChildren();
     }
   }
+}
+
+// fetchLog 取一批历史。出错时抛错：调用方要么把错误写进状态行（首次打开与续取），
+// 要么保留已有内容什么都不做（心跳里的卡片源）
+async function fetchLog(spec, limit) {
+  const params = new URLSearchParams({
+    repo: spec.repo.path,
+    limit: String(limit),
+    all: graphAllRefs ? '1' : '0',
+  });
+  const res = await fetch('/api/log?' + params.toString(), { cache: 'no-store', headers: authHeaders });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+// applyGraphData 把一批历史画进卡片。取数与渲染分开：心跳要拿同一份重画，而“摆占位、
+// 把 limit 翻倍”是打开与续取才有的事，不属于渲染
+function applyGraphData(data, limit) {
+  if (!cardSpec) return;
+  setGraphOp('');
+  graphLimit = limit;
+  graphItems = data.items || [];
+  graphTotal = data.total || 0;
+  graphMaxLimit = data.maxLimit || graphMaxLimit;
+  if (data.branch) cardSpec.repo.branch = data.branch;
+  fillBranchSelect(data.branches || [], data.branch || '');
+  // 头部随仓库状态更新：切了分支、提交或推送之后，标题上的分支与领先/落后必须跟着变。
+  // 这也是“切分支成功了吗”在页面上唯一看得见的结果。
+  // 名字走 repoNameHTML：这里若自己拼一行 span，子模块的身份徽章会在每次刷新时被抹掉，
+  // 表现为打开卡片后徽章闪一下就不见了
+  const repo = currentRepo();
+  graphTitleEl.innerHTML =
+    repoNameHTML(repo) + (data.branch ? '<span class="dir"> ' + esc(data.branch) + '</span>' : '');
+  graphStateEl.textContent = repoStateText(repo);
+  renderGraphRows();
 }
 
 // fillBranchSelect 用本地分支名填满分支选择器，并把当前分支选中。
@@ -3063,14 +3201,13 @@ function openRepoCard(spec) {
   graphEl.classList.add('open');
   graphEl.setAttribute('aria-hidden', 'false');
   syncScrollLock();
-  stopPolling();
   graphBackEl.focus();
 
   loadGraph(false);
 }
 
-// closeCardState 只收起卡片这一层，不碰焦点与轮询。
-// 与关掉整张卡片分开，是为了让“只换内容”这类场景不误触轮询与焦点
+// closeCardState 只收起卡片这一层，不碰焦点。
+// 与关掉整张卡片分开，是为了让“只换内容”这类场景不误触焦点
 function closeCardState() {
   if (!cardOpen) return;
   cardOpen = false;
@@ -3093,7 +3230,6 @@ function closeRepoCard() {
   if (cardSpec) draftMsg.set(cardSpec.repo.path, commitMsgEl.value);
   closeCardState();
   syncScrollLock();
-  resume();
 }
 
 graphBackEl.addEventListener('click', closeRepoCard);
@@ -3427,14 +3563,12 @@ function currentRepo() {
   return found || cardSpec.repo;
 }
 
-// cardWrite 发一次仓库操作。成功后先刷新看板快照、再刷新分支图：切分支、提交、拉取都会改变
-// 图的内容，而头部那行状态来自看板快照（顺序反了会读到上一轮的分支与领先/落后）
+// cardWrite 发一次仓库操作。成功后交给一次心跳：它按“看板 → diff → 卡片”的固定顺序重取，
+// 正好满足这里对顺序的要求（头部那行状态来自看板快照，晚于图刷新就会写出上一轮的分支）。
+// 不再单独调 loadGraph：那会把 limit 重置回 100，用户续取过的历史会被打回去
 async function cardWrite(path, body) {
   const out = await runWrite(path, body, notifFromResult);
-  if (out && !out.error) {
-    await refresh();
-    await loadGraph(false);
-  }
+  if (out && !out.error) await heartbeat();
   return out;
 }
 
