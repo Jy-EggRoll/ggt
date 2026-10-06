@@ -72,6 +72,10 @@ var cssVarNames = map[string]string{
 	"gitDecoration.stageDeletedResourceForeground":  "git-stage-deleted",
 	"gitDecoration.ignoredResourceForeground":       "git-ignored",
 	"gitDecoration.conflictingResourceForeground":   "git-conflicting",
+	// 子模块专用色。这份令牌在 4 套 catppuccin 主题里都有，却一直没被映射过。
+	// 主题里没给值时由 CSS 回退到 --focus-border（见 style.css 的 .badge.sub），
+	// 因此不像其它 gitDecoration 那样在 defaults.json 里给一份默认值
+	"gitDecoration.submoduleResourceForeground": "git-submodule",
 
 	"diffEditor.insertedLineBackground": "diff-add-bg",
 	"diffEditor.removedLineBackground":  "diff-del-bg",

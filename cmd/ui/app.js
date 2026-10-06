@@ -34,6 +34,10 @@ const MSG = {
   en: {
     noCommits: 'no commits yet',
     detached: 'detached HEAD',
+    // 子模块只用一两个字的短标：它挤在仓库名后面的徽章位上，写全称会把名字与后面的
+    // 分支信息一起挤走。完整含义交给 title 提示
+    submodule: 'sub',
+    submoduleTitle: 'A submodule of another repository',
     ahead: '↑{{n}}',
     behind: '↓{{n}}',
     continued: '{{name}} (continued {{n}})',
@@ -107,6 +111,8 @@ const MSG = {
   'zh-CN': {
     noCommits: '尚无提交',
     detached: '游离 HEAD',
+    submodule: '子',
+    submoduleTitle: '这是另一个仓库的子模块',
     ahead: '领先 {{n}}',
     behind: '落后 {{n}}',
     continued: '{{name}}（续 {{n}}）',
@@ -635,18 +641,39 @@ function buildSpecs(repos) {
   return specs;
 }
 
+// repoNameHTML 生成“仓库名（外加子模块标）”。
+//
+// 仓库名在三个地方出现：看板卡片头行、diff 卡的标题、仓库卡片的泳道图标题。三处都得带上
+// 子模块标记，否则同一个仓库在不同视图里身份不一致——用户反馈过“子模块和其它仓库完全
+// 一样、看不出区别”。生成逻辑因此收在这里，三处共用一份。
+//
+// 标记紧跟名字，而不是混进后面那串状态徽章（!、改动文件数、领先 N）：子模块是身份，
+// 不是状态，混在一起会让人以为“子模块”也是一种待处理事项。
+// nameClass 由调用方给：看板头行的名字要挂 .name（带省略号截断），两个标题里的不需要
+function repoNameHTML(r, nameClass) {
+  const cls = nameClass ? ' class="' + nameClass + '"' : '';
+  let html = '<span' + cls + '>' + esc(r.name) + '</span>';
+  if (r.isSubmodule) {
+    html +=
+      '<span class="badge sub" title="' + esc(t('submoduleTitle')) + '">' + esc(t('submodule')) + '</span>';
+  }
+  return html;
+}
+
 // rowHTML 生成一行的内容。
 function rowHTML(s) {
   if (s.kind === 'head') {
     const r = s.repo;
-    const parts = ['<span class="name">' + esc(r.name) + '</span>'];
+    const parts = [repoNameHTML(r, 'name')];
 
     if (r.error) {
       parts.push('<span class="badge err">!</span>');
     } else if (r.files.length > 0) {
       parts.push('<span class="badge">' + r.files.length + '</span>');
     } else if (r.ahead > 0) {
-      parts.push('<span class="badge">' + t('ahead', { n: r.ahead }) + '</span>');
+      // “已提交但没推送”给这枚徽章上色（绿），和文件数那枚的灰区分开：
+      // 前者是“你还有活没干完”，后者只是信息。颜色取自 --git-added，与 st-added 同一份令牌
+      parts.push('<span class="badge ahead">' + t('ahead', { n: r.ahead }) + '</span>');
     }
 
     // 分支与待办写在标题行右侧，字体更小、颜色更淡——与 VSCode 的仓库标题只显示名字不同，
@@ -3003,7 +3030,7 @@ function openRepoCard(spec) {
   const r = spec.repo;
 
   graphTitleEl.innerHTML =
-    '<span>' + esc(r.name) + '</span>' +
+    repoNameHTML(r) +
     (r.branch && !r.noCommits ? '<span class="dir"> ' + esc(r.branch) + '</span>' : '');
   graphStateEl.textContent = repoStateText(r);
   graphFilterLabelEl.textContent = t('graphAllRefs');

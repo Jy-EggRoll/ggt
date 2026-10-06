@@ -595,6 +595,39 @@ body {
 .badge.err { color: var(--status-error, var(--git-conflicting)); }
 
 /*
+ * 子模块身份徽章与“已提交未推送”徽章：都只改**底色**——把各自的语义色掺进 .badge 自带的
+ * badge.background，文字色仍用 .badge 的 badge-fg（主题作者保证它与徽章底对比良好）
+ *
+ * 掺 60% 是量出来的、不是随手取的：低于它色相看不出来，高于它白字就压不住。
+ * 实测本色板下领先徽章 5.7:1、子模块 3.3:1；深色主题里语义色是浅色，
+ * 掺进深蓝底后仍能保持 3.3:1 上下，两个方向都过 3:1 这条线
+ *
+ * 两次走错的路记在这里，免得再犯：
+ * 一是把语义色同时当底色和文字色（暗底配暗字，实测领先 1.2:1，字糊在底色里）；
+ * 二是只换文字色、底色仍用深蓝的 badge.background（实测 2.3:1 / 1.1:1，同样不合格）——
+ * 因为 gitDecoration 系列是给**文件名**上色用的前景色，明度随主题反转，
+ * 唯独不适合充当深蓝徽章底上的文字
+ */
+.badge.sub {
+  /* 子模块色取自 gitDecoration.submoduleResourceForeground：这是 VSCode 给“子模块资源”的专用色，
+     主题作者已经在里面表达过意图，不该另挑一个。缺值时回落 focus-border——
+     上游对该键没有默认值，能给出取值的只有主题文件 */
+  background: color-mix(in srgb, var(--git-submodule, var(--focus-border)) 60%, var(--badge-bg));
+}
+
+/*
+ * “已提交未推送”：绿取自 gitDecoration.addedResourceForeground。
+ *
+ * 为什么用“新增”的绿而不是别的语义色：这个状态的含义是“本地多了东西、远端还没有”，
+ * Git 生态里一直用绿色表达（lazygit、tig 的 ahead 计数都是绿的），而本文件已经把它
+ * 用在 st-added 文件行上，语义是通的。错误色留给真正出错的状态（见 .badge.err），
+ * 未推送只是待办，不是错误
+ */
+.badge.ahead {
+  background: color-mix(in srgb, var(--git-added) 60%, var(--badge-bg));
+}
+
+/*
  * 变更文件行。结构：[类型图标] [路径] …… [行尾状态字母]
  *
  * 之所以用真实元素而不是 VSCode 的 ::after 承载状态字母：::after 的内容既不能被选中，
