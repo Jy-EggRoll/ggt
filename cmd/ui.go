@@ -515,18 +515,36 @@ func commitDiffText(ctx context.Context, repoPath, hash string, paths []string) 
 		"show", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
 		"--find-renames", "--diff-merges=first-parent", "--unified=3", hash,
 	}
-	if len(paths) > 0 {
-		// "--" 之前是选项之后是路径：少了它，以 - 开头的文件名会被当成选项
-		args = append(args, "--")
-		args = append(args, paths...)
-	}
+	return runDiffText(ctx, repoPath, withPaths(args, paths))
+}
 
+// runDiffText 跑一条产出统一 diff 的 git 命令，把输出截到上限并落在行边界上。
+//
+// 抽出来是因为三种视图（暂存区、某条提交、两个端点之间）只在命令与修订参数上有差别，
+// 取数与截断这一段完全相同；复制成三份的话，日后改上限或补一个选项就得三处同时改，
+// 漏一处就是某个视图悄悄不截断
+func runDiffText(ctx context.Context, repoPath string, args []string) (string, bool, error) {
 	out, err := git.RunContext(ctx, repoPath, args...)
 	if err != nil {
 		return "", false, err
 	}
 	text, truncated := truncateAtLine(out, uiDiffLimit)
 	return text, truncated, nil
+}
+
+// withPaths 给 git 参数补上路径限制。
+//
+// "--" 之前是选项、之后是路径：少了它，以 - 开头的文件名会被当成选项。
+// 参数另起一份切片而不是就地 append：调用方那份切片可能还有富余容量，
+// 就地追加会把 "--" 写到它的备用空间里，看似无碍，一旦哪天有人复用同一个切片就会带上路径
+func withPaths(args, paths []string) []string {
+	if len(paths) == 0 {
+		return args
+	}
+	out := make([]string, 0, len(args)+1+len(paths))
+	out = append(out, args...)
+	out = append(out, "--")
+	return append(out, paths...)
 }
 
 // diffText 取一份不带颜色的统一 diff，staged 为真取 index vs HEAD，否则取工作区 vs index。
@@ -542,18 +560,7 @@ func diffText(ctx context.Context, repoPath string, staged bool, paths []string)
 	if staged {
 		args = append(args, "--cached")
 	}
-	if len(paths) > 0 {
-		// "--" 之前是选项之后是路径：少了它，以 - 开头的文件名会被当成选项
-		args = append(args, "--")
-		args = append(args, paths...)
-	}
-
-	out, err := git.RunContext(ctx, repoPath, args...)
-	if err != nil {
-		return "", false, err
-	}
-	text, truncated := truncateAtLine(out, uiDiffLimit)
-	return text, truncated, nil
+	return runDiffText(ctx, repoPath, withPaths(args, paths))
 }
 
 // numstatOrWarn 取文件级增删清单，失败只记一条日志、不打断请求。
