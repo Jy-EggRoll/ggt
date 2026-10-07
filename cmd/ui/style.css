@@ -1021,6 +1021,10 @@ body {
 }
 /* 恢复默认靠右：它与标题同排，但性质是动作而不是说明 */
 .setting-reset { flex: none; margin-left: auto; }
+/* 没改过的项不给这个按钮（见 app.js 的 settingsRow）。这一条不能只靠 hidden 属性：.btn 自己设了
+   display: inline-flex，它是作者样式，压得过浏览器自带的 [hidden] { display: none }，
+   于是按钮照样露在页面上。这里的规则比 .btn 更具体，才真的藏得住 */
+.setting-reset[hidden] { display: none; }
 
 /* 控件：输入框、下拉框、多行框共用一套外观。
    配色取 input.* 与 dropdown.*（VSCode 的 inputColors.ts 那组令牌），与卡片里的控件同一来源 */

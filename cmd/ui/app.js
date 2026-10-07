@@ -2206,7 +2206,8 @@ function settingsControlFor(item) {
   return { el: wrapControl(input), get: () => input.value.trim() };
 }
 
-// settingsRow 画一项配置：标题 + 键名 + 恢复默认按钮 + 控件 + 说明 + 该项的错误行。
+// settingsRow 画一项配置：标题 + 键名 + 控件 + 说明 + 该项的错误行；
+// 已经偏离默认值的项，标题行右侧再多一个“恢复默认”。
 //
 // 标题与键名都显示：标题是给人读的，键名是给命令行用的（ggt config set <键名> <值>），
 // 少哪一个都会让用户在两处之间来回对照
@@ -2225,11 +2226,16 @@ function settingsRow(item) {
   key.textContent = item.key;
   head.append(title, key);
 
+  // “恢复默认”只在这一项确实偏离默认值时出现：无条件画在每一项上，等于宣告所有项都被改过，
+  // 真正改过的那几项反而认不出来——而这个按钮存在的意义正是把改过的那几项标出来。
+  // 判据是当前值与 item.default 的比较，未保存的改动也算：改回默认值，按钮随之消失
+  let reset = null;
   if (!item.managedBy) {
-    const reset = document.createElement('button');
+    reset = document.createElement('button');
     reset.type = 'button';
     reset.className = 'btn btn--secondary setting-reset';
     reset.textContent = t('settingsReset');
+    reset.hidden = item.value === item.default;
     reset.addEventListener('click', () => resetSetting(item.key));
     head.appendChild(reset);
   }
@@ -2252,6 +2258,8 @@ function settingsRow(item) {
       if (ctl.get() === item.value) settingsDirty.delete(item.key);
       else settingsDirty.add(item.key);
       row.classList.toggle('dirty', settingsDirty.has(item.key));
+      // 恢复默认按钮跟着当前值走：改到与默认值不同就出现，改回默认值就消失
+      if (reset) reset.hidden = ctl.get() === item.default;
       updateSaveButton();
     };
     ctl.el.addEventListener('input', onChange);
