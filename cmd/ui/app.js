@@ -2028,7 +2028,7 @@ function setBoardOp(text, isError) {
   boardOpEl.classList.toggle('error', !!isError);
 }
 
-// postJSON 发一个写请求。四个写端点都在 POST 上：基座只对非 GET/HEAD 做同源校验，
+// postJSON 发一个写请求。写端点都在 POST 上：基座只对非 GET/HEAD 做同源校验，
 // 同源 fetch 会自动带上 Origin；token 仍走请求头，与读请求同一套
 async function postJSON(path, body) {
   const headers = Object.assign({ 'Content-Type': 'application/json' }, authHeaders || {});

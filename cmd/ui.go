@@ -764,7 +764,7 @@ type uiWriteRequest struct {
 	Branch string `json:"branch"`
 }
 
-// uiWriteResult 是四个写端点的统一响应。
+// uiWriteResult 是写端点的统一响应。
 // 成功带 Output（git 的原话：提交摘要、push 进度），失败带 Error
 type uiWriteResult struct {
 	Output string `json:"output,omitempty"`
@@ -1130,7 +1130,7 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	// 点开某个仓库或文件时的只读 diff。与 /api/repos 挂在同一个 mux 上，
 	// 因此同样在 webui 基座的 Host/Origin/token 三项检查之内
 	mux.HandleFunc("/api/diff", cache.handleDiff)
-	// 四个写端点。它们同样只挂在 mux 上而不额外加检查：基座对非 GET/HEAD 会先做
+	// 写端点。它们同样只挂在 mux 上而不额外加检查：基座对非 GET/HEAD 会先做
 	// Origin/Referer 同源校验，再限 body 大小，写请求的 CSRF 面由那一层负责
 	mux.HandleFunc("/api/stage", cache.handleStage)
 	mux.HandleFunc("/api/unstage", cache.handleUnstage)
