@@ -1911,6 +1911,13 @@ pre.diff .meta { color: var(--text-dim); }
  * 内描边，是因为底色是掺了透明的浅雾，行一多就会看漏
  *
  * 不做左侧色条：那个位置紧挨泳道图，一条竖线混在连线与圆点里既读不出来，也像是装饰
+ *
+ * 淡雾取 focusBorder，不取 badge.background，也不取主题的 list.activeSelectionBackground，
+ * 因为只有 focusBorder 是主题作者保证在背景上看得见的强调色。按内置的两套标准主题算过，淡雾掺
+ * 18% 后与素行的亮度差：取 badge.background 时浅色主题是 0.095、深色主题是 0.006，都低于同一
+ * 主题里行悬浮反馈的 0.129 与 0.013，也就是比鼠标掠过还淡；取 focusBorder 时是 0.200 与
+ * 0.013，都在悬浮之上，深色主题下只高出一点。主题的选中色也试过，默认主题下它是 #00000025，
+ * 掺到 18% 几乎等于没画
  */
 .g-row.compare-base {
   background-image: linear-gradient(
