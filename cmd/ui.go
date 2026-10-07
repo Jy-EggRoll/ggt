@@ -471,15 +471,18 @@ func handleCommitDiff(w http.ResponseWriter, r *http.Request, repo *uiRepo, hash
 	out := uiDiff{Repo: repo.Path, Commit: hash, File: filePath}
 	var paths []string
 	if filePath != "" {
-		f, ok := findCommitFile(files, filePath)
-		if !ok {
+		f, p, err := resolveCommitFile(files, filePath)
+		if err != nil {
 			// 不在这条提交的改动清单里就是没有这个文件：既挡住了路径穿越，
 			// 也挡住了“拿别的提交的文件名来问”
-			writeUIDiffError(w, http.StatusNotFound, l10n.T("Unknown file", nil))
+			writeUIDiffError(w, statusOf(err, http.StatusNotFound), err.Error())
 			return
 		}
 		out.File, out.OrigPath, out.Binary = f.Path, f.OrigPath, f.Binary
-		paths = uiAffectedPaths(f.Path, f.OrigPath)
+		paths = p
+		// 清单只留这一条：页面按下标把第 i 段正文与第 i 条清单对上，正文只含一个文件而清单
+		// 是整份时，它取到的是清单的第一条，标题会写成另一个文件的名字
+		files = []git.CommitFile{f}
 	}
 
 	text, truncated, err := commitDiffText(ctx, repo.Path, hash, paths)
@@ -500,6 +503,20 @@ func findCommitFile(files []git.CommitFile, path string) (git.CommitFile, bool) 
 		}
 	}
 	return git.CommitFile{}, false
+}
+
+// resolveCommitFile 在一份改动清单里定位页面请求的文件，返回该条与要交给 git 的路径集合。
+//
+// 不在这份清单里就是没有这个文件：既挡住了路径穿越，也挡住了“拿另一次比较里的文件名来问”。
+// 清单来自 git 自己的输出，因此这一层校验等价于“这个文件确实在这次改动里”。
+// 顺带固定了另一条约定：调用方拿到的清单要与正文同宽（见 handleCommitDiff），
+// 页面是按下标把正文分段与清单对上的
+func resolveCommitFile(files []git.CommitFile, path string) (git.CommitFile, []string, error) {
+	f, ok := findCommitFile(files, path)
+	if !ok {
+		return git.CommitFile{}, nil, &uiParamError{http.StatusNotFound, l10n.T("Unknown file", nil)}
+	}
+	return f, uiAffectedPaths(f.Path, f.OrigPath), nil
 }
 
 // commitDiffText 取一条提交的改动文本。

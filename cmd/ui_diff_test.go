@@ -176,6 +176,28 @@ func TestHandleDiffCommitMode(t *testing.T) {
 				if len(out.Sections) != 1 || !strings.Contains(out.Sections[0].Text, "keep.txt") {
 					t.Errorf("正文里没有这个文件：%+v", out.Sections)
 				}
+				// 清单必须跟着正文收窄到这一条：页面按下标命名分段，清单若还是整份，
+				// 标题会写成清单的第一个文件，与正文对不上
+				files := out.Sections[0].Files
+				if len(files) != 1 || files[0].Path != "keep.txt" {
+					t.Errorf("单文件视图的清单应当只有 keep.txt 这一条，实得 %+v", files)
+				}
+			},
+		},
+		{
+			// 特意挑一个不在清单首位的文件：清单没收窄时页面取到的是清单第一条（keep.txt），
+			// 只核对 keep.txt 是看不出这个错位的
+			name:   "单个文件（非清单第一条）",
+			query:  url.Values{"commit": {hash}, "file": {"renamed-both.txt"}},
+			status: http.StatusOK,
+			check: func(t *testing.T, out uiDiff) {
+				files := out.Sections[0].Files
+				if len(files) != 1 || files[0].Path != "renamed-both.txt" {
+					t.Errorf("单文件视图的清单应当只有这一条，实得 %+v", files)
+				}
+				if !strings.Contains(out.Sections[0].Text, "renamed-both.txt") {
+					t.Errorf("正文里没有这个文件：%+v", out.Sections)
+				}
 			},
 		},
 		{
