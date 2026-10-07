@@ -19,7 +19,8 @@
  *   - 状态字母表与配色      照抄 extensions/git/src/repository.ts 的 Resource.getStatusLetter /
  *                          getStatusColor（字母 M/A/D/R/T/U/I/C/!，颜色取 gitDecoration.* 令牌）
  *   - 文件类型图标          照抄默认图标主题 Seti，连解析顺序（fileNames -> fileExtensions ->
- *                          languageIds -> file）都一样，见 seti-icon-theme.json
+ *                          languageIds -> file）都一样；解析本身在 eggokit/fileicon
+ *                          （页面引入 fileicon/seti.js，本文件只调 window.fileicon）
  *   - 行高、徽标排版、hover 在 style.css 里（那里逐项标了源码出处）
  * 有意保留的差异只有这些，均为用户明确要求：多列布局、按待办置顶排序、只横向滚动、
  * 连续网格不要分组总览条、卡片内直接列出变更文件、文件名按状态上色
@@ -491,126 +492,12 @@ function hasWork(f) {
   return (f.work || '.') !== '.';
 }
 
-// ——— 文件类型图标（Seti） ———
-//
-// 与 VSCode 用同一份图标主题文档与同一套解析顺序。之所以要运行时解析而不是编译期映射：
-// 图标主题里 fileNames/fileExtensions 只是前两级，第三级 languageIds 需要文件的语言 id，
-// 而语言 id 是 VSCode 由各语言扩展声明出来的——那张表另存在 vscode-language-map.json
-
-let iconDark = null; // 深色主题的查找表
-let iconLight = null; // 浅色主题的查找表（Seti 的 light 段是全量平行表）
-let langMap = null; // 扩展名/文件名 -> 语言 id
-const iconCache = new Map(); // 文件名 -> 图标 id，避免同一扩展名反复查表
-
-const prefersLight = window.matchMedia('(prefers-color-scheme: light)');
-
-// 取图标主题文档。两份 JSON 都是静态资源，与页面同源，走与其它请求相同的 token 规则
-async function loadIconTheme() {
-  try {
-    const [theme, langs] = await Promise.all([
-      fetch('seti-icon-theme.json', { cache: 'no-store' }).then((r) => r.json()),
-      fetch('vscode-language-map.json', { cache: 'no-store' }).then((r) => r.json()),
-    ]);
-    const defs = theme.iconDefinitions || {};
-    iconDark = {
-      defs,
-      file: theme.file,
-      fileNames: theme.fileNames || {},
-      fileExtensions: theme.fileExtensions || {},
-      languageIds: theme.languageIds || {},
-    };
-    const light = theme.light || {};
-    iconLight = {
-      defs,
-      file: light.file,
-      fileNames: light.fileNames || {},
-      fileExtensions: light.fileExtensions || {},
-      languageIds: light.languageIds || {},
-    };
-    langMap = langs;
-  } catch (err) {
-    // 图标取不到只影响观感，不该让整块看板失败：其余信息照常渲染，只是没有类型图标
-    iconDark = null;
-    iconLight = null;
-    langMap = null;
-    console.warn('图标主题加载失败，本次渲染不带类型图标：' + err.message);
-  }
-}
-
-// extCandidates 按 VSCode 的规则给出某个文件名的全部候选扩展名，从最长到最短。
-// 例：foo.bar.js -> ['bar.js', 'js']；.gitignore -> ['gitignore']
-// 之所以要有多个候选：图标主题里存在 map、bash_profile 这类多点后缀
-function extCandidates(lower) {
-  const out = [];
-  let i = lower.indexOf('.');
-  while (i !== -1) {
-    const e = lower.slice(i + 1);
-    if (e) out.push(e);
-    i = lower.indexOf('.', i + 1);
-  }
-  return out;
-}
-
-// resolveIconId 按 VSCode 的解析顺序取图标 id：fileNames -> fileExtensions -> languageIds -> file
-function resolveIconId(base, map) {
-  const lower = base.toLowerCase();
-  let id = map.fileNames[lower];
-  if (!id) {
-    for (const e of extCandidates(lower)) {
-      const hit = map.fileExtensions[e];
-      if (hit) {
-        id = hit;
-        break;
-      }
-    }
-  }
-  if (!id && langMap) {
-    const exts = extCandidates(lower);
-    let lang = langMap.byFileName[lower];
-    if (!lang) {
-      for (const e of exts) {
-        lang = langMap.byExtension[e];
-        if (lang) break;
-      }
-    }
-    if (lang) id = map.languageIds[lang];
-  }
-  return id || map.file;
-}
-
-// iconGlyph 把图标定义里的 fontCharacter 转成字符。
-// 文档里的写法是反斜杠加十六进制（形如 \E001），那是 VSCode 侧的转义表示，
-// 到了 JSON 里就是普通的反斜杠加 4 位十六进制，必须按十六进制解析后再取私有区码位
-function iconGlyph(def) {
-  const m = /^\\([0-9A-Fa-f]{1,6})$/.exec((def && def.fontCharacter) || '');
-  return m ? String.fromCodePoint(parseInt(m[1], 16)) : '';
-}
-
 // baseName 取路径的最后一段。
 //
 // 同时接受 / 与 \：ggt 跨平台，而这里的路径既可能来自前端自己的常量，
 // 也可能来自服务端返回的宿主路径（Windows 上会是反斜杠）
 function baseName(p) {
   return String(p || '').split(/[\\/]/).filter(Boolean).pop() || '';
-}
-
-// iconHTML 生成文件类型图标的 HTML。
-// 颜色用图标文档里的 fontColor（Seti 为每种类型配了色），因此图标颜色是“类型色”，
-// 与文件名、状态字母的“状态色”互不干扰——这正是 VSCode 里的观感
-function iconHTML(path) {
-  const map = prefersLight.matches ? iconLight : iconDark;
-  if (!map) return '';
-  const base = baseName(path);
-  let id = iconCache.get(base);
-  if (id === undefined) {
-    id = resolveIconId(base, map);
-    iconCache.set(base, id);
-  }
-  const def = map.defs[id];
-  const ch = iconGlyph(def);
-  if (!ch) return '';
-  const color = def && def.fontColor ? ' style="color:' + esc(def.fontColor) + '"' : '';
-  return '<i class="seti"' + color + '>' + esc(ch) + '</i>';
 }
 
 // ——— 数据获取 ———
@@ -816,7 +703,7 @@ function rowHTML(s) {
         esc(t('unstage')) + '">−</button></span>';
     }
     return (
-      iconHTML(base) +
+      fileicon.iconHTML(base) +
       // 目录用 .dir 而不是 .branch：.branch 的规则只作用于仓库标题行（.row.head .branch），
       // 用在文件行上会匹配不到任何规则，目录便继承了文件名的状态色——而两处注释都写明
       // 目录应当比文件名更淡。这是一处类名与规则名对不上的笔误，颜色上的表现是“路径整段同色”
@@ -2813,10 +2700,10 @@ window.addEventListener('resize', () => {
   if (!anyOverlayOpen() && lastSpecs.length > 0) layout(lastEls, lastSpecs);
 });
 
-// 系统明暗主题切换时图标表要换一套（Seti 的浅色段是另一份平行表），因此重画一次；
-// 只重画不重新取数
+// 系统明暗主题切换时 Seti 要换一套平行表，因此重画一次；只重画不重新取数。
+// 缓存的清理由 fileicon 包自己接在同一个 media query 上，本文件不碰它的内部状态
+const prefersLight = window.matchMedia('(prefers-color-scheme: light)');
 prefersLight.addEventListener('change', () => {
-  iconCache.clear();
   if (lastRepos.length > 0) render(lastRepos);
 });
 
@@ -2917,9 +2804,9 @@ document.addEventListener('visibilitychange', () => {
 
 document.title = 'ggt';
 
-// 图标主题与首次取数并行：数据先到就先画（没有类型图标），图标到位后再用同一份数据重画一次。
-// 串行等待会让首屏白屏时间平白多出一次本地 fetch
-loadIconTheme().then(() => {
+// 图标资源与首次取数并行：数据先到就先画（没有类型图标），图标到位后再用同一份数据重画一次。
+// 串行等待会让首屏白屏时间平白多出一次本地 fetch。ready 永不 reject，取不到就是空串图标
+fileicon.ready.then(() => {
   if (lastRepos.length > 0) render(lastRepos);
 });
 // startPolling 内部会先跑一轮心跳，不需要在它前面再取一次数

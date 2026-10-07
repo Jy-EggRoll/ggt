@@ -33,6 +33,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jy-eggroll/eggokit/fileicon"
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
 	"github.com/jy-eggroll/eggokit/webui"
@@ -1273,8 +1274,11 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 		Host: host,
 		// 端口顺延：指定端口被占用时依次 +1 重试。重启服务时上一个进程的 socket 可能还在
 		// TIME_WAIT，直接监听同一个端口会失败，而用户只是重启了一次
-		Port:      webui.Sequential(port, 100),
-		Assets:    assets,
+		Port: webui.Sequential(port, 100),
+		// 图标资源在另一个包里（页面引用的 fileicon/ 一路径就来自它）。go:embed 不能跨模块
+		// 取文件，而 webui 只接受一个 fs.FS，因此用 Overlay 把本页资产叠在图标资源之上：
+		// 本目录的文件优先，缺的（fileicon/seti.js 等）回退给图标包
+		Assets:    fileicon.Overlay(assets),
 		IndexName: "index.html",
 		Index:     renderIndex,
 		API:       mux,

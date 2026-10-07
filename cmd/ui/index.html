@@ -18,6 +18,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ggt</title>
 <link rel="stylesheet" href="style.css">
+<!-- 文件类型图标的 @font-face 与 .seti 规则：随 eggokit/fileicon 分发，原先在本页 style.css 里 -->
+<link rel="stylesheet" href="fileicon/seti.css">
 <!--
   主题注入点：服务端把解析好的颜色变量拼成一条 :root 规则写进这里（见 cmd/ui_theme.go）。
   它必须排在样式表之后——样式表里只用变量、不再声明任何颜色值，这里的变量就是唯一来源。
@@ -226,6 +228,12 @@
   而页面其余部分完全正常，很难联想到是标签顺序
 -->
 <script src="vendor/vscode-diff.js"></script>
+<!--
+  文件类型图标的解析器（eggokit/fileicon）：app.js 启动时就要用 window.fileicon.ready，
+  因此必须排在 app.js 之前。它是普通脚本，排在后面的话 app.js 同步执行时 window.fileicon
+  还是 undefined，表现为图标静默消失而页面其余部分完全正常，很难联想到是标签顺序
+-->
+<script src="fileicon/seti.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

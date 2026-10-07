@@ -25,7 +25,8 @@
  *                             （gitDecoration.* 九个令牌，见下方变量）
  *   diff 增删行底色            src/vs/platform/theme/common/colors/editorColors.ts
  *                             （diffEditor.insertedLineBackground / removedLineBackground，见下方变量）
- *   文件类型图标              VSCode 默认图标主题 Seti，字形与映射见 seti-icon-theme.json
+ *   文件类型图标              VSCode 默认图标主题 Seti，字体与字形规则随图标资源一起放在
+ *                             eggokit/fileicon（页面引入 fileicon/seti.css）
  *
  * 卡片背景、边框、圆角、列间距是 ggt 自有的“卡片”概念，VSCode 侧栏里没有等价物（它只有列表行），
  * 因此这几项保留原设计，不强行对齐
@@ -454,21 +455,6 @@ body {
   font-family: var(--font-ui);
 }
 
-/*
- * Seti 图标字体：@font-face 的名字与 seti-icon-theme.json 里 fonts[].id 一致，
- * 字形通过 font-character 私有区码位引用，见 app.js 的 iconGlyph
- *
- * font-display: block 而不是 swap：类型图标在第一次绘制时缺席会表现为文件名短暂左移，
- * 而图标字体是本地资源、拿到的代价极低，闪一下比位移更好
- */
-@font-face {
-  font-family: "seti";
-  src: url("seti.woff") format("woff");
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-
 /* board 是绝对定位行的坐标原点；它的宽高由 app.js 按列数算出 */
 #board {
   position: relative;
@@ -757,20 +743,6 @@ body {
   opacity: 0.75;
   font-size: 90%;
   font-weight: 600;
-  text-align: center;
-}
-
-/*
- * 文件类型图标：Seti 字体里的私有区字形。尺寸略大于文字（VSCode 图标主题的
- * fonts[].size 为 150%），并关闭字体回退，避免缺字形时显示成方框
- */
-.seti {
-  flex: none;
-  font-family: "seti", monospace;
-  font-size: 150%;
-  line-height: 1;
-  font-style: normal;
-  width: 16px;
   text-align: center;
 }
 
