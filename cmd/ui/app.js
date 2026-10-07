@@ -2319,6 +2319,9 @@ async function loadSettings() {
     return;
   }
   renderSettings(out);
+  // 这一份已经画上去了，把指纹记到设置源上：紧接着的那轮心跳不必再重画一次。
+  // 与 diff 源同样的理由，见 loadDiff 末尾那行
+  settingsSource.fingerprint = JSON.stringify(out);
 }
 
 function renderSettings(out) {
@@ -2673,8 +2676,12 @@ registerSource({
 });
 
 // 设置源：用户正在改配置（settingsDirty 非空）时不刷——重画面板会把他还没保存的改动
-// 一起抹掉。保存之后 dirty 清空，心跳自然接着刷
-registerSource({
+// 一起抹掉。保存之后 dirty 清空，心跳自然接着刷。
+//
+// 这个名字要留住：loadSettings 首次画完之后会把指纹记在它身上，免得紧接着的那轮心跳
+// 拿同一份内容再画一遍——那一遍重画会把面板整个换掉，正在展开的原生下拉框随宿主元素
+// 一起销毁，表现为“下拉一展开就消失、面板跟着重画一次”
+const settingsSource = registerSource({
   open: () => settingsOpen && settingsDirty.size === 0,
   fetch: fetchSettingsView,
   apply: (out) => {
