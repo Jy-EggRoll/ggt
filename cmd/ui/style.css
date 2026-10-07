@@ -1643,10 +1643,7 @@ pre.diff .meta { color: var(--text-dim); }
 }
 
 /* 提交信息与提交按钮：VSCode 的源码管理视图里这一对也在最上方，与改动列表同处一个视图 */
-#graph-commit,
-/* 新建工作树那一行与提交行同构：左边一个输入框、右边一个按钮。
-   样式直接共用一份，免得两处各写一套后慢慢长歪 */
-#graph-worktree {
+#graph-commit {
   flex: none;
   display: flex;
   align-items: center;
@@ -1654,8 +1651,7 @@ pre.diff .meta { color: var(--text-dim); }
   padding: var(--sp-3) var(--sp-4);
   border-bottom: 1px solid var(--card-border);
 }
-#graph-msg,
-#graph-wt-branch {
+#graph-msg {
   flex: 1 1 auto;
   min-width: 0;
   height: var(--control-h);
@@ -1667,10 +1663,8 @@ pre.diff .meta { color: var(--text-dim); }
   padding: 0 var(--sp-2);
 }
 /* 占位符要能读出来，它同样是“前景压在底色上”，因此也走对比度回退那一对 */
-#graph-msg::placeholder,
-#graph-wt-branch::placeholder { color: var(--input-placeholder, var(--text-dim)); }
-#graph-msg:focus,
-#graph-wt-branch:focus { outline: none; border-color: var(--focus-ring); }
+#graph-msg::placeholder { color: var(--input-placeholder, var(--text-dim)); }
+#graph-msg:focus { outline: none; border-color: var(--focus-ring); }
 
 /* 取数失败或仓库操作的结果（git 的原话），角色与 #diff-op 相同 */
 #graph-op {

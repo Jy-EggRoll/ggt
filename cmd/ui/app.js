@@ -43,11 +43,6 @@ const MSG = {
     worktree: 'worktree',
     worktreeTitle: 'Another working copy of {{name}}',
     worktreeMissing: 'worktree gone',
-    worktreeAdd: 'New worktree',
-    worktreeBranchPlaceholder: 'New branch name',
-    worktreeRemove: 'Delete worktree',
-    worktreeRemoveTitle: 'Delete this worktree of {{name}}',
-    worktreeRemoveConfirm: 'Delete anyway',
     filesWithWorktrees: '{{n}} in the main working copy, {{wt}} in its worktrees',
     ahead: '↑{{n}}',
     behind: '↓{{n}}',
@@ -127,11 +122,6 @@ const MSG = {
     worktree: '工作树',
     worktreeTitle: '{{name}} 的另一份工作区',
     worktreeMissing: '工作树已失效',
-    worktreeAdd: '新建工作树',
-    worktreeBranchPlaceholder: '新分支名',
-    worktreeRemove: '删除工作树',
-    worktreeRemoveTitle: '删除 {{name}} 的这棵工作树',
-    worktreeRemoveConfirm: '仍然删除',
     filesWithWorktrees: '主工作区 {{n}} 处，工作树 {{wt}} 处',
     ahead: '领先 {{n}}',
     behind: '落后 {{n}}',
@@ -292,10 +282,6 @@ const graphFetchEl = document.getElementById('graph-fetch');
 const graphSyncEl = document.getElementById('graph-sync');
 const graphPushEl = document.getElementById('graph-push');
 const graphDiffEl = document.getElementById('graph-diff');
-// 工作树的两件事：新建（只需要一个分支名）与删掉当前这一棵
-const graphWtAddEl = document.getElementById('graph-wt-add');
-const graphWtBranchEl = document.getElementById('graph-wt-branch');
-const graphWtRemoveEl = document.getElementById('graph-wt-remove');
 // 提交详情卡（悬浮即显，点一下固定）
 const graphPopupEl = document.getElementById('graph-popup');
 const boardOpEl = document.getElementById('op');
@@ -3286,16 +3272,6 @@ function openRepoCard(spec) {
   commitMsgEl.placeholder = t('commitMsg');
   commitMsgEl.value = draftMsg.get(r.path) || '';
 
-  // 工作树：新建只要一个分支名，删除只对工作树本身开放。
-  // 删除按钮按当前卡片显示或隐藏，文案也在这里跟着卡片走
-  graphWtAddEl.textContent = t('worktreeAdd');
-  graphWtBranchEl.placeholder = t('worktreeBranchPlaceholder');
-  // 与分支选择器同样设一个可读的名字：placeholder 不是给辅助技术读的标签
-  graphWtBranchEl.setAttribute('aria-label', t('worktreeBranchPlaceholder'));
-  graphWtRemoveEl.textContent = t('worktreeRemove');
-  graphWtRemoveEl.hidden = !r.worktreeOf;
-  graphWtRemoveEl.title = r.worktreeOf ? t('worktreeRemoveTitle', { name: baseName(r.worktreeOf) }) : '';
-
   cardSelected = '';
   hideCommitCard(true);
   graphItems = [];
@@ -3692,44 +3668,3 @@ graphSyncEl.addEventListener('click', () => cardWrite('/api/sync', { repo: cardS
 graphPushEl.addEventListener('click', () => cardWrite('/api/push', { repo: cardSpec.repo.path }));
 // 全仓 diff 从卡片顶栏进：它浮在卡片之上，关掉回到卡片（不再占据“入口行”那样的对等地位）
 graphDiffEl.addEventListener('click', () => openDiff({ repo: currentRepo() }));
-
-// 新建工作树。成功后 cardWrite 会触发一次刷新，新条目以宿主为锚插入，不需要重开会话
-graphWtAddEl.addEventListener('click', async () => {
-  const branch = graphWtBranchEl.value.trim();
-  if (!branch) return;
-  const out = await cardWrite('/api/worktree-add', {
-    repo: cardSpec.repo.path,
-    branch,
-    createBranch: true,
-  });
-  // runWrite 在“已有写操作在飞”时返回 null，这时这次点击根本没发出去。
-// 因此判据写成 !out || !out.error：不把用户填的分支名留在框里，
-// 否则他会再点一次，然后撞上 git 的 already exists
-  if (!out || !out.error) graphWtBranchEl.value = '';
-});
-// 回车等同点击：这一行只有一个输入框，回车是最顺手的手势
-graphWtBranchEl.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') graphWtAddEl.click();
-});
-
-// 删掉当前这棵工作树。工作树里若有未提交内容，git 会拒绝，这时再点一次才带 force。
-// 那一步是明确的确认，而不是默认就把人家的改动删掉——删除操作跑在宿主仓库里，
-// 因为 git 不接受从工作树内部删掉它自己
-let wtRemoveArmed = false;
-graphWtRemoveEl.addEventListener('click', async () => {
-  const path = cardSpec.repo.path;
-  const out = await cardWrite('/api/worktree-remove', {
-    repo: cardSpec.repo.worktreeOf || path,
-    path,
-    force: wtRemoveArmed,
-  });
-  if (out && out.error) {
-    if (!wtRemoveArmed) {
-      wtRemoveArmed = true;
-      graphWtRemoveEl.textContent = t('worktreeRemoveConfirm');
-    }
-    return;
-  }
-  wtRemoveArmed = false;
-  closeRepoCard();
-});
