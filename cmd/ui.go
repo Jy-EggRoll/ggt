@@ -319,6 +319,11 @@ type uiDiff struct {
 	// Commit 非空表示这是“某条提交改了什么”，值是那条提交的哈希。此时正文只有一段，
 	// 内容是相对第一个父提交的改动（理由见 commitDiffText）
 	Commit string `json:"commit,omitempty"`
+	// From 与 To 同时非空表示这是“两次提交之间改了什么”，两个值就是那条比较的两个端点。
+	// 正文只有一段，内容是这两棵树之间的差异，中间那些提交（含被回退掉的改动）不参与计算。
+	// 与 Commit 互斥：两者问的问题不同，混在一起就说不清正文是哪一种
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
 	// Untracked 为真时正文是文件正文而不是 diff：未跟踪文件不在 index 里，
 	// git 对它不产生 diff（替代写法 git diff --no-index /dev/null 在 Windows 上不成立，
 	// 那边没有 /dev/null）。页面把它整体按“新增”渲染
@@ -350,6 +355,7 @@ const (
 	diffKindStaged   = "staged"
 	diffKindUnstaged = "unstaged"
 	diffKindCommit   = "commit"
+	diffKindCompare  = "compare"
 )
 
 // handleDiff 是 /api/diff 的处理函数。
@@ -372,6 +378,16 @@ func (c *uiCache) handleDiff(w http.ResponseWriter, r *http.Request) {
 	// 它的合法输入来自这条提交自己的改动清单，而不是上一次快照
 	if hash := strings.TrimSpace(r.URL.Query().Get("commit")); hash != "" {
 		handleCommitDiff(w, r, repo, hash, filePath)
+		return
+	}
+
+	// 范围比较也只看历史，与当前工作区快照无关，因此同样不走下面那条快照路径。
+	// 只给一端就是没得比：照常传下去的话，下面会把它当成“工作区整仓 diff”画出来，
+	// 而用户看到的会是另一回事，不如直接判为参数错误
+	from := strings.TrimSpace(r.URL.Query().Get("from"))
+	to := strings.TrimSpace(r.URL.Query().Get("to"))
+	if from != "" || to != "" {
+		handleCompareDiff(w, r, repo, from, to, filePath)
 		return
 	}
 
@@ -508,15 +524,57 @@ func findCommitFile(files []git.CommitFile, path string) (git.CommitFile, bool) 
 // resolveCommitFile 在一份改动清单里定位页面请求的文件，返回该条与要交给 git 的路径集合。
 //
 // 不在这份清单里就是没有这个文件：既挡住了路径穿越，也挡住了“拿另一次比较里的文件名来问”。
-// 清单来自 git 自己的输出，因此这一层校验等价于“这个文件确实在这次改动里”。
-// 顺带固定了另一条约定：调用方拿到的清单要与正文同宽（见 handleCommitDiff），
-// 页面是按下标把正文分段与清单对上的
+// 清单来自 git 自己的输出，因此这一层校验等价于“这个文件确实在这次改动里”
 func resolveCommitFile(files []git.CommitFile, path string) (git.CommitFile, []string, error) {
 	f, ok := findCommitFile(files, path)
 	if !ok {
 		return git.CommitFile{}, nil, &uiParamError{http.StatusNotFound, l10n.T("Unknown file", nil)}
 	}
 	return f, uiAffectedPaths(f.Path, f.OrigPath), nil
+}
+
+// handleCompareDiff 处理“两次提交之间改了什么”。
+//
+// 与 handleCommitDiff 分开的两条路径，理由和它们与工作区那条分开一样：合法输入不同，
+// 而且取的命令不同。这里必须是 git diff 两个端点的形态，不能改写成 git diff <终点>^ <终点>：
+// 起点若是仓库的第一个提交就没有父提交，那种写法会直接失败
+func handleCompareDiff(w http.ResponseWriter, r *http.Request, repo *uiRepo, from, to, filePath string) {
+	// 两个端点都会直接进 git 的命令行，因此两个都要查；少查一个就是一个参数注入的入口
+	if !validHash(from) || !validHash(to) {
+		writeUIDiffError(w, http.StatusBadRequest, l10n.T("Invalid commit hash", nil))
+		return
+	}
+
+	ctx := r.Context()
+	files, err := git.CommitRangeFiles(ctx, repo.Path, from, to)
+	if err != nil {
+		writeUIDiffError(w, statusOf(err, http.StatusInternalServerError), err.Error())
+		return
+	}
+
+	out := uiDiff{Repo: repo.Path, From: from, To: to, File: filePath}
+	var paths []string
+	if filePath != "" {
+		f, p, err := resolveCommitFile(files, filePath)
+		if err != nil {
+			writeUIDiffError(w, statusOf(err, http.StatusNotFound), err.Error())
+			return
+		}
+		out.File, out.OrigPath, out.Binary = f.Path, f.OrigPath, f.Binary
+		paths = p
+		// 清单只留这一条：页面按下标把第 i 段正文与第 i 条清单对上，正文只含一个文件而清单
+		// 是整份时，它取到的是清单的第一条，标题会写成另一个文件的名字
+		files = []git.CommitFile{f}
+	}
+
+	text, truncated, err := compareDiffText(ctx, repo.Path, from, to, paths)
+	if err != nil {
+		writeUIDiffError(w, statusOf(err, http.StatusInternalServerError), err.Error())
+		return
+	}
+	out.Truncated = truncated
+	out.Sections = []uiDiffSection{{Kind: diffKindCompare, Text: text, Files: files}}
+	writeUIDiff(w, out)
 }
 
 // commitDiffText 取一条提交的改动文本。
@@ -531,6 +589,23 @@ func commitDiffText(ctx context.Context, repoPath, hash string, paths []string) 
 	args := []string{
 		"show", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
 		"--find-renames", "--diff-merges=first-parent", "--unified=3", hash,
+	}
+	return runDiffText(ctx, repoPath, withPaths(args, paths))
+}
+
+// compareDiffText 取两次提交之间（两份树之间）的改动文本。
+//
+// 用 git diff <起点> <终点> 而不是 git diff <起点>^ <终点>：起点若是仓库的第一个提交就没有
+// 父提交，后一种写法会直接失败；而“这两棵树相差什么”本来就不需要借助父提交。
+// 这也正是它比逐个提交叠加更准的地方——中间被回退掉的改动不在结果里
+//
+// 选项与其余三处 diff 保持一致：--no-color 去转义、--no-ext-diff 挡住外部 diff 工具、
+// --no-textconv 让二进制仍被认成二进制、--unified=3 与 --find-renames 挡住用户配置
+// （diff.context / diff.renames）改变显示
+func compareDiffText(ctx context.Context, repoPath, from, to string, paths []string) (string, bool, error) {
+	args := []string{
+		"diff", "--no-color", "--no-ext-diff", "--no-textconv",
+		"--find-renames", "--unified=3", from, to,
 	}
 	return runDiffText(ctx, repoPath, withPaths(args, paths))
 }

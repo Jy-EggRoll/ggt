@@ -193,6 +193,24 @@ func DiffNumstat(ctx context.Context, repoPath string, staged bool, paths []stri
 	return parseNumstat(out), nil
 }
 
+// CommitRangeFiles 返回两次提交之间改了哪些文件、各增减多少行。
+//
+// 与 CommitFiles 的差别不只在命令上：git diff <起点> <终点> 问的是“两个端点各自的树相差什么”，
+// 而 git show <提交> 问的是“这条提交相对它的父提交做了什么”。前者不受中间那些提交影响，
+// 包括中间被回退掉的改动——看“基线 vs 数次更改之后”要的正是这个语义，
+// 把逐个提交的改动叠加起来则会看到已经回退掉的东西
+//
+// --find-renames 显式给上：用户配置里的 diff.renames 关掉改名检测时，这份清单与
+// cmd 侧那份正文（同样带 --find-renames）的分段就对不上，页面会按下标配错文件名
+func CommitRangeFiles(ctx context.Context, repoPath, from, to string) ([]CommitFile, error) {
+	out, err := RunContext(ctx, repoPath, "diff", "--numstat", "-z",
+		"--no-color", "--no-ext-diff", "--no-textconv", "--find-renames", from, to)
+	if err != nil {
+		return nil, err
+	}
+	return parseNumstat(out), nil
+}
+
 // parseNumstat 解析 --numstat -z 的输出
 func parseNumstat(out string) []CommitFile {
 	files := []CommitFile{}
