@@ -173,7 +173,7 @@
    *
    * 看板卡片的阴影拆成方位三段（--shadow-card-*）而不是一整条 box-shadow：
    * 一张卡片是多行 .row 拼出来的，每行各自画阴影，若用整圈阴影，行与行之间会互相渗色。
-   * 方位拆分后左右两侧用负收缩把垂直方向的扩散收为零，行间无缝，上沿只由 .row.head 画、
+   * 方位拆分后左右两侧用负收缩把垂直方向的扩散收为零，行间无缝，上沿只由 .row.top 画、
    * 下沿只由 .row.foot 画 */
   --shadow-key: var(--widget-shadow, transparent);
   --shadow-card-x: 8px 0 10px -8px var(--shadow-key), -8px 0 10px -8px var(--shadow-key);
@@ -494,7 +494,7 @@ body {
   border-left: 1px solid var(--card-border);
   border-right: 1px solid var(--card-border);
   /* 卡片阴影拆方位画：每行只画左右两侧（负收缩把垂直扩散收为零，行间才不互相渗色），
-     上沿与下沿分别由 .row.head 与 .row.foot 补上，拼起来正好是一整张卡片的一圈柔和阴影
+     上沿与下沿分别由 .row.top 与 .row.foot 补上，拼起来正好是一整张卡片的一圈柔和阴影
      （shadow4 档，理由见 :root 的阴影段注释） */
   box-shadow: var(--shadow-card-x);
   /* background-color 也在过渡列表里：hover 高亮（见 .row:hover）从硬切换变成 --dur-fast 的渐变，
@@ -518,14 +518,9 @@ body {
 .row.head {
   height: var(--head-h);
   line-height: var(--head-h);
+  /* 这个上边框有两种用途，取决于本行是不是卡片首行：首行靠它画卡片上沿，
+     卡片内部的仓库头行靠它把各段分开。圆角与上沿阴影不在这里，理由见 .row.top */
   border-top: 1px solid var(--card-border);
-  /* 圆角写成四个角的逻辑属性，而不是 border-radius 简写。
-     原因：一张卡片的上圆角来自 .head、下圆角来自 .foot，两者优先级相同；
-     用简写时后写的规则会整条覆盖前者，于是“只有一行”的干净仓库卡片
-     （同一行同时是 head 与 foot）就会变成上面方、下面圆。
-     逻辑属性各管各的角，天然叠加，不再互相覆盖 */
-  border-start-start-radius: var(--radius-md);
-  border-start-end-radius: var(--radius-md);
   /* 仓库名在 VSCode 里是加粗的默认前景色（scm.css 的 .monaco-highlighted-label），
      这里不额外配色：颜色全部让给变更状态，仓库层级的区分交给字重 */
   font-weight: 700;
@@ -534,23 +529,44 @@ body {
   gap: var(--sp-2);
   overflow: hidden;
   white-space: nowrap;
-  /* 卡片上沿的阴影只由头行画（拼行阴影的方位拆分，见 .row 处注释） */
+}
+
+/* 卡片的首行：上圆角与上沿阴影只由它画。
+ *
+ * 这两样原先写在 .row.head 上。那时一张卡片只有一个仓库头行（仓库本身），
+ * “是仓库头行”与“是卡片首行”恰好重合，写在哪儿都一样。工作树加进来之后，
+ * 一张卡片里可以有好几行仓库头行（宿主在首，各棵工作树依次跟在后面），
+ * 于是每一棵工作树的标题行都会再画一次卡片的上沿，在卡片内部切出一个个
+ * “上圆下方”的缺口，行与行之间那道接缝就是这么来的。
+ *
+ * 拆开之后各管各的：.row.head 管高度与字重，这里管卡片的上沿。是否首行按卡片身份判断，
+ * 与末行同一个道理，见 app.js 里标记首末行那一段
+ *
+ * 圆角写成四个角的逻辑属性而不是 border-radius 简写：首行与末行优先级相同，
+ * 用简写时后写的规则会整条覆盖前者，于是“只有一行”的干净仓库卡片
+ * （同一行既是首行也是末行）就会变成上面方、下面圆。
+ * 逻辑属性各管各的角，天然叠加，不再互相覆盖
+ */
+.row.top {
+  border-start-start-radius: var(--radius-md);
+  border-start-end-radius: var(--radius-md);
+  /* 卡片上沿的阴影只由首行画（拼行阴影的方位拆分，见 .row 处注释） */
   box-shadow: var(--shadow-card-x), var(--shadow-card-top);
 }
 
 /* 卡片的最后一行：圆角与下边框。跨列被切断的卡片，其上一段的末行没有这个类，
    视觉上就自然表现为“还没结束，下接另一列”。
-   圆角同样用逻辑属性写：只有一行时本行也是 .head，两组圆角必须能叠加（见 .row.head 处注释） */
+   圆角同样用逻辑属性写：只有一行时本行也是 .top，两组圆角必须能叠加（见 .row.top 处注释） */
 .row.foot {
   border-bottom: 1px solid var(--card-border);
   border-end-start-radius: var(--radius-md);
   border-end-end-radius: var(--radius-md);
-  /* 卡片下沿的阴影只由末行画；box-shadow 没有逻辑属性可拆，与 .row.head 的规则是
-     “整条覆盖”的关系，因此单行卡片（既是 head 又是 foot）要靠下面那条组合规则补全 */
+  /* 卡片下沿的阴影只由末行画；box-shadow 没有逻辑属性可拆，与 .row.top 的规则是
+     “整条覆盖”的关系，因此单行卡片（既是首行又是末行）要靠下面那条组合规则补全 */
   box-shadow: var(--shadow-card-x), var(--shadow-card-bottom);
 }
-/* 单行卡片：上沿、下沿、左右四段阴影一起画（head 与 foot 的规则会互相覆盖，必须组合） */
-.row.head.foot {
+/* 单行卡片：上沿、下沿、左右四段阴影一起画（首行与末行的规则会互相覆盖，必须组合） */
+.row.top.foot {
   box-shadow: var(--shadow-card-x), var(--shadow-card-top), var(--shadow-card-bottom);
 }
 
