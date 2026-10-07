@@ -431,6 +431,35 @@ func seeThrough(v string) bool {
 	return theme.Over(v, "#000000") != theme.Over(v, "#ffffff")
 }
 
+// applyShadowFloor 在主题给的阴影浅到看不见时把它压深一档，返回是否调整过。
+//
+// 为什么需要它：看板卡片是浮在页面底色上的圆角块，靠阴影被看见“浮起来了”。而主题给的
+// widget.shadow 有时根本没有这个差值——官方 2026-light 给的是全透明（差 0 级），
+// Catppuccin 四套压在自家底色上只有 4-5 级，2026-dark 的底色近黑、只剩 7.2 级，屏幕上
+// 都看不出卡片浮起来。改主题文件等于自己维护
+// 一份上游副本，上游一升级就得重做；所以这里只动我们注入的这个值（见 eggokit/theme/shadow.go）。
+//
+// 配色深浅的配对属于本项目的页面概念，因此“阴影落在哪个底色上”写在 ggt 这边，不进那个包：
+// 阴影铺在卡片的留白处，也就是页面底色（--bg，来自 editor.background），
+// 而不是卡片自己的底色——卡片上沿与下沿的阴影正是落在卡片之外的页面上
+func applyShadowFloor(vars map[string]string) bool {
+	shadow, ok := vars["widget-shadow"]
+	if !ok {
+		return false
+	}
+	bg, ok := vars["bg"]
+	if !ok {
+		return false
+	}
+	fixed, changed := theme.EnsureShadow(shadow, bg)
+	if !changed {
+		return false
+	}
+	vars["widget-shadow"] = fixed
+	return true
+
+}
+
 // themeBlock 把一套解析好的主题拼成一条 :root{...} 规则
 func themeBlock(r *theme.Resolved) string {
 	vars := make(map[string]string, len(cssVarNames)+len(themeOwnVars[r.Type]))
@@ -481,6 +510,13 @@ func themeBlock(r *theme.Resolved) string {
 	// 自己的问题，而这条日志正是“为什么和你看到的 VSCode 不一样”的唯一线索
 	if n := applyContrastFixes(vars); n > 0 {
 		logger.Debug(l10n.T("Adjusted theme colors for contrast", nil), "theme", r.ID, "count", n)
+	}
+
+	// 阴影同样要留痕：不留的话，用户看到“卡片阴影比 VSCode 里深”会以为是主题自己的问题，
+	// 而这条日志正是“为什么和你看到的不一样”的唯一线索。它排在对比度之后，因为两者改的是
+	// 不同的变量（那里改前景色，这里改 widget-shadow），顺序对结果没有影响
+	if applyShadowFloor(vars) {
+		logger.Debug(l10n.T("Adjusted the theme shadow so cards are visibly raised", nil), "theme", r.ID)
 	}
 
 	// 变量名排序后再拼：map 的遍历顺序随机，不排序则每次渲染出的 CSS 文本都不同，

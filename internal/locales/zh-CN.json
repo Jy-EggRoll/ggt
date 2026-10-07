@@ -8,6 +8,7 @@
   "Add a repository path to the config file": "添加一个仓库路径到配置文件",
   "Additional host name to accept in the Host header (repeatable)": "在 Host 请求头中额外接受的主机名（可重复指定）",
   "Address to bind (defaults to 127.0.0.1; setting 0.0.0.0 exposes the page to the local network)": "绑定地址（默认 127.0.0.1；设为 0.0.0.0 会把页面暴露给局域网）",
+  "Adjusted the theme shadow so cards are visibly raised": "为主题阴影保底，让卡片看得出是浮起来的",
   "Adjusted theme colors for contrast": "为可读性微调了主题的配色",
   "Already on the latest version": "已是最新版本",
   "Build time: {{.Time}}": "构建时间: {{.Time}}",
