@@ -1875,6 +1875,25 @@ pre.diff .meta { color: var(--text-dim); }
   background: var(--list-selected-bg, var(--hover-bg));
   outline: 1px solid var(--focus-ring);
   outline-offset: -1px;
+  color: var(--list-selected-fg);
+}
+/*
+ * 选中行里的次要文字与那个“比较”按钮。
+ *
+ * 它们平时各自取 --text-dim，那是配卡片底色的灰；行底色一换成选中蓝，这层灰就化进蓝里了——
+ * 浅色主题下实测提交号与按钮都只有 1.25:1，跟没写颜色差不多。这几处一并改用选中态的前景，
+ * 主次之分改由字号（--fs-xs）与等宽字体承担，不再靠颜色深浅：颜色深浅正是读不出来的来源
+ *
+ * 按钮的描边也跟着换成前景色。它原来那条 --card-border 同样是配卡片底色的，压在蓝底上
+ * 一样看不见；而描边属于有含义的图形，按 WCAG 也要过 3:1，跟着已过 4.5:1 的前景走最省事
+ */
+.g-row.selected .hash,
+.g-row.selected .meta,
+.g-row.selected .g-compare {
+  color: var(--list-selected-fg);
+}
+.g-row.selected .g-compare {
+  border-color: var(--list-selected-fg);
 }
 
 /*

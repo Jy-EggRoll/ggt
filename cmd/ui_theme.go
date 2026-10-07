@@ -108,6 +108,10 @@ var cssVarNames = map[string]string{
 	"editorInfo.foreground":          "status-info",
 	"toolbar.hoverBackground":        "toolbar-hover-bg",
 	"list.activeSelectionBackground": "list-selected-bg",
+	// 选中行的底色与前景是一对令牌，必须一起映射。只映射底色时，浅色主题会把深灰字压在
+	// 蓝底上：Light+ 与 Visual Studio Light 自己一个令牌都不写，全靠注册表默认值，
+	// 于是提交图里选中那一行实测只有 1.01:1，等于读不出来
+	"list.activeSelectionForeground": "list-selected-fg",
 	"keybindingLabel.background":     "kbd-bg",
 	"keybindingLabel.foreground":     "kbd-fg",
 	"keybindingLabel.border":         "kbd-border",
@@ -312,7 +316,19 @@ func systemThemeCSS(darkID, lightID string) string {
 	return b.String()
 }
 
-// contrastPairs 记录“哪些前景会被铺在哪些底色上”：键是前景的 CSS 变量名，值是该前景可能压住的底色。
+// contrastPair 是一处“前景压在底色上”。
+//
+// surface 是这些底色实际落着的表面：底色带透明度时，必须先按透明度合成到它上面再判定。
+// 把半透明底色当成不透明色来算，得出的是偏乐观的错值——2026 那两套主题的选中底色正是
+// 半透明的（#00000025 / #ffffff25），漏合成就成了“算出来 11.6:1、看着只有 3.3:1”。
+// 底色本来就不透明时这项不影响结果，留空即按页面底色 --bg 合成
+type contrastPair struct {
+	fg      string
+	bgs     []string
+	surface string
+}
+
+// contrastPairs 记录“哪些前景会被铺在哪些底色上”。
 //
 // 放在这里而不是 eggokit/theme：哪些元素成对出现属于本项目的页面概念，而那个包要整包搬进
 // 共享库给别的项目复用，不能带上 ggt 的页面知识（见该包的包注释）
@@ -320,39 +336,58 @@ func systemThemeCSS(darkID, lightID string) string {
 // hover 底色也算进来：按钮的前景在常态与 hover 两种底色下都得读得出来。主题没给
 // button.hoverBackground 时它不在 vars 里，这一项自然跳过——那时样式表回落到
 // list.hoverBackground，是个中性色，风险低得多
-var contrastPairs = map[string][]string{
-	"btn-fg":           {"btn-bg", "btn-hover-bg"},
-	"btn-secondary-fg": {"btn-secondary-bg", "btn-secondary-hover-bg"},
-	"dropdown-fg":      {"dropdown-bg"},
-	"input-fg":         {"input-bg"},
-	"badge-fg":         {"badge-bg"},
-	// 键入提示的键帽与输入框占位符也要能读出来：它们同样是“前景压在底色上”
-	"kbd-fg":            {"kbd-bg"},
-	"input-placeholder": {"input-bg"},
+var contrastPairs = []contrastPair{
+	{fg: "btn-fg", bgs: []string{"btn-bg", "btn-hover-bg"}},
+	{fg: "btn-secondary-fg", bgs: []string{"btn-secondary-bg", "btn-secondary-hover-bg"}},
+	{fg: "dropdown-fg", bgs: []string{"dropdown-bg"}},
+	{fg: "input-fg", bgs: []string{"input-bg"}},
+	{fg: "badge-fg", bgs: []string{"badge-bg"}},
+	// 键入提示的键帽与输入框占位符也要能读出来：它们同样是“前景压在底色上”。
+	// 键帽的底色在上游就带透明度，而它只出现在浮层卡片的头部，表面是卡片底色
+	{fg: "kbd-fg", bgs: []string{"kbd-bg"}, surface: "panel-bg"},
+	{fg: "input-placeholder", bgs: []string{"input-bg"}},
+	// 选中行：底色与前景成对，这里再兜一层。注册表默认值已经保证这一对齐全，而主题自己
+	// 写了值时未必协调——2026 那两套的选中底色是半透明的，只有合成到卡片底色上算，
+	// 才看得出 #757575 压在它上面读不出来
+	{fg: "list-selected-fg", bgs: []string{"list-selected-bg"}, surface: "panel-bg"},
 }
 
 // applyContrastFixes 在对比度实在不够时只调前景色的明度，返回调整过的项数。
 //
 // 底色一律不动：那是主题的设计。改上游色值等于自己维护一份主题副本，上游一升级就得重做，
 // 每套主题还都要各修一遍；而这个函数对任何主题都成立（见 eggokit/theme/contrast.go）
+//
+// 半透明底色先按透明度合成到它实际落着的表面上（theme.Over）再交给 EnsureContrast：
+// 不合成的话，一层浅灰雾会被当成它字面上那个深色来算，比值虚高。这不是假想的错法——
+// 键帽底色 #8080802b 曾被当成不透明 #808080，于是 #cccccc 被“修正”成 #161616，
+// 而它实际压在深色浮层上只剩 1.02:1，比不修还糟
 func applyContrastFixes(vars map[string]string) int {
 	adjusted := 0
-	for fgName, bgNames := range contrastPairs {
-		fg, ok := vars[fgName]
+	for _, p := range contrastPairs {
+		fg, ok := vars[p.fg]
 		if !ok {
 			continue
 		}
-		bgs := make([]string, 0, len(bgNames))
-		for _, name := range bgNames {
-			if v, ok := vars[name]; ok {
-				bgs = append(bgs, v)
+		surface := vars[p.surface]
+		if p.surface == "" {
+			surface = vars["bg"]
+		}
+		bgs := make([]string, 0, len(p.bgs))
+		for _, name := range p.bgs {
+			v, ok := vars[name]
+			if !ok {
+				continue
 			}
+			if surface != "" {
+				v = theme.Over(v, surface)
+			}
+			bgs = append(bgs, v)
 		}
 		if len(bgs) == 0 {
 			continue
 		}
 		if fixed, changed := theme.EnsureContrast(fg, bgs, theme.MinContrast); changed {
-			vars[fgName] = fixed
+			vars[p.fg] = fixed
 			adjusted++
 		}
 	}
