@@ -1941,15 +1941,27 @@ pre.diff .meta { color: var(--text-dim); }
   cursor: pointer;
 }
 .g-row .g-compare:hover {
-  background: var(--badge-bg);
+  background: var(--hover-bg);
   color: var(--text);
 }
-/* 基线态：文字换成“基线”，同时实一层底色。整行已有底色与描边，标在按钮上的是
-   “这一行的按钮此刻是另一种含义”——点它是取消，不是重新选一条基线 */
+/*
+ * 基线态：文字换成“基线”，同时实一层底色。整行已有底色与描边，标在按钮上的是
+ * “这一行的按钮此刻是另一种含义”——点它是取消，不是重新选一条基线
+ *
+ * 底色与文字取 badge 的那一对（badge.background / badge.foreground），不取 --text：
+ * 默认主题下这片蓝是 #0069CC，配 --text（#202020）实测只有 3.02:1，够不上正文的
+ * 4.5:1；同一片蓝配 badge.foreground 实测 5.39:1。更要紧的是这一对在 cmd/ui_theme.go
+ * 的 contrastPairs 里登记过，构建时由 EnsureContrast 保证每一套主题都过线，
+ * 而 --text 压在这片蓝上没有任何人保证，换个主题就可能再次读不出来
+ *
+ * 悬浮走 --hover-bg 而不是这片蓝：页面里所有小控件的悬浮反馈都是那一层淡色
+ * （见 .g-row:hover 与 .btn--secondary:hover），此前它是唯一一个一悬浮就整块变实心蓝
+ * 的控件，既与页面割裂，也会让“鼠标正经过”与“已选为基线”看起来是同一种状态
+ */
 .g-row .g-compare.is-base {
   background: var(--badge-bg);
-  border-color: var(--focus-ring);
-  color: var(--text);
+  border-color: transparent;
+  color: var(--badge-fg);
   font-weight: 600;
 }
 
