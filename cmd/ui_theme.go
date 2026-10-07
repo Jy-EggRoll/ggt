@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jy-eggroll/eggokit/fileicon"
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
 	"github.com/jy-eggroll/eggokit/theme"
@@ -345,6 +346,10 @@ type contrastPair struct {
 // 出处：https://www.w3.org/TR/WCAG22/#non-text-contrast
 const minNonTextContrast = 3.0
 
+// fileIconVarPrefix 是图标色号变量的前缀：变量名与图标包挂在图标元素上的类名共用同一段
+// 色号（file-icon-cbcb41 对应 .seti-cbcb41）。两边写法必须一致，所以只在这里写一次
+const fileIconVarPrefix = "file-icon-"
+
 // badgeMixRatio 是变体徽章把语义色掺进徽章底的比例。
 //
 // 60% 是量出来的：低于它色相看不出来，高于它文字就压不住。这里与样式表原来那个
@@ -464,41 +469,6 @@ func scaleAlpha(c string, factor float64) string {
 	return "#" + h[:6] + fmt.Sprintf("%02x", int(math.Round(a*255)))
 }
 
-// worstRatio 返回 fg 压在 bgs 里最难读的那一档上的对比度
-func worstRatio(fg string, bgs []string) float64 {
-	worst := math.MaxFloat64
-	for _, bg := range bgs {
-		if r := theme.Contrast(fg, bg); r < worst {
-			worst = r
-		}
-	}
-	return worst
-}
-
-// ensureContrastRounded 在 EnsureContrast 之后再按**取整后的真实色值**复核，不够就抬高一档目标重来。
-//
-// 为什么要复核：EnsureContrast 挑的是“刚过线”的那一档明度，判线时用未取整的通道值，返回前却把
-// 通道四舍五入成整数（见 eggokit/theme/contrast.go 的 hex）。这一步取整会把结果拉回线下——
-// 实测 Catppuccin Frappe 的领先徽章 4.49:1、dark_modern 悬停时的错误徽章 4.4997:1。这是取整的
-// 必然边界，不是谁算错了，所以在调用方补一档，而不是去改那个共用函数（它按未取整值判定本身是对的）
-//
-// 复核不过时**不能只是把结果喂回去**：每次都从当前明度取“第一个刚过线的档”，喂回去仍停在同一条
-// 边界上，四舍五入后还是差那一丝。要抬高目标值（多要 0.05、再要 0.15），它才会真的往前走一档
-func ensureContrastRounded(fg string, bgs []string, min float64) (string, bool) {
-	cur, changed := fg, false
-	for _, target := range []float64{min, min + 0.05, min + 0.15} {
-		next, ok := theme.EnsureContrast(cur, bgs, target)
-		if !ok {
-			return cur, changed
-		}
-		cur, changed = next, true
-		if worstRatio(cur, bgs) >= min {
-			return cur, changed
-		}
-	}
-	return cur, changed
-}
-
 // headRowSurfaces 返回徽章实际落着的那几种底色（不透明）。
 //
 // 徽章只出现在 .row.head（仓库头行），而 .row 自己不铺底色：行是透明的，所以徽章背后就是
@@ -564,7 +534,7 @@ func applyBadgeFixes(vars map[string]string) int {
 		for _, s := range surfaces {
 			bgs = append(bgs, theme.Over(base, s))
 		}
-		if fixed, changed := ensureContrastRounded(fg, bgs, theme.MinContrast); changed {
+		if fixed, changed := theme.EnsureContrast(fg, bgs, theme.MinContrast); changed {
 			vars[name] = fixed
 			adjusted++
 		}
@@ -594,7 +564,7 @@ func applyBadgeMixFixes(vars map[string]string) int {
 			continue
 		}
 		mixed := mixInto(seed, base, badgeMixRatio)
-		if fixed, changed := ensureContrastRounded(mixed, []string{fg}, theme.MinContrast); changed {
+		if fixed, changed := theme.EnsureContrast(mixed, []string{fg}, theme.MinContrast); changed {
 			mixed = fixed
 			adjusted++
 		}
@@ -603,44 +573,82 @@ func applyBadgeMixFixes(vars map[string]string) int {
 	return adjusted
 }
 
-// applyFileIconFix 给文件类型图标挑一个在它实际落着的行底色上都读得出的颜色。
+// applyFileIconFix 给文件类型图标的**每一档类型色**按它实际落着的行底色兜底。
 //
-// 图标按非文字算，门槛 3:1。行底色不止一种：普通行是卡片底色，状态行是在卡片底色上按
-// 9% / 12% / 18% 掺进各自的 gitDecoration 色（见 style.css 的 .row.file.g-*），hover 再叠
-// 一层。取最差的那个判：最差的一层过了，其余都过
+// 为什么不能整类覆盖：图标自带的类型色是照编辑器底色挑的（go 的蓝、js 的黄、png 的紫……），
+// 把 .seti 一律盖成某一个颜色，等于把这些类型色全抹平。所以按色号逐档判：读得出的那几档
+// 原样保留，只有读不出的才挪明度（色相与饱和度不动，用户仍认得出那是哪个类型色）。
 //
-// 种子取 --text-dim（descriptionForeground）：文件类型图标是「次要信息」那一档的装饰，
-// 主题对它的意图就是这个色；不够读时才挪明度
+// 图标按非文字算，门槛 3:1（WCAG 2.2 的 1.4.11）。行底色不止一种：普通行是卡片底色，状态行
+// 是在卡片底色上按 9% / 12% / 18% 掺进各自的 gitDecoration 色（见 style.css 的 .row.file.g-*），
+// hover 再叠一层，选中行又是另一种。取最差的那个判：最差的一层过了，其余都过
+//
+// 色号清单来自图标包（fileicon.Palette），它覆盖深色与浅色两份平行表：客户端按系统偏好
+// 挑其中一份，服务端并不知道会挑哪一份，所以两边的色号都要判到
 func applyFileIconFix(vars map[string]string) int {
-	seed, card := vars["text-dim"], vars["card-bg"]
-	if seed == "" || card == "" {
+	surfaces := fileIconSurfaces(func(name string) string { return vars[name] })
+	if len(surfaces) == 0 {
 		return 0
+	}
+	adjusted := 0
+	for _, color := range fileicon.Palette() {
+		fixed, changed := theme.EnsureContrast(color, surfaces, minNonTextContrast)
+		if !changed {
+			continue
+		}
+		vars[fileIconVarPrefix+iconColorSlot(color)] = fixed
+		adjusted++
+	}
+	return adjusted
+}
+
+// fileIconSurfaces 返回文件类型图标实际落着的每一种底色（不透明）。
+//
+// 图标出现在两处：看板的文件行（卡片底，状态行再按 maxRowTintRatio 掺进各自的 gitDecoration
+// 色）与卡片浮层的文件列表（浮层底 panel-bg，其下是页面底 bg）。hover 是叠在这些底色之上的
+// 一层，所以每一种都要各算一遍
+//
+// 这里**不含选中行**（--list-selected-bg）：选中只发生在提交图上（.g-row.selected），
+// 文件行没有选中态。曾经把它算进来过，后果是浅色主题里那层实心蓝（light_plus 的 #0060c0）
+// 让 22 档类型色全部不达标，于是整盘颜色被一起抬高——那正是「图标颜色被取缔」的样子
+//
+// 参数做成「按名字取色值」而不是直接收一张表：这份名字清单只该存在于这里一处。生产代码与
+// 测试各抄一份的话，抄漏一个名字不会报任何错，只是那一处底色悄悄不参与判定
+func fileIconSurfaces(lookup func(string) string) []string {
+	card := lookup("card-bg")
+	if card == "" {
+		return nil
 	}
 	plain := []string{card}
 	for _, name := range []string{
 		"git-modified", "git-added", "git-deleted", "git-untracked", "git-renamed",
 		"git-conflicting", "git-ignored", "git-stage-modified", "git-stage-deleted",
 	} {
-		if c := vars[name]; c != "" {
+		if c := lookup(name); c != "" {
 			plain = append(plain, mixInto(c, card, maxRowTintRatio))
 		}
 	}
-	if sel := vars["list-selected-bg"]; sel != "" {
-		plain = append(plain, theme.Over(sel, card))
-	}
-	// hover 是叠在行底色之上的一层，四种底色各自都要算：只算普通行会漏掉「选中再 hover」
-	surfaces := append([]string{}, plain...)
-	if hover := vars["hover-bg"]; hover != "" {
-		for _, s := range plain {
-			surfaces = append(surfaces, theme.Over(hover, s))
+	for _, name := range []string{"panel-bg", "bg"} {
+		if v := lookup(name); v != "" {
+			plain = append(plain, v)
 		}
 	}
-	if fixed, changed := ensureContrastRounded(seed, surfaces, minNonTextContrast); changed {
-		vars["file-icon"] = fixed
-		return 1
+	out := append([]string{}, plain...)
+	if hover := lookup("hover-bg"); hover != "" {
+		for _, s := range plain {
+			out = append(out, theme.Over(hover, s))
+		}
 	}
-	vars["file-icon"] = seed
-	return 0
+	return out
+}
+
+// iconColorSlot 把色号化成变量名与类名里的一段：去掉开头的 # 并转小写。
+//
+// 契约的另一半在图标包里（eggokit/fileicon 的 seti.js，它按同样的写法给图标元素加
+// seti-<色号> 这个类名）。两边写法必须一致，不一致这套覆盖会**静默失效**——页面看起来
+// 只是颜色没兜住，不会有任何报错
+func iconColorSlot(color string) string {
+	return strings.ToLower(strings.TrimPrefix(color, "#"))
 }
 
 // applyContrastFixes 在对比度实在不够时只调那一处颜色的明度，返回调整过的项数。
@@ -682,7 +690,7 @@ func applyContrastFixes(vars map[string]string) int {
 		if min == 0 {
 			min = theme.MinContrast
 		}
-		if fixed, changed := ensureContrastRounded(fg, bgs, min); changed {
+		if fixed, changed := theme.EnsureContrast(fg, bgs, min); changed {
 			vars[p.fg] = fixed
 			adjusted++
 		}
@@ -822,5 +830,19 @@ func themeBlock(r *theme.Resolved) string {
 		b.WriteString(";")
 	}
 	b.WriteString("}")
+	// 图标色号的覆盖规则跟变量贴在一起发出：它们引用上面的变量，读起来是一条链。
+	// 类名由图标包挂在图标元素上（seti-<色号>），这里只覆盖读不出的那几档。
+	// !important 是必须的：图标包把类型色写成了内联样式，只有它能压得住
+	for _, name := range names {
+		slot, ok := strings.CutPrefix(name, fileIconVarPrefix)
+		if !ok {
+			continue
+		}
+		b.WriteString(".seti-")
+		b.WriteString(slot)
+		b.WriteString("{color:var(--")
+		b.WriteString(name)
+		b.WriteString(")!important}")
+	}
 	return b.String()
 }

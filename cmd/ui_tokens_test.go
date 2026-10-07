@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jy-eggroll/eggokit/fileicon"
 	"github.com/jy-eggroll/eggokit/theme"
 )
 
@@ -248,32 +249,26 @@ func TestBadgeTextMeetsContrast(t *testing.T) {
 		// 徽章只出现在 .row.head（仓库头行），而 .row 自己不铺底色、行是透明的，
 		// 所以徽章背后就是卡片底 --card-bg；工作树头行再叠 6% 的 --text-dim，鼠标掠过叠 --hover-bg
 		//
-		// 文件类型图标落在文件行上，那里的底色是「卡片底掺语义色」，最浓一档 18%（g-index）
+		// 徽章只出现在 .row.head（仓库头行），而 .row 自己不铺底色、行是透明的，
+		// 所以徽章背后就是卡片底 --card-bg；工作树头行再叠 6% 的 --text-dim，鼠标掠过叠 --hover-bg
+		//
+		// 图标那几种底色不在这里拼：由 fileIconSurfaces 算，生产代码用的是同一个函数。
+		// 这里曾各自抄过一份，两份对不上也没有任何症状——旧断言只查「兜底后的值够不够」，
+		// 兜多兜少它看不出来
 		badgeSurfaces := make([]string, 0, 6)
-		iconSurfaces := make([]string, 0, 16)
 		card := parse(css, "card-bg")
 		if card != "" {
 			badgeSurfaces = append(badgeSurfaces, card)
-			iconSurfaces = append(iconSurfaces, card)
 			// 工作树头行的淡染：color-mix(text-dim 6%, transparent) 叠在卡片底上
 			if dim := parse(css, "text-dim"); dim != "" {
 				badgeSurfaces = append(badgeSurfaces, theme.Over(scaleAlpha(dim, 0.06), card))
 			}
-			for _, name := range []string{"git-modified", "git-added", "git-deleted", "git-untracked", "git-conflicting"} {
-				if c := parse(css, name); c != "" {
-					iconSurfaces = append(iconSurfaces, mixInto(c, card, maxRowTintRatio))
-				}
-			}
 		}
-		for _, name := range []string{"panel-bg", "bg"} {
-			if v := parse(css, name); v != "" {
-				iconSurfaces = append(iconSurfaces, v)
-			}
-		}
+		iconSurfaces := fileIconSurfaces(func(name string) string { return parse(css, name) })
 		if len(badgeSurfaces) == 0 || len(iconSurfaces) == 0 {
 			t.Fatalf("主题 %s 渲染后取不到卡片底色，这条断言失去判定对象", th.ID)
 		}
-		// hover 是叠在底色之上的一层，两种元素各自的底色都要各算一次
+		// hover 是叠在底色之上的一层，徽章那几种底色各算一次（图标那几种已在 fileIconSurfaces 里叠过）
 		addHover := func(list []string) []string {
 			hover := parse(css, "hover-bg")
 			if hover == "" {
@@ -286,7 +281,6 @@ func TestBadgeTextMeetsContrast(t *testing.T) {
 			return out
 		}
 		badgeSurfaces = addHover(badgeSurfaces)
-		iconSurfaces = addHover(iconSurfaces)
 
 		check := func(label, fgVar string, bg string, surfaces []string, min float64) {
 			fg := parse(css, fgVar)
@@ -325,24 +319,54 @@ func TestBadgeTextMeetsContrast(t *testing.T) {
 		for _, m := range badgeSurfaceMixes {
 			check(m.name+" 上的徽章文字", "badge-fg", parse(css, m.name), badgeSurfaces, wantText)
 		}
-		// 文件图标的底色是行底色本身，素材就是 iconSurfaces
-		icon := parse(css, "file-icon")
-		if icon == "" {
-			t.Errorf("主题 %s 渲染后没有 --file-icon：文件类型图标会回落到 --text-dim，"+
-				"实测 12 套主题只有 1.38-1.59:1", th.ID)
-		} else {
-			worst := math.MaxFloat64
-			worstBg := ""
+		// 文件图标：Go 侧按图标包给的色号逐档判，只把读不出的那几档写成变量。
+		// 这里要一起断言两件事——读不出的必须兜到 3:1；读得出的必须**没有**变量。
+		// 后半件同样重要：整类覆盖过一次，结果是 go 的蓝、js 的黄、png 的紫全变成同一种灰
+		palette := fileicon.Palette()
+		if len(palette) == 0 {
+			t.Fatalf("主题 %s：拿不到图标色号清单，图标兜底没有判定对象", th.ID)
+		}
+		adjusted := 0
+		for _, color := range palette {
+			slot := strings.ToLower(strings.TrimPrefix(color, "#"))
+			fixed := parse(css, fileIconVarPrefix+slot)
+
+			worst, worstBg := math.MaxFloat64, ""
 			for _, s := range iconSurfaces {
-				if got := theme.Contrast(icon, s); got < worst {
+				if got := theme.Contrast(color, s); got < worst {
 					worst, worstBg = got, s
 				}
 			}
-			if worst < wantIcon {
-				t.Errorf("主题 %s 的文件类型图标 %s 压在 %s 上只有 %.2f:1，达不到 %.1f:1",
-					th.ID, icon, worstBg, worst, wantIcon)
+			if worst >= wantIcon {
+				if fixed != "" {
+					t.Errorf("主题 %s：图标色 %s 本来就有 %.2f:1，却仍被改成 %s（读得出的类型色不该被动）",
+						th.ID, color, worst, fixed)
+				}
+				continue
 			}
-			t.Logf("%s 的文件类型图标 %s 最差 %.2f:1（压在 %s 上）", th.ID, icon, worst, worstBg)
+			if fixed == "" {
+				t.Errorf("主题 %s：图标色 %s 压在 %s 上只有 %.2f:1，却没有兜底变量",
+					th.ID, color, worstBg, worst)
+				continue
+			}
+			adjusted++
+			got, gotBg := math.MaxFloat64, ""
+			for _, s := range iconSurfaces {
+				if r := theme.Contrast(fixed, s); r < got {
+					got, gotBg = r, s
+				}
+			}
+			if got < wantIcon {
+				t.Errorf("主题 %s：图标色 %s 兜成了 %s，压在 %s 上仍只有 %.2f:1",
+					th.ID, color, fixed, gotBg, got)
+			}
+			// 覆盖规则也必须真的发出去，且引用的是同一枚变量：规则拼错时页面不会报错，
+			// 只是颜色没兜住，所以这条断言是这套机制唯一的哨兵
+			rule := ".seti-" + slot + "{color:var(--" + fileIconVarPrefix + slot + ")!important}"
+			if !strings.Contains(css, rule) {
+				t.Errorf("主题 %s：缺少图标覆盖规则 %s", th.ID, rule)
+			}
 		}
+		t.Logf("%s：%d 档图标色里兜了 %d 档", th.ID, len(palette), adjusted)
 	}
 }
