@@ -594,15 +594,31 @@ body {
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
-.badge.err { color: var(--status-error, var(--git-conflicting)); }
+/* 错误徽章的文字色由 Go 侧单独兜（--badge-err-fg 的种子是 status-error，上游没给时回落
+   git-conflicting），而不是直接引用 --status-error：那个色还要在别处当错误文本用，
+   把它拉进对比度校验表会连带改掉那些表面，而这里只需要它在徽章底上读得出来 */
+.badge.err { color: var(--badge-err-fg, var(--git-conflicting)); }
 
 /*
  * 子模块身份徽章与“已提交未推送”徽章：都只改**底色**——把各自的语义色掺进 .badge 自带的
- * badge.background，文字色仍用 .badge 的 badge-fg（主题作者保证它与徽章底对比良好）
+ * badge.background，文字色仍用 .badge 的 badge-fg
  *
- * 掺 60% 是量出来的、不是随手取的：低于它色相看不出来，高于它白字就压不住。
- * 实测本色板下领先徽章 5.7:1、子模块 3.3:1；深色主题里语义色是浅色，
- * 掺进深蓝底后仍能保持 3.3:1 上下，两个方向都过 3:1 这条线
+ * 掺 60% 是量出来的、不是随手取的：低于它色相看不出来，高于它文字就压不住。
+ *
+ * 这三个底色**不再在这里现算**，改由 Go 侧（cmd/ui_theme.go 的 applyBadgeMixFixes）算出
+ * 不透明色值再发过来。原因有两层，都是实测出来的：
+ *
+ * 一是可校验。混色留在样式表里时，对比度校验表只认识 badge-bg，三枚混出来的底色从来没进过
+ * 校验——Catppuccin Latte 下工作树 2.00:1、子模块 2.45:1、领先 3.10:1，三枚全不合格却一直
+ * 没人发现。混色到了 Go 侧，它就能按 --badge-fg 兜到 4.5:1。
+ *
+ * 二是底色必须不透明。color-mix 的结果是半透明的（语义色自身带透明度时尤其明显），
+ * 而徽章压在哪种行底色上由行决定——普通行、三种状态淡染行、hover 叠色各不相同，同一个变量
+ * 在四种行上就是四种观感，对比度无从守住。先合成成具体色值，徽章底就与背后的行无关了。
+ *
+ * 兜底的方向是反的：调的是**底色**、不是文字色。--badge-fg 还被别处引用、不能动，而且深色
+ * 主题里它是白色、没法再往亮调；对比度是对称的，把混出来的底色当“前景”传给 EnsureContrast，
+ * 它就会沿明度轴（色相与饱和度不动）把底色挪到刚过 4.5:1。
  *
  * 两次走错的路记在这里，免得再犯：
  * 一是把语义色同时当底色和文字色（暗底配暗字，实测领先 1.2:1，字糊在底色里）；
@@ -614,7 +630,7 @@ body {
   /* 子模块色取自 gitDecoration.submoduleResourceForeground：这是 VSCode 给“子模块资源”的专用色，
      主题作者已经在里面表达过意图，不该另挑一个。缺值时回落 focus-border——
      上游对该键没有默认值，能给出取值的只有主题文件 */
-  background: color-mix(in srgb, var(--git-submodule, var(--focus-border)) 60%, var(--badge-bg));
+  background: var(--badge-sub-bg, var(--badge-bg));
 }
 
 /*
@@ -626,7 +642,7 @@ body {
  * 未推送只是待办，不是错误
  */
 .badge.ahead {
-  background: color-mix(in srgb, var(--git-added) 60%, var(--badge-bg));
+  background: var(--badge-ahead-bg, var(--badge-bg));
 }
 
 /*
@@ -635,11 +651,22 @@ body {
  * 徽章用中性色，不另占一个语义色：子模块用的是专用语义色，因为它表达的是**归属**
  * （它是别人仓库的一部分）；工作树表达的是**副本**（同一仓库的另一份工作区），
  * 与“哪里改了、推没推”这些真正的状态不是一类东西，抢了颜色反而像又一种待办。
- * 掺色比例仍取 60%，与 sub / ahead 两枚一致：低于它色相看不出来，高于它白字压不住
+ * 掺色比例仍取 60%，与 sub / ahead 两枚一致：低于它色相看不出来，高于它文字压不住
  */
 .badge.wt {
-  background: color-mix(in srgb, var(--text-dim) 60%, var(--badge-bg));
+  background: var(--badge-wt-bg, var(--badge-bg));
 }
+
+/*
+ * 文件类型图标（.seti）。图标字体在 eggokit/fileicon 里，它给每个图标写了内联 color，
+ * 所以这里只有 !important 盖得住；部署时 fileicon/seti.css 先加载，本文件在后，
+ * 同一层优先级下后面的规则胜出，加上 !important 就更没有悬念
+ *
+ * 底色不是一种：图标落在文件行上，而文件行有普通、三种状态淡染、hover 叠色这几种底色。
+ * --file-icon 由 Go 侧（applyFileIconFix）按最差的那一种兜到 3:1——图标不是文字，
+ * 门槛按 WCAG 2.2 的 1.4.11 取 3:1，而不是正文的 4.5:1
+ */
+.seti { color: var(--file-icon, var(--text-dim)) !important; }
 
 /*
  * 工作树的标题行淡一层底色，表示它从属于上方那张卡片的宿主。

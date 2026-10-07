@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"io/fs"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -203,5 +204,145 @@ func TestControlBorderMeetsNonTextContrast(t *testing.T) {
 		}
 		// 量到的值也写进日志：这条断言只判“过没过线”，而人想知道它究竟被调成了什么色
 		t.Logf("%s 的输入控件边界调成 %s，最差 %.2f:1", th.ID, border, worst)
+	}
+}
+
+// TestBadgeTextMeetsContrast 断言每一套内置主题里，各枚徽章的文字都在它实际落着的底色上读得出来，
+// 文件类型图标也在它实际落着的行底色上读得出来。
+//
+// 这条断言针对的是一类“算不到”的缺陷，而不是算错了：三枚变体徽章的底色曾经在样式表里用
+// color-mix 现算，对比度校验表只认识 badge-bg，混出来的三种底色从来没被看过一眼，于是
+// Catppuccin Latte 下工作树 2.00:1、子模块 2.45:1、领先 3.10:1 全部漏了过去；错误徽章的文字
+// 直接引用 status-error，12 套主题全部不达标（最差 1.14:1）；文件类型图标的颜色由图标包内联
+// 写死，12 套主题共用一个值，实测只有 1.38-1.59:1。
+//
+// 这三处现在都由 themeBlock 兜底（见 applyBadgeMixFixes / applyFileIconFix），本条断言守住结果。
+// 判据与真实渲染一致：徽章文字与文件图标都是“压在某种底色上”，底色要先按自身透明度合成到
+// 它落着的表面上；而徽章与图标出现的地方不止一种表面（卡片底、状态行三档淡染、hover 叠色），
+// 每一种都要判——混色底已经是不透明色，这一层合成对它们是空操作，对 badge-bg 这类半透明底色
+// 则是必需的
+func TestBadgeTextMeetsContrast(t *testing.T) {
+	themes := theme.Available(nil)
+	if len(themes) == 0 {
+		t.Fatal("一套内置主题都没列出来，说明内置主题的打包或列举方式已经变了")
+	}
+
+	// 徽章里的字是正文，按 WCAG 2.2 的 1.4.3 取 4.5:1；文件类型图标不是文字，
+	// 按 1.4.11 取 3:1
+	const wantText = theme.MinContrast
+	const wantIcon = 3.0
+
+	parse := func(css, name string) string {
+		m := regexp.MustCompile(`--` + regexp.QuoteMeta(name) + `:([^;}]+)`).FindStringSubmatch(css)
+		if m == nil {
+			return ""
+		}
+		return strings.TrimSpace(m[1])
+	}
+
+	for _, th := range themes {
+		css := systemThemeCSS(th.ID, th.ID)
+
+		// 徽章与图标落着的表面，两类元素分开收集，因为它们出现的地方不同：
+		//
+		// 徽章只出现在 .row.head（仓库头行），而 .row 自己不铺底色、行是透明的，
+		// 所以徽章背后就是卡片底 --card-bg；工作树头行再叠 6% 的 --text-dim，鼠标掠过叠 --hover-bg
+		//
+		// 文件类型图标落在文件行上，那里的底色是「卡片底掺语义色」，最浓一档 18%（g-index）
+		badgeSurfaces := make([]string, 0, 6)
+		iconSurfaces := make([]string, 0, 16)
+		card := parse(css, "card-bg")
+		if card != "" {
+			badgeSurfaces = append(badgeSurfaces, card)
+			iconSurfaces = append(iconSurfaces, card)
+			// 工作树头行的淡染：color-mix(text-dim 6%, transparent) 叠在卡片底上
+			if dim := parse(css, "text-dim"); dim != "" {
+				badgeSurfaces = append(badgeSurfaces, theme.Over(scaleAlpha(dim, 0.06), card))
+			}
+			for _, name := range []string{"git-modified", "git-added", "git-deleted", "git-untracked", "git-conflicting"} {
+				if c := parse(css, name); c != "" {
+					iconSurfaces = append(iconSurfaces, mixInto(c, card, maxRowTintRatio))
+				}
+			}
+		}
+		for _, name := range []string{"panel-bg", "bg"} {
+			if v := parse(css, name); v != "" {
+				iconSurfaces = append(iconSurfaces, v)
+			}
+		}
+		if len(badgeSurfaces) == 0 || len(iconSurfaces) == 0 {
+			t.Fatalf("主题 %s 渲染后取不到卡片底色，这条断言失去判定对象", th.ID)
+		}
+		// hover 是叠在底色之上的一层，两种元素各自的底色都要各算一次
+		addHover := func(list []string) []string {
+			hover := parse(css, "hover-bg")
+			if hover == "" {
+				return list
+			}
+			out := append([]string{}, list...)
+			for _, s := range list {
+				out = append(out, theme.Over(hover, s))
+			}
+			return out
+		}
+		badgeSurfaces = addHover(badgeSurfaces)
+		iconSurfaces = addHover(iconSurfaces)
+
+		check := func(label, fgVar string, bg string, surfaces []string, min float64) {
+			fg := parse(css, fgVar)
+			if fg == "" {
+				t.Errorf("主题 %s 渲染后没有 --%s：%s 会回落到别处的颜色，对比度不再受这条断言约束",
+					th.ID, fgVar, label)
+				return
+			}
+			if bg == "" {
+				t.Errorf("主题 %s 渲染后没有这枚徽章的底色，%s 的判定失去对象", th.ID, label)
+				return
+			}
+			// 底色先合成到每一种表面上：不透明的底色（三枚混色底）合成后就是它自己，
+			// 这一步是空操作；半透明底色（badge-bg 在某些主题里）则必须逐个表面判
+			backgrounds := make([]string, 0, len(surfaces))
+			for _, s := range surfaces {
+				backgrounds = append(backgrounds, theme.Over(bg, s))
+			}
+			worst, worstBg := math.MaxFloat64, ""
+			for _, b := range backgrounds {
+				got := theme.Contrast(fg, b)
+				if got < worst {
+					worst, worstBg = got, b
+				}
+			}
+			if worst < min {
+				t.Errorf("主题 %s 的%s %s 压在 %s 上只有 %.2f:1，达不到 %.1f:1",
+					th.ID, label, fg, worstBg, worst, min)
+			}
+			t.Logf("%s 的%s %s 最差 %.2f:1（压在 %s 上）", th.ID, label, fg, worst, worstBg)
+		}
+
+		badgeBg := parse(css, "badge-bg")
+		check("徽章文字", "badge-fg", badgeBg, badgeSurfaces, wantText)
+		check("错误徽章文字", "badge-err-fg", badgeBg, badgeSurfaces, wantText)
+		for _, m := range badgeSurfaceMixes {
+			check(m.name+" 上的徽章文字", "badge-fg", parse(css, m.name), badgeSurfaces, wantText)
+		}
+		// 文件图标的底色是行底色本身，素材就是 iconSurfaces
+		icon := parse(css, "file-icon")
+		if icon == "" {
+			t.Errorf("主题 %s 渲染后没有 --file-icon：文件类型图标会回落到 --text-dim，"+
+				"实测 12 套主题只有 1.38-1.59:1", th.ID)
+		} else {
+			worst := math.MaxFloat64
+			worstBg := ""
+			for _, s := range iconSurfaces {
+				if got := theme.Contrast(icon, s); got < worst {
+					worst, worstBg = got, s
+				}
+			}
+			if worst < wantIcon {
+				t.Errorf("主题 %s 的文件类型图标 %s 压在 %s 上只有 %.2f:1，达不到 %.1f:1",
+					th.ID, icon, worstBg, worst, wantIcon)
+			}
+			t.Logf("%s 的文件类型图标 %s 最差 %.2f:1（压在 %s 上）", th.ID, icon, worst, worstBg)
+		}
 	}
 }

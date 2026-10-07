@@ -9,7 +9,10 @@
 package cmd
 
 import (
+	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jy-eggroll/eggokit/l10n"
@@ -336,9 +339,26 @@ type contrastPair struct {
 	min     float64
 }
 
-// minControlBorderContrast 是「识别一个控件所必需的边界」的门槛。
-// 出处：WCAG 2.2 成功准则 1.4.11 Non-text Contrast（https://www.w3.org/TR/WCAG22/#non-text-contrast）
-const minControlBorderContrast = 3.0
+// minNonTextContrast 是「不是文字、但读不读得出决定信息能否传达」的那类元素的门槛。
+// 控件边界与文件类型图标都按它判：WCAG 2.2 的 1.4.3 要求正文 4.5:1，
+// 1.4.11 Non-text Contrast 对图形与控件边界只要求 3:1
+// 出处：https://www.w3.org/TR/WCAG22/#non-text-contrast
+const minNonTextContrast = 3.0
+
+// badgeMixRatio 是变体徽章把语义色掺进徽章底的比例。
+//
+// 60% 是量出来的：低于它色相看不出来，高于它文字就压不住。这里与样式表原来那个
+// color-mix 的 60% 是同一个数，改动只是把混色从样式表搬到 Go（见 applyBadgeMixFixes）
+const badgeMixRatio = 0.6
+
+// maxRowTintRatio 是文件行状态底色里最浓的那一档（g-index 是 18%，见 style.css 的
+// .row.file.g-* 三条规则）。判断文件图标读不读得出来时按最浓的一档算，
+// 于是三档一起达标
+const maxRowTintRatio = 0.18
+
+// headRowTintRatio 是工作树头行那层淡染的浓度（style.css 的 .row.head.wt 是
+// color-mix(text-dim 6%, transparent)）
+const headRowTintRatio = 0.06
 
 // contrastPairs 记录“哪些前景会被铺在哪些底色上”。
 //
@@ -353,7 +373,8 @@ var contrastPairs = []contrastPair{
 	{fg: "btn-secondary-fg", bgs: []string{"btn-secondary-bg", "btn-secondary-hover-bg"}},
 	{fg: "dropdown-fg", bgs: []string{"dropdown-bg"}},
 	{fg: "input-fg", bgs: []string{"input-bg"}},
-	{fg: "badge-fg", bgs: []string{"badge-bg"}},
+	// 徽章不在这张表里，另见 applyBadgeFixes：它们背后的表面不是一种（卡片底、hover 叠色、
+	// 工作树头行的淡染），而这张表一个 contrastPair 只能指定一个 surface
 	// 键入提示的键帽与输入框占位符也要能读出来：它们同样是“前景压在底色上”。
 	// 键帽的底色在上游就带透明度，而它只出现在浮层卡片的头部，表面是卡片底色
 	{fg: "kbd-fg", bgs: []string{"kbd-bg"}, surface: "panel-bg"},
@@ -369,7 +390,257 @@ var contrastPairs = []contrastPair{
 	//
 	// 只要求它对着控件外面那层底色读得出来，不要求再与控件自己的填色拉开：后者是同一条视觉
 	// 信息，强行拉会让每个输入框都变成一道重框
-	{fg: "input-border", bgs: []string{"card-bg", "panel-bg"}, min: minControlBorderContrast},
+	{fg: "input-border", bgs: []string{"card-bg", "panel-bg"}, min: minNonTextContrast},
+}
+
+// badgeSurfaceMixes 是「底色由语义色混出来」的那几枚徽章：子模块、领先 N、工作树。
+//
+// 三枚同一个构造：seed 是本项目的语义令牌，name 是发给样式表的不透明底色变量，
+// fallback 是上游没给该键时的回落令牌（与样式表原来的回落保持一致）。
+//
+// 混色从样式表搬到 Go 的唯一理由是**可校验**：底色在样式表里现算，校验表就只认识
+// badge-bg，混出来的三种底色从来没被看过一眼——Catppuccin Latte 下工作树 2.00:1、
+// 子模块 2.45:1、领先 3.10:1 全部漏了过去
+var badgeSurfaceMixes = []struct {
+	name     string
+	seed     string
+	fallback string
+}{
+	{"badge-sub-bg", "git-submodule", "focus-border"},
+	{"badge-ahead-bg", "git-added", ""},
+	{"badge-wt-bg", "text-dim", ""},
+}
+
+// mixInto 把 seed 按 ratio 混进 base，返回**不透明**色。
+//
+// 必须不透明：徽章压在行底色上，而行底色不止一种（普通行、三种状态淡染行、hover 叠色），
+// 半透明的混色底最后成什么颜色由这一层决定，对比度也就无从守住。先合成成具体色值，
+// 徽章底就与背后的行无关了
+//
+// 混法照 CSS color-mix 的语义：把 seed 自身的透明度乘上 ratio，再合成到 base 上。
+// 主题作者常把前景色写成带透明度的形式，这一步同时把「它占多少份量」算对
+func mixInto(seed, base string, ratio float64) string {
+	return theme.Over(scaleAlpha(seed, ratio), base)
+}
+
+// scaleAlpha 把十六进制颜色的透明度乘以 factor，其余部分不动。
+//
+// 只认十六进制：eggokit 没有导出「设透明度」的接口，而 #rrggbb 这套写法覆盖本项目全部主题
+// 令牌。别的写法（rgb() 之类）原样返回，theme.Over 会按它自带的透明度合成——结果同样是不
+// 透明色，只是「掺 60%」这档份量退化成它原本的透明度。这样比在 ggt 里再写一份完整的颜色
+// 解析要好：那份活儿属于 eggokit/theme（见 seeThrough 里同样的取舍）
+func scaleAlpha(c string, factor float64) string {
+	if !strings.HasPrefix(c, "#") {
+		return c
+	}
+	h := c[1:]
+	switch len(h) {
+	case 3, 4:
+		// #rgb / #rgba 先补成 #rrggbb / #rrggbbaa
+		expanded := make([]byte, 0, len(h)*2)
+		for i := 0; i < len(h); i++ {
+			expanded = append(expanded, h[i], h[i])
+		}
+		h = string(expanded)
+	case 6, 8:
+	default:
+		return c
+	}
+	a := 1.0
+	if len(h) == 8 {
+		v, err := strconv.ParseUint(h[6:8], 16, 8)
+		if err != nil {
+			return c
+		}
+		a = float64(v) / 255
+	}
+	a *= factor
+	if a < 0 {
+		a = 0
+	}
+	if a > 1 {
+		a = 1
+	}
+	return "#" + h[:6] + fmt.Sprintf("%02x", int(math.Round(a*255)))
+}
+
+// worstRatio 返回 fg 压在 bgs 里最难读的那一档上的对比度
+func worstRatio(fg string, bgs []string) float64 {
+	worst := math.MaxFloat64
+	for _, bg := range bgs {
+		if r := theme.Contrast(fg, bg); r < worst {
+			worst = r
+		}
+	}
+	return worst
+}
+
+// ensureContrastRounded 在 EnsureContrast 之后再按**取整后的真实色值**复核，不够就抬高一档目标重来。
+//
+// 为什么要复核：EnsureContrast 挑的是“刚过线”的那一档明度，判线时用未取整的通道值，返回前却把
+// 通道四舍五入成整数（见 eggokit/theme/contrast.go 的 hex）。这一步取整会把结果拉回线下——
+// 实测 Catppuccin Frappe 的领先徽章 4.49:1、dark_modern 悬停时的错误徽章 4.4997:1。这是取整的
+// 必然边界，不是谁算错了，所以在调用方补一档，而不是去改那个共用函数（它按未取整值判定本身是对的）
+//
+// 复核不过时**不能只是把结果喂回去**：每次都从当前明度取“第一个刚过线的档”，喂回去仍停在同一条
+// 边界上，四舍五入后还是差那一丝。要抬高目标值（多要 0.05、再要 0.15），它才会真的往前走一档
+func ensureContrastRounded(fg string, bgs []string, min float64) (string, bool) {
+	cur, changed := fg, false
+	for _, target := range []float64{min, min + 0.05, min + 0.15} {
+		next, ok := theme.EnsureContrast(cur, bgs, target)
+		if !ok {
+			return cur, changed
+		}
+		cur, changed = next, true
+		if worstRatio(cur, bgs) >= min {
+			return cur, changed
+		}
+	}
+	return cur, changed
+}
+
+// headRowSurfaces 返回徽章实际落着的那几种底色（不透明）。
+//
+// 徽章只出现在 .row.head（仓库头行），而 .row 自己不铺底色：行是透明的，所以徽章背后就是
+// 卡片底 --card-bg；工作树头行再叠 6% 的 --text-dim（见 style.css 的 .row.head.wt），
+// 鼠标掠过叠 --hover-bg。
+//
+// 为什么要把这几种都算上：badge.background 在部分主题里是**半透明**的（dark_modern 就是），
+// 它最后成什么颜色由这一层决定。只按 --bg 一种表面判，会漏掉“hover 时才读不出来”这种情形——
+// 实测 dark_modern 悬停时 4.50:1，差 0.0003
+func headRowSurfaces(vars map[string]string) []string {
+	card := vars["card-bg"]
+	if card == "" {
+		card = vars["bg"]
+	}
+	if card == "" {
+		return nil
+	}
+	plain := []string{card}
+	if dim := vars["text-dim"]; dim != "" {
+		plain = append(plain, mixInto(dim, card, headRowTintRatio))
+	}
+	surfaces := append([]string{}, plain...)
+	if hover := vars["hover-bg"]; hover != "" {
+		for _, s := range plain {
+			surfaces = append(surfaces, theme.Over(hover, s))
+		}
+	}
+	return surfaces
+}
+
+// applyBadgeFixes 让徽章文字在徽章底色上读得出来：普通徽章（计数）、错误徽章，以及
+// 三枚变体徽章的底色。
+//
+// 徽章不放进 contrastPairs，因为它背后的表面不止一种（卡片底、hover 叠色、工作树头行淡染），
+// 而那张表一个条目只能指定一个 surface。只按 --bg 判会漏判：dark_modern 的 badge.background
+// 是半透明的，悬停时错误徽章文字只有 4.50:1
+//
+// 错误徽章的文字种子优先取主题的错误色，上游没给时回落到冲突色（与样式表原来的回落一致）。
+// 特意不把 status-error 本身拉进校验表：它还在别处当错误文本用，动它会波及其它表面
+func applyBadgeFixes(vars map[string]string) int {
+	base := vars["badge-bg"]
+	if base == "" {
+		return 0
+	}
+	if vars["badge-err-fg"] == "" {
+		if v := vars["status-error"]; v != "" {
+			vars["badge-err-fg"] = v
+		} else if v := vars["git-conflicting"]; v != "" {
+			vars["badge-err-fg"] = v
+		}
+	}
+	surfaces := headRowSurfaces(vars)
+	if len(surfaces) == 0 {
+		return 0
+	}
+	adjusted := 0
+	for _, name := range []string{"badge-fg", "badge-err-fg"} {
+		fg := vars[name]
+		if fg == "" {
+			continue
+		}
+		bgs := make([]string, 0, len(surfaces))
+		for _, s := range surfaces {
+			bgs = append(bgs, theme.Over(base, s))
+		}
+		if fixed, changed := ensureContrastRounded(fg, bgs, theme.MinContrast); changed {
+			vars[name] = fixed
+			adjusted++
+		}
+	}
+	return adjusted
+}
+
+// applyBadgeMixFixes 给三枚变体徽章算出不透明底色，并让主题给的文字色在这些底色上读得出来。
+//
+// 为什么调的是**底色**而不是文字色：徽章文字共用 --badge-fg，它还被别处引用、不能动；
+// 而且深色主题里它是白色，白色没法再往亮调。对比度是对称的，谁当前景不影响比值大小，
+// 所以这里反过来把混出来的底色当「前景」传给 EnsureContrast，让它沿明度轴（色相与饱和度
+// 都不动）挪到刚过 4.5:1——观感就是徽章底比原来深一点或浅一点，文字照旧是主题那一档
+func applyBadgeMixFixes(vars map[string]string) int {
+	fg, base := vars["badge-fg"], vars["badge-bg"]
+	if fg == "" || base == "" {
+		return 0
+	}
+	adjusted := 0
+	for _, m := range badgeSurfaceMixes {
+		seed := vars[m.seed]
+		if seed == "" && m.fallback != "" {
+			seed = vars[m.fallback]
+		}
+		if seed == "" {
+			// 语义色与回落都没有：不发这个变量，样式表回落到 badge-bg，与改动前一样
+			continue
+		}
+		mixed := mixInto(seed, base, badgeMixRatio)
+		if fixed, changed := ensureContrastRounded(mixed, []string{fg}, theme.MinContrast); changed {
+			mixed = fixed
+			adjusted++
+		}
+		vars[m.name] = mixed
+	}
+	return adjusted
+}
+
+// applyFileIconFix 给文件类型图标挑一个在它实际落着的行底色上都读得出的颜色。
+//
+// 图标按非文字算，门槛 3:1。行底色不止一种：普通行是卡片底色，状态行是在卡片底色上按
+// 9% / 12% / 18% 掺进各自的 gitDecoration 色（见 style.css 的 .row.file.g-*），hover 再叠
+// 一层。取最差的那个判：最差的一层过了，其余都过
+//
+// 种子取 --text-dim（descriptionForeground）：文件类型图标是「次要信息」那一档的装饰，
+// 主题对它的意图就是这个色；不够读时才挪明度
+func applyFileIconFix(vars map[string]string) int {
+	seed, card := vars["text-dim"], vars["card-bg"]
+	if seed == "" || card == "" {
+		return 0
+	}
+	plain := []string{card}
+	for _, name := range []string{
+		"git-modified", "git-added", "git-deleted", "git-untracked", "git-renamed",
+		"git-conflicting", "git-ignored", "git-stage-modified", "git-stage-deleted",
+	} {
+		if c := vars[name]; c != "" {
+			plain = append(plain, mixInto(c, card, maxRowTintRatio))
+		}
+	}
+	if sel := vars["list-selected-bg"]; sel != "" {
+		plain = append(plain, theme.Over(sel, card))
+	}
+	// hover 是叠在行底色之上的一层，四种底色各自都要算：只算普通行会漏掉「选中再 hover」
+	surfaces := append([]string{}, plain...)
+	if hover := vars["hover-bg"]; hover != "" {
+		for _, s := range plain {
+			surfaces = append(surfaces, theme.Over(hover, s))
+		}
+	}
+	if fixed, changed := ensureContrastRounded(seed, surfaces, minNonTextContrast); changed {
+		vars["file-icon"] = fixed
+		return 1
+	}
+	vars["file-icon"] = seed
+	return 0
 }
 
 // applyContrastFixes 在对比度实在不够时只调那一处颜色的明度，返回调整过的项数。
@@ -411,7 +682,7 @@ func applyContrastFixes(vars map[string]string) int {
 		if min == 0 {
 			min = theme.MinContrast
 		}
-		if fixed, changed := theme.EnsureContrast(fg, bgs, min); changed {
+		if fixed, changed := ensureContrastRounded(fg, bgs, min); changed {
 			vars[p.fg] = fixed
 			adjusted++
 		}
@@ -506,9 +777,23 @@ func themeBlock(r *theme.Resolved) string {
 		vars["input-border"] = seed
 	}
 
+	// 错误徽章的文字种子：优先用主题的错误色，上游没给时回落到冲突色（与样式表原来的
+	// 回落一致）。随后由 applyContrastFixes 按 badge-bg 兜对比度
+	if v := vars["status-error"]; v != "" {
+		vars["badge-err-fg"] = v
+	} else if v := vars["git-conflicting"]; v != "" {
+		vars["badge-err-fg"] = v
+	}
+
 	// 配色被我们动过就必须留痕：不留的话，用户看到“按钮文字比 VSCode 里深一点”会以为是主题
 	// 自己的问题，而这条日志正是“为什么和你看到的 VSCode 不一样”的唯一线索
 	if n := applyContrastFixes(vars); n > 0 {
+		logger.Debug(l10n.T("Adjusted theme colors for contrast", nil), "theme", r.ID, "count", n)
+	}
+
+	// 徽章文字、三枚变体徽章的混色底、文件类型图标三处都在这之后算，且顺序不能调换：
+	// 徽章文字要先定稿，混色底才是按最终的文字色兜出来的
+	if n := applyBadgeFixes(vars) + applyBadgeMixFixes(vars) + applyFileIconFix(vars); n > 0 {
 		logger.Debug(l10n.T("Adjusted theme colors for contrast", nil), "theme", r.ID, "count", n)
 	}
 
