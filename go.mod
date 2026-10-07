@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/go-viper/mapstructure/v2 v2.4.0
-	github.com/jy-eggroll/eggokit v0.3.0
+	github.com/jy-eggroll/eggokit v0.4.0
 	github.com/pterm/pterm v0.12.83
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -26,8 +26,3 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
-
-// 临时指向本地预览工作树：eggokit/theme 与 eggokit/fileicon 只在集成预览分支上，还没打 tag。
-// 这是集成验证的手段，不改 require 版本号绕开：上游出新 tag 后删掉本行，并把上面的
-// require 提到带这两个包的版本。
-replace github.com/jy-eggroll/eggokit => /home/eggroll/GitRepo/eggokit.worktrees/preview
