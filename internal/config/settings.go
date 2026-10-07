@@ -21,10 +21,10 @@ import (
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
-	"github.com/jy-eggroll/ggt/internal/locales"
 	// 主题偏好的默认值直接引用主题包里的常量，而不是在这里再抄一遍 "builtin:..." 这个 id 格式：
 	// 那个前缀是主题包自己的约定，抄一份就会出现“改了前缀、默认值指到不存在的主题”
-	"github.com/jy-eggroll/ggt/internal/theme"
+	"github.com/jy-eggroll/eggokit/theme"
+	"github.com/jy-eggroll/ggt/internal/locales"
 )
 
 // ErrInvalidValue 表示用户输入的值不合法。

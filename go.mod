@@ -26,3 +26,8 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
+
+// 临时指向本地预览工作树：eggokit/theme 与 eggokit/fileicon 只在集成预览分支上，还没打 tag。
+// 这是集成验证的手段，不改 require 版本号绕开：上游出新 tag 后删掉本行，并把上面的
+// require 提到带这两个包的版本。
+replace github.com/jy-eggroll/eggokit => /home/eggroll/GitRepo/eggokit.worktrees/preview

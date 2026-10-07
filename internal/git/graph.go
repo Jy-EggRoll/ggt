@@ -9,7 +9,7 @@
 //     它们依赖 upstream 与 merge base 的判定，是另一件事
 //   - 上游的 base ref（merge base 高亮）同理没有搬
 //   - 颜色用 VSCode 的颜色 id（scmGraph.foreground1 这类），由 cmd 侧翻成页面上的 CSS 变量名：
-//     这个包不认 CSS，就像 internal/theme 不认页面概念一样
+//     这个包不认 CSS，就像 eggokit/theme 不认页面概念一样
 package git
 
 import "sort"
@@ -20,7 +20,7 @@ type GraphNode struct {
 	Color string `json:"color"`
 }
 
-// 颜色 id，与 VSCode 的 scmGraph.* 令牌一一对应，取值见 internal/theme/defaults.json
+// 颜色 id，与 VSCode 的 scmGraph.* 令牌一一对应，取值见 eggokit/theme/defaults.json
 const (
 	ColorForeground1 = "scmGraph.foreground1"
 	ColorForeground2 = "scmGraph.foreground2"

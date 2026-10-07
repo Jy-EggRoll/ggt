@@ -294,7 +294,7 @@ Visual Studio Dark/Light）与 Catppuccin 的 4 套口味。
 或用 `ggt config set theme_dark <id>` 这类命令写。
 
 内置主题文件逐字取自上游（VSCode 与 Catppuccin，均为 MIT 许可，许可文本随文件一起放在
-`internal/theme/builtin/*/LICENSE.txt`）。
+eggokit 主题包 `theme/builtin/*/LICENSE.txt`）。
 
 已知限制：不支持 VSCode 的高对比主题（`hcDark`/`hcLight`）——那是为无障碍场景单独设计的一套
 视觉，不是换几个色值就行；也不读主题里的 `tokenColors`（语法高亮），本看板不做语法高亮。

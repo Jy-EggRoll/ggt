@@ -3,9 +3,9 @@
 // 首页时现算”的页面外观设置：同一份配置两次读取、两个注入点，改完都要刷新页面才生效
 //
 // 通用部分——JSONC 规整、include 链、type 判定、VSCode 颜色注册表默认值、内置主题文件——
-// 全在 internal/theme，本文件只负责 ggt 自己的两件事：要哪些颜色 id，以及 VSCode 里没有
-// 对应物的自有令牌取什么值。这条分界见 internal/theme 的包注释：那个包将来要整包搬进
-// 共享库 eggokit 给别的项目复用，因此 ggt 的页面概念不能出现在它里面
+// 全在 eggokit/theme，本文件只负责 ggt 自己的两件事：要哪些颜色 id，以及 VSCode 里没有
+// 对应物的自有令牌取什么值。这条分界见 eggokit/theme 的包注释：那个包要整包搬进共享库
+// eggokit 给别的项目复用，因此 ggt 的页面概念不能出现在它里面
 package cmd
 
 import (
@@ -14,8 +14,8 @@ import (
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
+	"github.com/jy-eggroll/eggokit/theme"
 	"github.com/jy-eggroll/ggt/internal/config"
-	"github.com/jy-eggroll/ggt/internal/theme"
 )
 
 // cssVarNames 是“VSCode 颜色 id → 页面里的 CSS 变量名”的映射，只有这一处定义。
@@ -90,7 +90,7 @@ var cssVarNames = map[string]string{
 	// 分支图：泳道配色与引用配色用的是 VSCode 源码管理图那一套令牌（scmHistory.ts 的
 	// colorRegistry 与三个 historyItem*RefColor）。五个前景色是上游写死的字面值，
 	// 两个引用色一路引用到 charts.blue/purple → editorInfo.foreground，最终值同样照抄，
-	// 见 internal/theme/defaults.json
+	// 见 eggokit/theme/defaults.json
 	"scmGraph.foreground1":               "scm-graph-fg1",
 	"scmGraph.foreground2":               "scm-graph-fg2",
 	"scmGraph.foreground3":               "scm-graph-fg3",
@@ -314,7 +314,7 @@ func systemThemeCSS(darkID, lightID string) string {
 
 // contrastPairs 记录“哪些前景会被铺在哪些底色上”：键是前景的 CSS 变量名，值是该前景可能压住的底色。
 //
-// 放在这里而不是 internal/theme：哪些元素成对出现属于本项目的页面概念，而那个包要整包搬进
+// 放在这里而不是 eggokit/theme：哪些元素成对出现属于本项目的页面概念，而那个包要整包搬进
 // 共享库给别的项目复用，不能带上 ggt 的页面知识（见该包的包注释）
 //
 // hover 底色也算进来：按钮的前景在常态与 hover 两种底色下都得读得出来。主题没给
@@ -334,7 +334,7 @@ var contrastPairs = map[string][]string{
 // applyContrastFixes 在对比度实在不够时只调前景色的明度，返回调整过的项数。
 //
 // 底色一律不动：那是主题的设计。改上游色值等于自己维护一份主题副本，上游一升级就得重做，
-// 每套主题还都要各修一遍；而这个函数对任何主题都成立（见 internal/theme/contrast.go）
+// 每套主题还都要各修一遍；而这个函数对任何主题都成立（见 eggokit/theme/contrast.go）
 func applyContrastFixes(vars map[string]string) int {
 	adjusted := 0
 	for fgName, bgNames := range contrastPairs {
