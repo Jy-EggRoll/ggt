@@ -289,9 +289,9 @@ func worktreeEntries(host string, wts []git.Worktree) []RepoEntry {
 
 // worktreeState 判定一棵工作树是否还可用。
 //
-// 顺序上先看 git 报的 prunable，再用“目录是否存在”兜底：
+// 顺序上先看 git 报的 prunable，再用“目录是否存在”作为回退判据：
 // 加锁之后把目录删掉时，实测 git 仍然只报 locked，不会报 prunable。
-// 少了这层兜底，那个已不存在的路径每轮都会被拿去跑一次 git status 并失败，
+// 少了这层回退判据，那个已不存在的路径每轮都会被拿去跑一次 git status 并失败，
 // 页面显示成“采集失败”，而用户需要知道的其实是“这棵工作树已经失效、可以清掉了”。
 func worktreeState(wt git.Worktree) string {
 	if wt.Prunable {

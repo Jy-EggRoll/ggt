@@ -105,7 +105,7 @@ func newConfigPathCmd() *cobra.Command {
 		Short: l10n.T("Show the path to the config file", nil),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// 走裸 fmt 而非 pterm：路径经常被脚本直接取用
+			// 直接用 fmt 而非 pterm：路径经常被脚本直接取用
 			fmt.Println(config.GetDefaultConfigPath())
 			return nil
 		},
@@ -407,8 +407,8 @@ func registeredEntryCount(path string) int {
 	return count
 }
 
-// printConfigValue 以脚本友好的形式打印配置值：标量裸值、数组每行一个、空数组不输出。
-// 全程走裸 fmt，不经 pterm 着色。
+// printConfigValue 以脚本友好的形式打印配置值：标量原始值、数组每行一个、空数组不输出。
+// 全程直接用 fmt，不经 pterm 着色。
 func printConfigValue(v any) {
 	switch list := v.(type) {
 	case []any:

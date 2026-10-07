@@ -31,7 +31,7 @@ import (
 // withConfig 在本用例期间把包级全局 cfg 换成指定配置，用例结束时还原原值
 // 必须还原的原因：GetConfig()/Concurrency() 读的都是这一个全局指针，
 // 用例跑完若留着被改过的配置，后续任何依赖配置的测试都会拿到脏数据而随机失败
-// 用 t.Cleanup 而不是裸 defer，是为了让表驱动里的每个 t.Run 子用例各自负责自己的还原
+// 用 t.Cleanup 而不是直接写 defer，是为了让表驱动里的每个 t.Run 子用例各自负责自己的还原
 func withConfig(t *testing.T, c *config.Config) {
 	t.Helper()
 	old := cfg
@@ -553,7 +553,7 @@ func TestGetRepoList(t *testing.T) {
 			// 注意：这里锁定实际行为——不跟随符号链接。
 			// os.ReadDir 返回的 DirEntry.IsDir() 基于 lstat，符号链接目录会返回 false，
 			// 于是指向仓库的软链接不会被收进列表。这一行为此前无测试记录，
-			// 若有用户用软链接组织仓库目录会踩到，报告中单独列出
+			// 若有用户用软链接组织仓库目录会遇到，报告中单独列出
 			name: "指向仓库的符号链接子目录不被收录（不跟随软链接）",
 			setup: func(t *testing.T, root string) (*config.Config, []string, []string) {
 				parent := filepath.Join(root, "parent")

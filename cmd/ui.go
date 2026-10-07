@@ -852,7 +852,7 @@ func writeUIDiffJSON(w http.ResponseWriter, out uiDiff) {
 //     可能是网络、可能是权限，笼统的提示等于让用户自己去猜
 
 // uiWriteRequest 是全部写端点共用的请求体。
-// 不按端点拆成多个结构：字段少且同名同义，拆开只会让前端多记几种形状
+// 不按端点分成多个结构：字段少且同名同义，拆开只会让前端多记几种形状
 type uiWriteRequest struct {
 	// Repo 是仓库绝对路径，必须与 /api/repos 返回的一致
 	Repo string `json:"repo"`
@@ -1064,7 +1064,7 @@ func (c *uiCache) handleSync(w http.ResponseWriter, r *http.Request) {
 // 不带就拉快照里的全部仓库（看板底栏的按钮）。每个仓库跑一次 git fetch --all --prune。
 //
 // 一个端点两种范围，而不是两个端点：命令、并发方式与响应形状完全一样，差别只在“对哪些仓库跑”，
-// 拆成两个端点等于把这段逻辑抄两遍
+// 分成两个端点等于把这段逻辑抄两遍
 //
 // 并发跑：与 ggt sync 共用 worker.Map 与同一个并发度设置。串行做几十个远程仓库要等到
 // 地老天荒，并发下总耗时约等于最慢的那一个

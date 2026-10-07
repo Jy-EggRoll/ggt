@@ -35,7 +35,7 @@ func TestWorktreeState(t *testing.T) {
 		},
 		{
 			// 这是整个判定里最要紧的一条：实测加锁之后删掉目录，git 只报 locked、
-			// 不报 prunable，只能靠目录是否存在兜底
+			// 不报 prunable，只能靠目录是否存在来判断
 			name: "locked 且目录已删：git 只报 locked",
 			wt:   git.Worktree{Path: missing, Locked: true},
 			want: worktreeStateMissing,

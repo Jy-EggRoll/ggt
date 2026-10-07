@@ -135,7 +135,7 @@
   位置很关键：必须排在下面那行 <script> 之前。app.js 是经典脚本（非 defer/module），
   在这一行就同步执行，它开头的 getElementById 会立刻取这几个元素；
   放到脚本之后取到的就是 null，表现为“页面一片空白、控制台报 addEventListener of null”
-  ——本轮就是这么踩的，排查时看到的是白屏，很难联想到是标签顺序
+  ——本轮就是这么遇到的，排查时看到的是白屏，很难联想到是标签顺序
 -->
 <div id="diff" class="overlay" aria-hidden="true">
   <header>

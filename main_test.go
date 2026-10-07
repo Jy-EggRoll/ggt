@@ -264,7 +264,7 @@ func TestCLIConfigSubtreeContract(t *testing.T) {
 		t.Fatalf("config path = %q (exit=%d)，期望 %q", path.stdout, path.exitCode, configPath)
 	}
 
-	// 文件不存在时 get 返回内置默认值（get 面向脚本，输出是裸值、不带颜色与前后缀）
+	// 文件不存在时 get 返回内置默认值（get 面向脚本，输出是原始值、不带颜色与前后缀）
 	if got := runCLIWithEnv(t, home, "config", "get", "size_unit"); strings.TrimSpace(got.stdout) != "decimal" {
 		t.Fatalf("缺文件时 config get size_unit = %q，期望 default decimal", got.stdout)
 	}

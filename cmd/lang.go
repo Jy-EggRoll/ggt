@@ -30,7 +30,7 @@ func chooseLanguage() string {
 	if lang := scanLangFlag(os.Args[1:]); lang != "" {
 		return lang
 	}
-	// LoadLanguage 只做裸 JSON 读取，不会像 LoadConfig 那样在主目录不可用时退出进程
+	// LoadLanguage 只直接读取 JSON，不会像 LoadConfig 那样在主目录不可用时退出进程
 	if lang, err := config.LoadLanguage(); err == nil && lang != "" {
 		return lang
 	}

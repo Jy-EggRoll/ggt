@@ -104,7 +104,7 @@ func ThemeDirs() []string {
 //     而 LoadConfig 依赖的 GetDefaultConfigPath 在主目录不可用时会直接退出进程
 //   - 只取一个字段，避免为纯展示路径做一次全量解码与默认值补全
 //
-// 这里刻意只做裸 JSON 解析，不引入 viper 这类包级全局单例：语言必须能在 --help
+// 这里刻意直接解析 JSON，不引入 viper 这类包级全局单例：语言必须能在 --help
 // 路径上被读取，任何全局状态污染都会让“本次运行读到哪个语言”变得不可预测
 // （本包已整体不使用 viper，原因详见 LoadConfigAt 的注释）。
 //

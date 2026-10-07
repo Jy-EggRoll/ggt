@@ -687,7 +687,7 @@ function rowHTML(s) {
     const f = s.file;
     const side = s.group ? s.group.id : 'work';
     const st = fileStatus(f, side);
-    // 路径拆成“文件名 + 目录”两部分：文件名用状态色，目录用更淡的色。
+    // 路径分成“文件名 + 目录”两部分：文件名用状态色，目录用更淡的色。
     // 与 VSCode 在列表模式下把路径作为 description 淡化显示一致，也让同类文件名更容易对齐扫读
     const slash = f.path.lastIndexOf('/');
     const base = slash === -1 ? f.path : f.path.slice(slash + 1);
@@ -789,7 +789,7 @@ function reconcile(specs) {
 //   - 列填满就向右开新列，页面只横向滚动
 //
 // 性能：本函数既不读布局属性，也不往已布局的容器里逐个插元素——这两件事都会让浏览器
-// 立刻结算当时积压的样式，把本该 O(行数) 的活变成 O(行数²)。下面两条都是踩出来的，
+// 立刻结算当时积压的样式，把本该 O(行数) 的活变成 O(行数²)。下面两条都是实际遇到过的，
 // 修法不是“优化”，而是拿掉触发点：
 //
 //   1) 行高曾经在循环里读 el.offsetHeight。写一次 transform 就让浏览器把待结算的样式算一遍，
@@ -1191,7 +1191,7 @@ function spreadInnerRange(perLine, lines, range) {
 }
 
 // mergeSpans 把一行内的区间按起点排序，并合并重叠或首尾相接的部分。
-// 引擎会把同一处改动拆成几段相邻区间，不合并就会产出多个紧邻的高亮元素——视觉一样，节点多一份
+// 引擎会把同一处改动分成几段相邻区间，不合并就会产出多个紧邻的高亮元素——视觉一样，节点多一份
 function mergeSpans(list) {
   if (!list || !list.length) return null;
   if (list.length === 1) return list;
@@ -1496,7 +1496,7 @@ async function loadDiff() {
   const spec = diffSpec;
   const seq = ++diffSeq;
   // 取数期间摆一个“正在读取”的占位（转动的圈加一行文字），而不是原来那句静止的“加载中”：
-  // 这里正是本地接口也可能要等一会儿的地方，一个在动的指示能说明“还在跑、不是卡住”
+  // 这里正是本地接口也可能需要等待较长时间的地方，一个在动的指示能说明“还在跑、不是卡住”
   diffBodyEl.replaceChildren(loadingBlock());
 
   const out = await fetchDiff(spec);
@@ -1845,7 +1845,7 @@ function removeToastEl(el) {
     if (e.target === el) finish();
   };
   el.addEventListener('animationend', onEnd);
-  // 退场动画走 --dur-fast，这里的兜底宽限按它的两倍取：正常情况下它在动画结束时就已经先跑掉了
+  // 退场动画走 --dur-fast，这里回退用的宽限按它的两倍取：正常情况下它在动画结束时就已经先跑掉了
   setTimeout(finish, 400);
   el.classList.add('notif--out');
 }
@@ -2079,7 +2079,7 @@ function fetchAll() {
 
 // ——— 设置面板 ———
 //
-// 面板里的每一项都由服务端给的元数据长出来（GET /api/settings）：Kind 决定控件形态、
+// 面板里的每一项都由服务端给的元数据生成（GET /api/settings）：Kind 决定控件形态、
 // Options 决定候选、Min/Max 决定输入边界、ManagedBy 决定是否只读。页面不认识任何一个具体的
 // 配置键，新增一项配置因此不必回来改这个文件——这是“配置逻辑与界面共用一份抽象”的直接结果。
 //
@@ -3408,7 +3408,7 @@ let hoverSeq = 0;
 let cardPinned = false;
 let hoverCardTimer = null;
 // cardShownHash 记录卡片此刻显示的是哪条提交：只有从一条提交换到另一条才算“换了内容”，
-// 同一条提交异步补上文件清单属于“同一份内容长出来”，不该再做一次交叉淡入
+// 同一条提交异步补上文件清单属于“同一份内容多出来的部分”，不该再做一次交叉淡入
 let cardShownHash = '';
 // CARD_CROSSFADE_MS 是交叉淡入里那层旧内容的存活时长，必须与样式表的 --dur-fast 等值。
 // 不用 transitionend 收尾：降级模式（prefers-reduced-motion）下过渡被整段关掉，事件不会派发，
@@ -3473,7 +3473,7 @@ function showCommitCard(vm, x, y, pinned) {
   // 这与 hoverSuppressAt 那段要处理的是同一件事，两边配合才成立，不能只留其中一个
   graphPopupEl.classList.add('open');
 
-  // 只有换到另一条提交才算换了内容：同一条提交异步补上文件清单是“同一份内容长出来”，
+  // 只有换到另一条提交才算换了内容：同一条提交异步补上文件清单是“同一份内容多出来的部分”，
   // 此时再交叉淡入一次，卡片会在原地无谓地闪一下
   const changed = !first && cardShownHash !== '' && cardShownHash !== vm.item.hash;
   cardShownHash = vm.item.hash;

@@ -11,7 +11,7 @@
 //
 // 唯一例外是**面向脚本处理**的输出（ggt config get / validate / path）：pterm 不检测
 // TTY，会把 ANSI 转义写进管道，让 `ggt config show | jq` 这类用法失败。那些命令
-// 直接走 fmt 的裸输出，不受本文件的样式调整影响。
+// 直接用 fmt 输出，不受本文件的样式调整影响。
 package cmd
 
 import (
