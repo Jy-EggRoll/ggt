@@ -296,24 +296,6 @@ var settings = []Setting{
 		Default:   []string{},
 		ManagedBy: "ggt repo",
 	},
-	{
-		// 只处理被 git 忽略的路径，这一条不由配置决定：被跟踪的文件接进新工作树会
-		// 立刻变成一处用户没碰过的“已修改”，而那正是这个功能要避免的
-		Key:      "worktree_link_ignored",
-		Title:    l10n.T("Ignored paths to link into new worktrees", nil),
-		Kind:     KindPaths,
-		Default:  []string{},
-		Expected: l10n.T("repository-relative paths, empty to disable", nil),
-		Parse:    parsePathList,
-	},
-	{
-		Key:      "worktree_copy_ignored",
-		Title:    l10n.T("Ignored paths to copy into new worktrees", nil),
-		Kind:     KindPaths,
-		Default:  []string{},
-		Expected: l10n.T("repository-relative paths, empty to disable", nil),
-		Parse:    parsePathList,
-	},
 }
 
 // Settings 返回全部配置项（副本，调用方改动不影响注册表）。
@@ -363,26 +345,6 @@ func parseBool(s string) (any, error) {
 		return false, nil
 	}
 	return nil, ErrInvalidValue
-}
-
-// parsePathList 解析“一行一条”的路径清单。
-//
-// 同时认逗号作分隔符：命令行上写 ggt config set worktree_link_ignored node_modules,dist
-// 比逐个写更顺手，而两套分隔符带来的歧义只有“路径里含逗号”这一种，那在仓库内几乎不存在。
-// 去重是必要的——同一个目录写两遍会让接入阶段第二次命中“目标已存在”这条正常情况，
-// 在界面上表现为一句多余的问题提示
-func parsePathList(s string) (any, error) {
-	out := []string{}
-	seen := map[string]bool{}
-	for _, item := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' }) {
-		v := strings.TrimSpace(item)
-		if v == "" || seen[v] {
-			continue
-		}
-		seen[v] = true
-		out = append(out, v)
-	}
-	return out, nil
 }
 
 // parseIntInRange 返回一个“整数且落在 [min, max] 内”的解析器。
