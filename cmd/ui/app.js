@@ -64,6 +64,9 @@ const MSG = {
     diffMergeFirstParent: 'Merge commit — shown as the change against its first parent',
     diffOpenCommit: 'Show the whole commit',
     diffOpenFile: 'Show how this file changed in this commit',
+    diffOpenFileOnly: 'Show only this file',
+    diffCompareScope: 'Comparing {{from}} → {{to}}',
+    diffCompareNote: 'Two trees compared directly — the commits in between, including anything reverted, do not count toward this difference',
     groupUnmerged: 'Unmerged Changes',
     changes: 'Changes',
     fetchRepo: 'Fetch',
@@ -90,6 +93,13 @@ const MSG = {
     graphLimitReached: 'Reached the {{n}}-commit limit; uncheck "All branches and tags" to see further back',
     graphNoCommits: 'No commits yet',
     graphNoSubject: '(no subject)',
+    // 比较分两步：第一次点把那条提交变成基线，按钮文字也随之变成“基线”，
+    // 再点另一条才打开两点之间的差异。底色与文字一起变，是因为只看底色的话，
+    // 行一多就容易看漏自己刚才选的是哪条
+    graphCompare: 'Compare',
+    graphCompareTitle: 'Compare this commit with another one',
+    graphCompareBase: 'Baseline',
+    graphCompareClearTitle: 'Baseline — click again to clear it, or click Compare on another commit to see what differs between the two',
     graphFiles: 'Changed files',
     graphFilesSummary: '{{n}} files, +{{adds}} −{{dels}}',
     graphBinary: 'binary',
@@ -143,6 +153,9 @@ const MSG = {
     diffMergeFirstParent: '合并提交 —— 下面是相对第一个父提交的改动',
     diffOpenCommit: '看这次提交的完整改动',
     diffOpenFile: '看这个文件在那次提交里改了什么',
+    diffOpenFileOnly: '只看这个文件的改动',
+    diffCompareScope: '比较 {{from}} → {{to}}',
+    diffCompareNote: '直接比较两份树 —— 中间的提交（包括被回退掉的改动）不计入这次差异',
     groupUnmerged: '未合并的改动',
     changes: '改动',
     fetchRepo: '拉取',
@@ -169,6 +182,10 @@ const MSG = {
     graphLimitReached: '已到 {{n}} 条上限，可取消勾选“全部分支与 tag”往回看',
     graphNoCommits: '还没有提交',
     graphNoSubject: '（无提交信息）',
+    graphCompare: '比较',
+    graphCompareTitle: '与另一条提交比较',
+    graphCompareBase: '基线',
+    graphCompareClearTitle: '基线 —— 再点一次取消；或点另一条提交的“比较”，看两点之间的差异',
     graphFiles: '改动的文件',
     graphFilesSummary: '{{n}} 个文件，+{{adds}} −{{dels}}',
     graphBinary: '二进制',
@@ -1372,8 +1389,18 @@ function diffHTML(text, allAdded) {
 // 后端不认识页面上的翻译表（那份表只服务页面自己），前端文案也不该走 Go 的提取管线
 function diffSectionTitle(kind, spec) {
   if (kind === 'commit') return (spec.commit && spec.commit.subject) || t('graphNoSubject');
+  if (kind === 'compare') return compareScopeText(spec.compare);
   if (kind === 'unstaged') return t('diffUnstaged');
   return t('diffStaged');
+}
+
+// compareScopeText 给出范围比较的标题文字，用的是两个短号。
+//
+// 只取短号不取提交主题：两个端点在图上是以哈希认人的，而主题可能一字不差地重复
+// （同一句话连提两次），写进标题反而分不清哪端是哪端
+function compareScopeText(cmp) {
+  if (!cmp) return '';
+  return t('diffCompareScope', { from: shortHash(cmp.from), to: shortHash(cmp.to) });
 }
 
 // diffFileStat 造一段文件头右侧的增删行数。
@@ -1439,6 +1466,9 @@ function diffFileSections(text, files) {
 function renderDiff(repo, spec, out, auto) {
   const blocks = [];
   const file = spec.file || null;
+  // 文件标题只在“还不知道要看哪个文件”的整仓视图里可以点进去：单文件视图里再点一次
+  // 只是把同一份内容重取一遍，还要白白重置一次滚动位置
+  const drilldown = !file;
 
   if (out.error) {
     blocks.push('<p class="diff-note">' + esc(t('diffFailed', { err: out.error })) + '</p>');
@@ -1456,6 +1486,11 @@ function renderDiff(repo, spec, out, auto) {
   // “这次提交就改了这些”会被理解成相对两个父提交的合计
   if (spec.commit && spec.commit.merge) {
     blocks.push('<p class="diff-note">' + esc(t('diffMergeFirstParent')) + '</p>');
+  }
+  // 范围比较是两份树的差异，中间那些提交（包括被回退掉的改动）不参与计算。不说明的话，
+  // “基线到最终只改了这些”会被理解成中间每一次改动的合计
+  if (spec.compare) {
+    blocks.push('<p class="diff-note">' + esc(t('diffCompareNote')) + '</p>');
   }
   // 整仓视图看不到未跟踪文件（git diff 不含它们）。与其让人以为“这个仓库只有这些改动”，
   // 不如说清它们在哪儿看。提交视图与它无关：那看的是历史，不是当前工作区
@@ -1483,7 +1518,20 @@ function renderDiff(repo, spec, out, auto) {
       .map(
         (p) =>
           '<section class="diff-file">' +
-          '<h3 class="diff-file-head">' +
+          '<h3 class="diff-file-head' +
+          (drilldown ? ' diff-file-head--open" role="button" tabindex="0"' : '"') +
+          // 路径与旧路径放进数据集，点它时才知道要深入哪个文件。标题里那份是给人看的
+          // （含箭头与改名写法），拿它反解路径要重新处理引号与转义
+          (drilldown
+            ? ' data-path="' +
+              esc(p.path) +
+              '" data-orig="' +
+              esc(p.origPath || '') +
+              '" title="' +
+              esc(t('diffOpenFileOnly')) +
+              '"'
+            : '') +
+          '>' +
           // 段落名进标题，是因为标题会一直贴在顶部：滚到一个文件的中段时，上方那行
           // "已暂存/未暂存" 早就滚出视野了，而同一个文件可能两段各出现一次
           '<span class="diff-file-group">' + esc(s.title) + '</span>' +
@@ -1582,6 +1630,12 @@ async function fetchDiff(spec) {
   const params = new URLSearchParams({ repo: spec.repo.path });
   if (spec.file) params.set('file', spec.file.path);
   if (spec.commit) params.set('commit', spec.commit.hash);
+  // 两个端点必须一起带上：只带路径的话，后端会把它当成“工作区里这个文件的改动”，
+  // 点进去看到的会是另一回事
+  if (spec.compare) {
+    params.set('from', spec.compare.from);
+    params.set('to', spec.compare.to);
+  }
 
   try {
     const res = await fetch('/api/diff?' + params.toString(), { headers: authHeaders, cache: 'no-store' });
@@ -1601,7 +1655,7 @@ async function openDiff(spec) {
 
   // 标题只用我们已经知道的信息（仓库名、文件路径、提交短号），不必等接口回来才显示
   const shown = file ? (file.origPath ? file.origPath + ' → ' + file.path : file.path) : '';
-  const scope = spec.commit ? shortHash(spec.commit.hash) : '';
+  const scope = spec.commit ? shortHash(spec.commit.hash) : compareScopeText(spec.compare);
   diffTitleEl.innerHTML =
     repoNameHTML(repo) +
     (scope ? '<span class="dir"> ' + esc(scope) + '</span>' : '') +
@@ -1633,6 +1687,31 @@ function closeDiff() {
   window.scrollTo(diffScrollX, 0);
   // 这里不再补刷：看板在覆盖层期间一直跟着心跳在刷，本来就是最新的
 }
+
+// openFileFromHead 从整仓视图里点某个文件的标题，深入看它单独的 diff。
+//
+// 这是范围比较唯一的深入入口：提交视图还能在图上悬停那条提交、从卡片里的文件行进去，
+// 范围比较没有对应的卡片，整仓视图的文件标题就是唯一能按文件收窄的地方。
+// 请求带着当前 spec 一起重建（Object.assign），两个端点因此跟着过去——
+// 少了它们，后端会把这个路径当成工作区里的改动，点进去看到的会是另一回事
+function openFileFromHead(head) {
+  if (!head || !diffSpec || diffSpec.file) return;
+  const path = head.dataset.path;
+  if (!path) return;
+  openDiff(Object.assign({}, diffSpec, { file: { path: path, origPath: head.dataset.orig || '' } }));
+}
+
+diffBodyEl.addEventListener('click', (e) => {
+  openFileFromHead(e.target.closest('.diff-file-head'));
+});
+// 标题上是 role=button，键盘也该能进去：只挂 click 的话，键盘用户没有等价的路
+diffBodyEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const head = e.target.closest('.diff-file-head');
+  if (!head) return;
+  e.preventDefault();
+  openFileFromHead(head);
+});
 
 // ——— 通知 ———
 //
@@ -2871,6 +2950,10 @@ let graphMaxLimit = 2000;
 let graphAllRefs = true; // 默认跨全部分支与 tag
 let cardSeq = 0; // 作废过期响应（卡片被关掉、或换了仓库时）
 let cardSelected = ''; // 当前固定详情的那条提交
+// 范围比较的基线提交（{hash, subject}），为空表示还没选。
+// 比较天然要两个点，而一次点击只能指到一条提交，所以选取分两步：第一次点选基线，
+// 第二次点另一条才打开两点之间的差异（见 clickCompare）
+let compareBase = null;
 
 // graphColor 把接口给的变量名包成 var(...)。变量名为空（主题没写那个令牌、也没默认值）时
 // 用回退色，而不是留一个空的 stroke——那会让线整条消失
@@ -3111,6 +3194,59 @@ function openCommitDiff(item, file) {
   });
 }
 
+// openCompareDiff 打开基线与终点这两点之间的差异。
+//
+// 与单条提交走同一个覆盖层（分段、着色、截断、滚动保持全都是现成的），
+// 差别只在请求里带的是 from/to 两个端点而不是一个 commit
+function openCompareDiff(item, base) {
+  if (!cardSpec) return;
+  hideCommitCard(true);
+  openDiff({
+    repo: cardSpec.repo,
+    file: null,
+    compare: { from: base.hash, to: item.hash },
+  });
+}
+
+// clickCompare 处理提交行上那个“比较”按钮。三步都在这一个状态机上：
+// 还没有基线就把它设为基线，点的正是基线自己就取消，已有基线且是另一条就开始比较。
+//
+// “再点一次取消”这条出口是必需的：基线一旦选错，没有别的地方能退出这个状态，
+// 而它还会一直影响后续每一次点击
+function clickCompare(item) {
+  if (!item) return;
+  if (compareBase && compareBase.hash === item.hash) {
+    compareBase = null;
+  } else if (!compareBase) {
+    compareBase = { hash: item.hash, subject: item.subject };
+  } else {
+    openCompareDiff(item, compareBase);
+    // 打开之后基线留着：看完差异退回来，还能拿同一个基线去比另一条提交，
+    // 这正是“基线不变、换终点看”的常见用法
+    return;
+  }
+  markCompareBase();
+}
+
+// markCompareBase 把基线标记刷到已经画好的行上。
+//
+// 逐行改类与按钮文字，而不是整表重建：图上可能有几千行，点一下按钮就重建一次会明显卡顿；
+// 而心跳每 5 秒本来就会重建这张表，标记在重建时也会按 compareBase 重新画上（见 renderGraphRows）
+function markCompareBase() {
+  const hash = compareBase ? compareBase.hash : '';
+  for (const row of graphListEl.children) {
+    if (!row.classList || !row.dataset.hash) continue;
+    const isBase = row.dataset.hash === hash;
+    row.classList.toggle('compare-base', isBase);
+    const btn = row.querySelector('.g-compare');
+    if (!btn) continue;
+    btn.textContent = isBase ? t('graphCompareBase') : t('graphCompare');
+    btn.classList.toggle('is-base', isBase);
+    btn.setAttribute('aria-pressed', isBase ? 'true' : 'false');
+    btn.title = isBase ? t('graphCompareClearTitle') : t('graphCompareTitle');
+  }
+}
+
 // renderGraphRows 整表重建而不是追加：泳道是逐行递推出来的，续取之后前面那些行的列宽也可能变，
 // 只追加会让新旧两段错位。行数上限由 Go 侧的 graphMaxLimit 管着，重建代价可控
 function renderGraphRows() {
@@ -3119,7 +3255,12 @@ function renderGraphRows() {
 
   for (const vm of graphItems) {
     const row = document.createElement('div');
-    row.className = 'g-row' + (vm.item.hash === cardSelected ? ' selected' : '');
+    row.className =
+      'g-row' +
+      (vm.item.hash === cardSelected ? ' selected' : '') +
+      // 基线标记用行底色而不是左侧色条：色条在行首，与泳道图挤在一起，既难看清又像装饰。
+      // 它跟着 compareBase 走，因此每 5 秒重建这张表时标记也照样在
+      (compareBase && compareBase.hash === vm.item.hash ? ' compare-base' : '');
     row.dataset.hash = vm.item.hash;
 
     const lanes = mkEl('div', 'lanes');
@@ -3141,6 +3282,20 @@ function renderGraphRows() {
     row.appendChild(mkEl('span', 'hash', vm.item.hash.slice(0, 8)));
     row.appendChild(mkEl('span', 'subject', vm.item.subject || t('graphNoSubject')));
     row.appendChild(mkEl('span', 'meta', vm.item.author + ' · ' + formatGraphTime(vm.item.timestamp)));
+
+    // 每行一个“比较”按钮，是范围比较唯一的选取入口。它必须在视觉上与“点这一行看详情”
+    // 分得开：按钮是实心小控件，行整体仍是可点的详情入口，两者不争同一块地方
+    const isBase = !!compareBase && compareBase.hash === vm.item.hash;
+    const cmp = mkEl(
+      'button',
+      'g-compare' + (isBase ? ' is-base' : ''),
+      isBase ? t('graphCompareBase') : t('graphCompare'),
+    );
+    cmp.type = 'button';
+    cmp.title = isBase ? t('graphCompareClearTitle') : t('graphCompareTitle');
+    cmp.setAttribute('aria-pressed', isBase ? 'true' : 'false');
+    row.appendChild(cmp);
+
     frag.appendChild(row);
   }
 
@@ -3279,6 +3434,9 @@ function openRepoCard(spec) {
   commitMsgEl.value = draftMsg.get(r.path) || '';
 
   cardSelected = '';
+  // 基线只对当前这张图有意义：换了仓库，那条提交可能根本不在图上，
+  // 留着它就会出现“没有任何标记，点下去却在跟一条看不见的提交比”
+  compareBase = null;
   hideCommitCard(true);
   graphItems = [];
   graphTotal = 0;
@@ -3344,6 +3502,8 @@ graphListEl.addEventListener('scroll', () => {
 graphAllRefsEl.addEventListener('change', () => {
   graphAllRefs = graphAllRefsEl.checked;
   cardSelected = '';
+  // 同 openGraphCard：换筛选范围会换掉整份行，基线可能已经不在图上
+  compareBase = null;
   hideCommitCard(true);
   loadGraph(false);
 });
@@ -3598,6 +3758,12 @@ graphListEl.addEventListener('mouseover', (e) => {
     return;
   }
   hoverSuppressAt = null;
+  // 指针落在“比较”按钮上时不弹详情卡：卡片跟着光标浮出来，正好盖住这个按钮，
+  // 想点它得先跟卡片抢位置。移回行上会重新派发 mouseover，卡片照常弹
+  if (e.target.closest('.g-compare')) {
+    if (!cardPinned) hideCommitCard(false);
+    return;
+  }
   const row = e.target.closest('.g-row');
   if (!row) return;
   const vm = graphItems.find((v) => v.item.hash === row.dataset.hash);
@@ -3621,6 +3787,16 @@ graphPopupEl.addEventListener('mouseleave', () => {
 
 // 点一下即固定：这条路径不依赖悬浮，鼠标停在别处也能把详情留在屏幕上
 graphListEl.addEventListener('click', (e) => {
+  // “比较”按钮得先认出来：它长在行里面，不挡住的话这一下会顺带把详情卡固定住，
+  // 而用户点的是比较，不该同时弹出一张卡片压在上面
+  const compare = e.target.closest('.g-compare');
+  if (compare) {
+    const row = compare.closest('.g-row');
+    if (!row) return;
+    const picked = graphItems.find((v) => v.item.hash === row.dataset.hash);
+    clickCompare(picked && picked.item);
+    return;
+  }
   const row = e.target.closest('.g-row');
   if (!row) return;
   const vm = graphItems.find((v) => v.item.hash === row.dataset.hash);

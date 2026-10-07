@@ -1463,6 +1463,14 @@ kbd {
   border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
 
+/* 整仓视图里可以点进去看单个文件，标题因此需要给出可点的信号：
+   否则它与不可点的那几处外形完全一样，谁也不知道点得动。
+   hover 与文件行同一套叠色，焦点框由全局 :focus-visible 负责 */
+.diff-file-head--open { cursor: pointer; }
+.diff-file-head--open:hover {
+  background-image: linear-gradient(var(--hover-bg), var(--hover-bg));
+}
+
 /*
  * diff 正文。padding 只给纵向：横向留白交给 .dl 自己，否则整行底色会在行首行尾
  * 留下一截没有底色的空隙
@@ -1891,6 +1899,58 @@ pre.diff .meta { color: var(--text-dim); }
   background: var(--list-selected-bg, var(--hover-bg));
   outline: 1px solid var(--focus-ring);
   outline-offset: -1px;
+}
+
+/*
+ * 基线行：范围比较第一步选中的那条提交。
+ *
+ * 底色用 background-image 叠色，与 .row.head.wt 同一套做法，而不是改 background：
+ * 行 hover 的高亮走的也是 background-image，两者分属不同属性才能自然叠加。选中态
+ * （.g-row.selected）改的是 background，鼠标掠过它没有任何反馈；基线行不能这样——
+ * 选完基线还要在同一张图上找终点，这一行是否被鼠标划过必须看得见。底色之外再补一圈
+ * 内描边，是因为底色是掺了透明的浅雾，行一多就会看漏
+ *
+ * 不做左侧色条：那个位置紧挨泳道图，一条竖线混在连线与圆点里既读不出来，也像是装饰
+ */
+.g-row.compare-base {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--focus-border, var(--git-modified)) 18%, transparent),
+    color-mix(in srgb, var(--focus-border, var(--git-modified)) 18%, transparent)
+  );
+  box-shadow: inset 0 0 0 1px var(--focus-ring);
+}
+
+/*
+ * 提交行上的“比较”按钮（范围比较的选取入口）。
+ *
+ * 做成与同行 .ref 标签一套观感（18px 高、胶囊、小字），是因为行高只有 --row-h，
+ * 标准按钮那套高度放进来会把行撑破。默认只描边不着色：一张图上每行都有一个，
+ * 全部实心会把提交标题压得看不见；鼠标掠过行或按钮时才浮出底色
+ */
+.g-row .g-compare {
+  flex: none;
+  height: 18px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  cursor: pointer;
+}
+.g-row .g-compare:hover {
+  background: var(--badge-bg);
+  color: var(--text);
+}
+/* 基线态：文字换成“基线”，同时实一层底色。整行已有底色与描边，标在按钮上的是
+   “这一行的按钮此刻是另一种含义”——点它是取消，不是重新选一条基线 */
+.g-row .g-compare.is-base {
+  background: var(--badge-bg);
+  border-color: var(--focus-ring);
+  color: var(--text);
+  font-weight: 600;
 }
 
 /*
