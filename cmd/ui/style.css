@@ -1027,7 +1027,9 @@ body {
 .setting-reset[hidden] { display: none; }
 
 /* 控件：输入框、下拉框、多行框共用一套外观。
-   配色取 input.* 与 dropdown.*（VSCode 的 inputColors.ts 那组令牌），与卡片里的控件同一来源 */
+   配色取 input.* 与 dropdown.*（VSCode 的 inputColors.ts 那组令牌），与卡片里的控件同一来源。
+   边框不用 card-border：那是给轻淡分隔线调的浓度，用来标“此处能输入”太弱，12 套主题实测
+   全低于 1.4:1。--input-border 由 ui_theme.go 兜底到 3:1，主题没给值时它才回落到 card-border */
 .setting-control { margin-top: var(--sp-2); }
 .setting-control input,
 .setting-control select,
@@ -1038,7 +1040,7 @@ body {
   font: inherit;
   color: var(--input-fg, var(--text));
   background: var(--input-bg, var(--bg));
-  border: 1px solid var(--card-border);
+  border: 1px solid var(--input-border, var(--card-border));
   border-radius: var(--radius-sm);
   padding: 0 var(--sp-2);
 }
@@ -1636,7 +1638,7 @@ pre.diff .meta { color: var(--text-dim); }
   font: inherit;
   color: var(--dropdown-fg);
   background: var(--dropdown-bg);
-  border: 1px solid var(--dropdown-border, var(--card-border));
+  border: 1px solid var(--input-border, var(--card-border));
   border-radius: var(--radius-sm);
   padding: 0 var(--sp-2);
   cursor: pointer;
@@ -1658,7 +1660,7 @@ pre.diff .meta { color: var(--text-dim); }
   font: inherit;
   color: var(--input-fg, var(--text));
   background: var(--input-bg, var(--bg));
-  border: 1px solid var(--card-border);
+  border: 1px solid var(--input-border, var(--card-border));
   border-radius: var(--radius-sm);
   padding: 0 var(--sp-2);
 }

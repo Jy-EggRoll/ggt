@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jy-eggroll/eggokit/theme"
 )
 
 // TestUIFallbacksMatchTokens 把“同一个数字在 app.js 与 style.css 里各写一份”的那几处对起来。
@@ -135,5 +137,71 @@ func TestSelectionTokenReachesBothEnds(t *testing.T) {
 		if !strings.HasPrefix(m[1], "#") && !strings.HasPrefix(m[1], "rgb") {
 			t.Errorf("--selection-bg 的取值不像一个颜色：%q", m[1])
 		}
+	}
+}
+
+// TestControlBorderMeetsNonTextContrast 断言每一套内置主题渲染出来的输入控件边界都达到 3:1。
+//
+// 输入框、下拉框、多行框的边界在样式表里共用 --input-border，取值由 themeBlock 兜出来：上游在
+// 普通主题里根本不画这条边（inputColors.ts 里 input.border 的 dark 与 light 都是 null，只有高
+// 对比度主题才有值），深色下 dropdown.border 又等于它自己的底色，于是只能靠这一层兜底。兜底
+// 失效不报任何异常，症状是输入框看不出边界——改动前 12 套主题实测全部低于 1.4:1，最差 1.08:1
+//
+// 判定前先把半透明色合成到页面底色上：把半透明当不透明算，得出的是偏乐观的错值
+func TestControlBorderMeetsNonTextContrast(t *testing.T) {
+	themes := theme.Available(nil)
+	if len(themes) == 0 {
+		t.Fatal("一套内置主题都没列出来，说明内置主题的打包或列举方式已经变了")
+	}
+
+	// WCAG 2.2 的 1.4.11 对图形与控件边界要求 3:1，比正文文字的 4.5:1 低
+	const want = 3.0
+
+	parse := func(css, name string) string {
+		m := regexp.MustCompile(`--` + regexp.QuoteMeta(name) + `:([^;}]+)`).FindStringSubmatch(css)
+		if m == nil {
+			return ""
+		}
+		return strings.TrimSpace(m[1])
+	}
+
+	for _, th := range themes {
+		css := systemThemeCSS(th.ID, th.ID)
+		page := parse(css, "bg")
+		on := func(v string) string {
+			if page == "" {
+				return v
+			}
+			return theme.Over(v, page)
+		}
+
+		border := on(parse(css, "input-border"))
+		if border == "" {
+			t.Errorf("主题 %s 渲染后没有 --input-border：输入框、下拉框与多行框会回落到给装饰用的 "+
+				"card-border，那个浓度标不出“此处能输入”", th.ID)
+			continue
+		}
+		surfaces := make([]string, 0, 2)
+		for _, name := range []string{"card-bg", "panel-bg"} {
+			if v := parse(css, name); v != "" {
+				surfaces = append(surfaces, on(v))
+			}
+		}
+		if len(surfaces) == 0 {
+			t.Fatalf("主题 %s 渲染后既没有 --card-bg 也没有 --panel-bg，这条断言失去判定对象", th.ID)
+		}
+		worst := 0.0
+		for _, s := range surfaces {
+			got := theme.Contrast(border, s)
+			if got < want {
+				t.Errorf("主题 %s 的输入控件边界 %s 压在 %s 上只有 %.2f:1，达不到 %.1f:1",
+					th.ID, border, s, got, want)
+			}
+			if worst == 0 || got < worst {
+				worst = got
+			}
+		}
+		// 量到的值也写进日志：这条断言只判“过没过线”，而人想知道它究竟被调成了什么色
+		t.Logf("%s 的输入控件边界调成 %s，最差 %.2f:1", th.ID, border, worst)
 	}
 }

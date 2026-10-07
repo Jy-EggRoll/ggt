@@ -52,6 +52,10 @@ var cssVarNames = map[string]string{
 
 	"input.background": "input-bg",
 	"input.foreground": "input-fg",
+	// 上游的 input.border 在普通主题里是 null（inputColors.ts 里 dark 与 light 都是 null，
+	// 只在高对比度主题才有值），所以这个变量只有高对比度主题才带得出值；普通主题下它由
+	// themeBlock 自己兜一个种子再保证对比度，见 contrastPairs 里那一条
+	"input.border": "input-border",
 
 	// 焦点边框：样式表原来拿 git-modified（未暂存修改色）当输入框的聚焦色，
 	// 那是“文件被改过”的语义，与“这个控件拿到了焦点”无关
@@ -322,11 +326,19 @@ func systemThemeCSS(darkID, lightID string) string {
 // 把半透明底色当成不透明色来算，得出的是偏乐观的错值——2026 那两套主题的选中底色正是
 // 半透明的（#00000025 / #ffffff25），漏合成就成了“算出来 11.6:1、看着只有 3.3:1”。
 // 底色本来就不透明时这项不影响结果，留空即按页面底色 --bg 合成
+//
+// min 是这一对要求的门槛，留空按正文文字的 theme.MinContrast。非文字的门槛更低：WCAG 2.2
+// 的 1.4.3 要求正文 4.5:1，1.4.11 对图形与控件边界只要求 3:1
 type contrastPair struct {
 	fg      string
 	bgs     []string
 	surface string
+	min     float64
 }
+
+// minControlBorderContrast 是「识别一个控件所必需的边界」的门槛。
+// 出处：WCAG 2.2 成功准则 1.4.11 Non-text Contrast（https://www.w3.org/TR/WCAG22/#non-text-contrast）
+const minControlBorderContrast = 3.0
 
 // contrastPairs 记录“哪些前景会被铺在哪些底色上”。
 //
@@ -350,9 +362,18 @@ var contrastPairs = []contrastPair{
 	// 写了值时未必协调——2026 那两套的选中底色是半透明的，只有合成到卡片底色上算，
 	// 才看得出 #757575 压在它上面读不出来
 	{fg: "list-selected-fg", bgs: []string{"list-selected-bg"}, surface: "panel-bg"},
+	// 输入控件的边界：样式表里 input/select/textarea 原本共用 card-border，而 card-border 是按
+	// “轻淡的分隔线”配的（正文 12% 混进卡片底），对装饰够用，对“此处能输入”这个信息不够。
+	// 上游本就故意不画这条边（见 input.border 映射处的注释），所以只能自己兜。实测 12 套主题
+	// 全部低于 1.4:1，等于输入框完全看不出边界。
+	//
+	// 只要求它对着控件外面那层底色读得出来，不要求再与控件自己的填色拉开：后者是同一条视觉
+	// 信息，强行拉会让每个输入框都变成一道重框
+	{fg: "input-border", bgs: []string{"card-bg", "panel-bg"}, min: minControlBorderContrast},
 }
 
-// applyContrastFixes 在对比度实在不够时只调前景色的明度，返回调整过的项数。
+// applyContrastFixes 在对比度实在不够时只调那一处颜色的明度，返回调整过的项数。
+// 调的对象包括文字前景与控件边界：两者都是“压在底色上、读不出来就得挪”，只是门槛不同
 //
 // 底色一律不动：那是主题的设计。改上游色值等于自己维护一份主题副本，上游一升级就得重做，
 // 每套主题还都要各修一遍；而这个函数对任何主题都成立（见 eggokit/theme/contrast.go）
@@ -386,12 +407,28 @@ func applyContrastFixes(vars map[string]string) int {
 		if len(bgs) == 0 {
 			continue
 		}
-		if fixed, changed := theme.EnsureContrast(fg, bgs, theme.MinContrast); changed {
+		min := p.min
+		if min == 0 {
+			min = theme.MinContrast
+		}
+		if fixed, changed := theme.EnsureContrast(fg, bgs, min); changed {
 			vars[p.fg] = fixed
 			adjusted++
 		}
 	}
 	return adjusted
+}
+
+// seeThrough 判断一个颜色会不会透出它压着的底色：半透明与全透明都算。
+//
+// 这种颜色拿来做控件边界是没有用的：它最后有多深由底色决定，透明度锁死了它能拉开的差距。
+// 2026 Light 的 input.border 是 #00000066，压在浅底上最多只到 2.73:1，再怎么挪它的明度也
+// 上不去——所以要挑种子时就跳过它，换一个不透明的颜色来兜
+//
+// 判法是“压在黑上与压在白上结果是否不同”：不同就说明底色透了出来。这样不必在 ggt 里重新
+// 实现一遍颜色解析（那份活儿属于 eggokit/theme）；解析不了的值会原样返回、两边相同，一并排除
+func seeThrough(v string) bool {
+	return theme.Over(v, "#000000") != theme.Over(v, "#ffffff")
 }
 
 // themeBlock 把一套解析好的主题拼成一条 :root{...} 规则
@@ -414,6 +451,31 @@ func themeBlock(r *theme.Resolved) string {
 	// （原值 #dcdcdc），两档都只差 5 个灰阶上下，观感等价而少了两份要维护的字面值。
 	// 另外它只用在边框上、从不当前景，所以不进 contrastPairs，对比度回退不会碰它
 	vars["card-border"] = "color-mix(in srgb, var(--text) 12%, var(--card-bg))"
+
+	// 兜输入控件的边界之前先给它一个种子。种子的挑法按“这条边该像什么”排：
+	//
+	//  1. 主题自己写了 input.border，且它是个看得见的颜色——高对比度主题就是靠这条
+	//  2. 控件自己的填色 input-bg：它是主题里最中性、最同族的一档，挪明度之后就是一条边。
+	//     特意不用 dropdown.border：好几套主题把它设成了强调色（Catppuccin 是黄），而强调色
+	//     在这里另有用处——聚焦态用的正是它（--focus-border），静止态与聚焦态同色就分不出两者
+	//  3. 文字色，兜底
+	//
+	// 会透出底色的种子一律跳过：它的深浅由底色决定，透明度锁死了能拉开的差距（2026 Light 的
+	// input.border 是 #00000066，压在浅底上最多只到 2.73:1）。Catppuccin 四套的 input.border
+	// 是全透明，同样在这里被跳过，落到第 2 步
+	seed := ""
+	for _, name := range []string{"input-border", "input-bg", "text"} {
+		if v := vars[name]; v != "" && !seeThrough(v) {
+			seed = v
+			break
+		}
+	}
+	if seed == "" {
+		// 一个能用的种子都没有，索性不发这个变量：样式表回落到 card-border，与改动前一样
+		delete(vars, "input-border")
+	} else {
+		vars["input-border"] = seed
+	}
 
 	// 配色被我们动过就必须留痕：不留的话，用户看到“按钮文字比 VSCode 里深一点”会以为是主题
 	// 自己的问题，而这条日志正是“为什么和你看到的 VSCode 不一样”的唯一线索
