@@ -147,6 +147,10 @@ type CommitFile struct {
 	Dels     int    `json:"dels"`
 	// Binary 为真表示 git 没给出行数（二进制文件），此时 Adds/Dels 都是 0
 	Binary bool `json:"binary"`
+	// Status 是单个大写状态字母（M/A/D/R/T/U/C…），来自 --raw 记录；解析不出时是空串，
+	// 前端据此降级为不显示。它与 git status 的两字母状态不是一回事：这里问的是提交，
+	// 没有工作区那一维
+	Status string `json:"status"`
 }
 
 // CommitFiles 返回一个提交改了哪些文件、各增减多少行。
@@ -158,16 +162,24 @@ type CommitFile struct {
 //	普通   0\t1\ta.txt\0
 //	二进制 -\t-\tbin.dat\0
 //	重命名 1\t0\t\0big.txt\0moved.txt\0   （第三个字段为空，紧跟旧、新两个路径）
+//
+// 额外带 --raw 是为了拿状态字母：numstat 只说改了多少行，不说这条是新增、修改还是删除。
+// 做法照抄 VSCode 的 diffBetweenWithStats（extensions/git/src/git.ts 的 parseGitChangesRaw）：
+// 两份记录各自解析，再按路径关联。这里不抄它的 --diff-filter=ADMR——那个过滤会把类型变更、
+// 未合并等记录整条丢掉，等于改变 ggt 现有的文件清单。
+//
+// 两份记录的先后并不固定：普通提交是全部 --raw 在前，merge 提交（默认走 combined diff）却是
+// numstat 在前、--raw 在后，所以只能按路径关联，不能按下标配对。
 func CommitFiles(ctx context.Context, repoPath, hash string) ([]CommitFile, error) {
 	// 三个“为了让输出可解析”的选项与 diffText 同源：--no-color 去转义、--no-ext-diff 挡住
 	// 用户配置的外部 diff 工具、--no-textconv 挡住 textconv 过滤器（它会把这个文件当文本，
 	// git 于是不再报 "-"，二进制文件会被算出行数）
-	out, err := RunContext(ctx, repoPath, "show", "--numstat", "-z", "--format=",
+	out, err := RunContext(ctx, repoPath, "show", "--raw", "--numstat", "-z", "--format=",
 		"--no-color", "--no-ext-diff", "--no-textconv", hash)
 	if err != nil {
 		return nil, err
 	}
-	return parseNumstat(out), nil
+	return parseNumstatWithStatus(out), nil
 }
 
 // DiffNumstat 与 CommitFiles 同义，只是问的是工作区或暂存区（staged 为真取 index vs HEAD，
@@ -209,6 +221,76 @@ func CommitRangeFiles(ctx context.Context, repoPath, from, to string) ([]CommitF
 		return nil, err
 	}
 	return parseNumstat(out), nil
+}
+
+// parseNumstatWithStatus 解析 `show --raw --numstat -z` 的组合输出：行数照旧交给 parseNumstat，
+// 状态字母另从 --raw 记录里取，再按新路径关联。
+//
+// 分成两个解析器而不是写一个统一的状态机：parseNumstat 已被 DiffNumstat 与 CommitRangeFiles
+// 共用，它的“字段数不是 3 就跳过”正好让不带 tab 的 --raw 记录落空，混进来也不影响行数
+// （numstat_test.go 里有用例把这一点固定住）。
+func parseNumstatWithStatus(out string) []CommitFile {
+	files := parseNumstat(out)
+	statuses := parseRawStatus(out)
+	for i := range files {
+		// 以新路径为键：重命名时 numstat 给的 Path 也是新路径，两边才对得上
+		files[i].Status = statuses[files[i].Path]
+	}
+	return files
+}
+
+// parseRawStatus 从 --raw 记录里取出“路径 → 状态字母”。
+//
+//	普通提交（相对第一父）：:100644 100644 <sha> <sha> M\0<path>\0
+//	重命名与复制多一个旧路径：:100644 100644 <sha> <sha> R100\0<旧>\0<新>\0
+//	merge 的 combined diff：  ::100644 100644 100644 <sha> <sha> <sha> MM\0<path>\0
+//
+// 状态一律是空格分段里的最后一段，双冒号记录只是前面多了 mode 与 sha，所以取首字母这一条
+// 对两种形态都成立，不必分别处理
+func parseRawStatus(out string) map[string]string {
+	statuses := map[string]string{}
+	fields := strings.Split(out, "\x00")
+
+	for i := 0; i < len(fields); i++ {
+		if !strings.HasPrefix(fields[i], ":") {
+			continue
+		}
+		parts := strings.Split(fields[i], " ")
+		letter := rawStatusLetter(parts[len(parts)-1])
+		if letter == "" {
+			continue
+		}
+
+		// 重命名与复制紧跟旧、新两个路径，其余只有新路径。
+		// 新路径为空说明记录被截断：宁可丢这一条，也不要把空路径当成文件名
+		if letter == "R" || letter == "C" {
+			if i+2 >= len(fields) || fields[i+2] == "" {
+				break
+			}
+			statuses[fields[i+2]] = letter
+			i += 2
+			continue
+		}
+		if i+1 >= len(fields) || fields[i+1] == "" {
+			break
+		}
+		statuses[fields[i+1]] = letter
+		i++
+	}
+	return statuses
+}
+
+// rawStatusLetter 取状态字段的首字母并校验。重命名的相似度分数跟在字母后面（R100），
+// merge 的 combined 记录把每个父提交的字母连在一起（MM），首字母都是要的那个。
+// 首字母不是大写字母就返回空串——宁可让前端不显示，也不要把一段 sha 当成状态
+func rawStatusLetter(field string) string {
+	if field == "" {
+		return ""
+	}
+	if c := field[0]; c >= 'A' && c <= 'Z' {
+		return string(c)
+	}
+	return ""
 }
 
 // parseNumstat 解析 --numstat -z 的输出
