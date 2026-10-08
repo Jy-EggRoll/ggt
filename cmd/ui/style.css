@@ -697,8 +697,12 @@ body {
  * 也不会出现在 textContent / innerText 里，验收脚本与无障碍工具都读不到。
  * 排版数值仍照抄 iconlabel.css 的 ::after（75% 不透明度、90% 字号、600 字重、左边距自动）
  */
+/* 提交行下面展开出来的文件子行（.g-file-row）与看板的文件行共用这一批声明：
+   两处要的是同一种排版与同一套状态色，各写一份迟早会有一处漏改。子行不能直接叫 .row，
+   因为 .row 是卡片里绝对定位、自带底与边框的行（见上面 .row 那段） */
 .row.file,
-.row.note {
+.row.note,
+.g-file-row {
   height: var(--row-h);
   line-height: var(--row-h);
   font-size: var(--fs-sm);
@@ -708,7 +712,8 @@ body {
 }
 
 /* 图标与路径合计占满一行，状态字母靠 margin-left:auto 顶到行尾 */
-.row.file {
+.row.file,
+.g-file-row {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -749,7 +754,8 @@ body {
 
 /* 路径容器要能收缩才能出省略号：min-width:0 是必需的，flex 项默认 min-width:auto，
    不给它的话长路径会把行尾的状态字母顶出行外 */
-.row .path {
+.row .path,
+.g-file-row .path {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -757,7 +763,8 @@ body {
 }
 
 /* 目录名：比文件名更淡。VSCode 在列表模式下把路径作为 description 淡化显示，取值同 descriptionForeground */
-.row .dir {
+.row .dir,
+.g-file-row .dir {
   color: var(--text-dim);
 }
 
@@ -766,7 +773,8 @@ body {
  * opacity .75、font-size 90%（12px 的 90% ≈ 10.8px）、font-weight 600、居中
  * 颜色由行的状态类给定（与文件名同色），因此不需要单独声明颜色
  */
-.row.file .letter {
+.row.file .letter,
+.g-file-row .letter {
   margin-left: auto;
   padding-left: var(--sp-3);
   flex: none;
@@ -782,25 +790,57 @@ body {
  * 只给字母徽标上色（fileDecorations.colors 恒为 false），而这块看板以文件清单为主体，
  * 文件名上色更利于横向扫读，用户已确认保留
  */
-.row.file.st-modified { color: var(--git-modified); --tint: var(--git-modified); }
+.row.file.st-modified,
+.g-file-row.st-modified { color: var(--git-modified); --tint: var(--git-modified); }
 /* 已暂存那一侧用 stage* 变体：这两个令牌此前映射了却从没被使用（样式表 0 处引用），
    于是在所有主题下“已暂存的修改”和“未暂存的修改”都是同一个颜色。上游注册表里两者确实同值
    （extensions/git/package.json 的 defaults 逐字如此），但主题写了它们时就该不同 */
-.row.file.st-stage-modified {
+.row.file.st-stage-modified,
+.g-file-row.st-stage-modified {
   color: var(--git-stage-modified, var(--git-modified));
   --tint: var(--git-stage-modified, var(--git-modified));
 }
-.row.file.st-added { color: var(--git-added); --tint: var(--git-added); }
-.row.file.st-untracked { color: var(--git-untracked); --tint: var(--git-untracked); }
-.row.file.st-renamed { color: var(--git-renamed); --tint: var(--git-renamed); }
-.row.file.st-deleted { color: var(--git-deleted); --tint: var(--git-deleted); }
-.row.file.st-stage-deleted {
+.row.file.st-added,
+.g-file-row.st-added { color: var(--git-added); --tint: var(--git-added); }
+.row.file.st-untracked,
+.g-file-row.st-untracked { color: var(--git-untracked); --tint: var(--git-untracked); }
+.row.file.st-renamed,
+.g-file-row.st-renamed { color: var(--git-renamed); --tint: var(--git-renamed); }
+.row.file.st-deleted,
+.g-file-row.st-deleted { color: var(--git-deleted); --tint: var(--git-deleted); }
+.row.file.st-stage-deleted,
+.g-file-row.st-stage-deleted {
   color: var(--git-stage-deleted, var(--git-deleted));
   --tint: var(--git-stage-deleted, var(--git-deleted));
 }
-.row.file.st-ignored { color: var(--git-ignored); --tint: var(--git-ignored); font-style: italic; }
-.row.file.st-conflicting { color: var(--git-conflicting); --tint: var(--git-conflicting); }
-.row.file.st-type-changed { color: var(--git-modified); --tint: var(--git-modified); }
+.row.file.st-ignored,
+.g-file-row.st-ignored { color: var(--git-ignored); --tint: var(--git-ignored); font-style: italic; }
+.row.file.st-conflicting,
+.g-file-row.st-conflicting { color: var(--git-conflicting); --tint: var(--git-conflicting); }
+.row.file.st-type-changed,
+.g-file-row.st-type-changed { color: var(--git-modified); --tint: var(--git-modified); }
+
+/*
+ * 提交行下面展开出来的文件子行。上面那批声明给了它排版与状态色，这里补四件事：
+ *   - 内边距与提交行同宽（--sp-4），中间那个 .lanes 图列由 app.js 按当前列宽插在最前面：
+ *     子行因此与图中的行对齐在同一列上，行尾状态字母也不会贴着滚动条
+ *   - 图列不许被压缩：长路径会把 flex 项挤窄，泳道的 x 一偏，展开区里的线与上下就对不上了
+ *   - 可点与鼠标反馈：与 .g-row 同用 --hover-bg，展开出来的行与图上的行是同一套观感
+ *   - 次要文字（占位、二进制标记）用现成的 --text-dim，不新增颜色
+ */
+.g-file-row {
+  padding: 0 var(--sp-4);
+  cursor: pointer;
+}
+.g-file-row .lanes { flex: none; }
+.g-file-row:hover { background: var(--hover-bg); }
+.g-file-row.dim { color: var(--text-dim); cursor: default; }
+.g-file-row.dim:hover { background: none; }
+.g-file-row .g-file-bin {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
 
 /*
  * 行底色：每个状态各自的半透明色块，色源与它的文字色**同一个令牌**

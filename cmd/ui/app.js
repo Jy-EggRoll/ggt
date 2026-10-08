@@ -479,6 +479,23 @@ function fileStatus(f, side) {
   return WORKTREE[wk] || { letter: wk, cls: 'st-ignored' };
 }
 
+// commitFileStatus 把提交里那个单字母状态归到同一套 st-* 类上，供提交行的文件子行使用。
+//
+// 数据源是 /api/commit-files 的 status 字段（diff-tree 的单字母）。它没有“哪一侧”的概念，
+// 所以不另立一张字母表，而是按左边两张表查：先查工作区侧（M/A/D/T 的色相与工作区一致），
+// 再查暂存侧（R/C 只在那边有）。U 两张表都没有，落到与 fileStatus 里“未跟踪”同一档
+//
+// 契约允许 status 为空串（例如后端拿不到这个字段）：空就不显示字母，也不给它猜一个颜色，
+// 这与 fileStatus 里“认不出的状态码不猜、保留原字符”是同一条纪律
+function commitFileStatus(status) {
+  const s = String(status || '').trim();
+  if (!s) return null;
+  const known = WORKTREE[s] || STAGED[s];
+  if (known) return known;
+  if (s === 'U') return { letter: 'U', cls: 'st-untracked' };
+  return { letter: s, cls: 'st-ignored' };
+}
+
 // hasStaged / hasWork 判断一个文件在某一侧是否有改动，分组的依据就是它俩
 function hasStaged(f) {
   if (f.unmerged || f.untracked) return false;
@@ -2852,6 +2869,17 @@ let graphMaxLimit = 2000;
 let graphAllRefs = true; // 默认跨全部分支与 tag
 let cardSeq = 0; // 作废过期响应（卡片被关掉、或换了仓库时）
 let cardSelected = ''; // 当前固定详情的那条提交
+// 展开文件子行的提交集合。必须是模块级状态：心跳每 5 秒整表重建一次（见 renderGraphRows），
+// 展开态只能靠它在新画的那批行上复原。换仓库、换筛选、关卡片时清空
+const expandedCommits = new Set();
+// 单击钉住详情卡的延时器（见 GRAPH_PIN_DELAY_MS）。双击到达时要能把它清掉，因此要留引用
+let graphPinTimer = null;
+// GRAPH_PIN_DELAY_MS 是单击与双击共存的判定窗：双击会先派发两次 click、再派发一次 dblclick，
+// 若第一下 click 就钉卡，双击展开时卡片会先弹出来、再留在屏幕上。
+//
+// VSCode 那边（listView.ts 把原生 click 与 dblclick 接成两条流）不必延迟，是因为它单击只做
+// “选中”；这里悬停已经即时弹卡，钉卡晚 250ms 不可感，而 250ms 也是各桌面平台双击判定窗口的常见上限
+const GRAPH_PIN_DELAY_MS = 250;
 // 范围比较的基线提交（{hash, subject}），为空表示还没选。
 // 比较天然要两个点，而一次点击只能指到一条提交，所以选取分两步：第一次点选基线，
 // 第二次点另一条才打开两点之间的差异（见 clickCompare）
@@ -3149,6 +3177,170 @@ function markCompareBase() {
   }
 }
 
+/* ——— 提交行下面的文件子行（双击展开） ———
+ *
+ * 子行直接插在那条 .g-row 后面、与提交行同级。它不能叫 .g-row、也不能带 data-hash：
+ * graphListEl 上的 click / mouseover / keydown 三条委托与 markCompareBase / pinCommitCard
+ * 都是靠 .g-row 或 data-hash 认行的，带上就会被当成一条提交
+ */
+
+// loadCommitFiles 取一条提交改动的文件清单，展开与详情卡共用这一份取数。
+//
+// 去重是必需的：同时展开多条提交、或展开的同时鼠标又划过它，都会发出同一个请求；而清单是要
+// 逐行画的，重复请求不会多出任何信息。结果进 commitCardCache，两处之后都直接命中
+function loadCommitFiles(hash) {
+  const cached = commitCardCache.get(hash);
+  if (cached) return Promise.resolve(cached);
+  const flying = commitFilesInflight.get(hash);
+  if (flying) return flying;
+  if (!cardSpec) return Promise.resolve(null);
+  const params = new URLSearchParams({ repo: cardSpec.repo.path, hash });
+  const p = fetch('/api/commit-files?' + params.toString(), { cache: 'no-store', headers: authHeaders })
+    .then((res) => res.json())
+    .then((data) => {
+      const files = data && !data.error ? data : null;
+      // 失败的响应不缓存：后端可能正在重启，下次划过或再展开时应当重试
+      if (files) commitCardCache.set(hash, files);
+      return files;
+    })
+    .catch(() => null)
+    .finally(() => commitFilesInflight.delete(hash));
+  commitFilesInflight.set(hash, p);
+  return p;
+}
+
+// commitFileRowEls 造一条提交下面那批文件子行，一行一个文件。
+//
+// 视觉照搬看板上文件行的既有实现（rowHTML 里 kind === 'file' 那一段）：类型图标 + 文件名 +
+// 更淡的目录 + 行尾状态字母。色值与排版来自 style.css 里与 .row.file 共用同一批声明的 .g-file-row
+// commitFileLanesEl 造子行左侧的泳道图列：把穿过展开区的连线继续画下去。
+//
+// 不画的话，线在展开处断成两截——展开区把“上一行底边到下一行底边”那一段撑开了，而线段是按行
+// 边界逐段画的，中间这几行没人接着画。每段按行高铺一段竖线（子行高与 SWIMLANE_HEIGHT 同值），
+// 因此与上下两行严丝合缝；泳道取这条提交底部的 outputSwimlanes，展开区之后那一行画的正是它的
+// inputSwimlanes，两端对得上。逐行画法与上游一致（scmHistory.ts:277 的
+// renderSCMHistoryGraphPlaceholder，那函数里注释就写着 Draw |）：圆点所在的那条泳道加粗到 3px，
+// 其余 1px。宽度用本项目的固定列宽，而不是像上游那样只画到自己那条泳道的右边——列宽统一，
+// 后面那些行的标签才落在同一列上
+function commitFileLanesEl(vm, colW) {
+  const lanes = mkEl('div', 'lanes');
+  lanes.style.width = colW + 'px';
+  const svg = svgNode('svg', { height: SWIMLANE_HEIGHT, width: colW });
+  const output = vm.outputSwimlanes || [];
+  for (let index = 0; index < output.length; index++) {
+    svg.append(
+      graphVLine(
+        SWIMLANE_WIDTH * (index + 1),
+        0,
+        SWIMLANE_HEIGHT,
+        graphColor(output[index].color, 'var(--text-dim)'),
+        index === vm.index ? 3 : 1,
+      ),
+    );
+  }
+  lanes.appendChild(svg);
+  return lanes;
+}
+
+function commitFileRowEls(vm, files, colW) {
+  const els = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const st = commitFileStatus(f.status);
+    const row = mkEl('div', 'g-file-row' + (st ? ' ' + st.cls : ''));
+    row.dataset.commit = vm.item.hash;
+    row.dataset.file = String(i);
+    row.title = t('diffOpenFile');
+    const slash = f.path.lastIndexOf('/');
+    const base = slash === -1 ? f.path : f.path.slice(slash + 1);
+    const dir = slash === -1 ? '' : f.path.slice(0, slash);
+    // 重命名沿用详情卡里的“旧 → 新”：拆成 文件名 + 目录 反而看不出它从哪来
+    const pathHTML = f.origPath
+      ? '<span class="path">' + esc(f.origPath + ' → ' + f.path) + '</span>'
+      : '<span class="path">' + esc(base) +
+        (dir ? '<span class="dir"> ' + esc(dir) + '</span>' : '') + '</span>';
+    row.innerHTML =
+      fileicon.iconHTML(base) +
+      pathHTML +
+      (f.binary ? '<span class="g-file-bin">' + esc(t('graphBinary')) + '</span>' : '') +
+      (st ? '<span class="letter">' + esc(st.letter) + '</span>' : '');
+    // 图列放在最前：它接住上面那条提交底部还在延续的泳道
+    row.prepend(commitFileLanesEl(vm, colW));
+    els.push(row);
+  }
+  // 改动的文件为空（空提交，或合并提交没有独立改动）时也要给一行说明：什么都不画的话，
+  // 双击之后行数没变，用户分不清“没有改动”和“双击没生效”
+  if (els.length === 0) {
+    els.push(commitFileNoteEl(vm, colW, t('graphFilesSummary', { n: 0, adds: 0, dels: 0 })));
+  }
+  return els;
+}
+
+// commitFileNoteEl 造一行次要文字的子行：占位与“没有改动”共用，颜色走现成的次要前景色。
+// 它也在展开区里占着一行，图列同样要给，否则线在那一行处照样断
+function commitFileNoteEl(vm, colW, text) {
+  const row = mkEl('div', 'g-file-row dim', text);
+  row.prepend(commitFileLanesEl(vm, colW));
+  return row;
+}
+
+// fillCommitFilesAfter 等文件清单回来，把占位那一行换成真正的文件子行。
+//
+// 心跳可能在这期间重建了整表：那时旧占位已经不在文档里，这次补写就该放弃——新表会按
+// expandedCommits 自己再挂一份占位与回调（请求已被去重，不会多发一次）
+function fillCommitFilesAfter(anchor, vm, colW) {
+  loadCommitFiles(vm.item.hash).then((files) => {
+    if (!files || !anchor.isConnected || !expandedCommits.has(vm.item.hash)) return;
+    anchor.replaceWith(...commitFileRowEls(vm, files.files, colW));
+  });
+}
+
+// setRowExpanded 把展开态写到提交行上。只为一个可读的语义，样式不依赖它
+function setRowExpanded(row, on) {
+  row.setAttribute('aria-expanded', on ? 'true' : 'false');
+}
+
+// toggleCommitFiles 双击切换一条提交下面的文件子行：就地插拔，不整表重建。
+// 心跳每 5 秒本来就会重建一次，双击再整表重建一次会让整块图闪一下
+function toggleCommitFiles(vm, row) {
+  const hash = vm.item.hash;
+  if (expandedCommits.has(hash)) {
+    collapseCommitFiles(hash);
+    return;
+  }
+  expandedCommits.add(hash);
+  setRowExpanded(row, true);
+  const colW = graphLaneColumnWidth();
+  const cached = commitCardCache.get(hash);
+  const els = cached
+    ? commitFileRowEls(vm, cached.files, colW)
+    : [commitFileNoteEl(vm, colW, t('graphLoading'))];
+  row.after(...els);
+  if (!cached) fillCommitFilesAfter(els[0], vm, colW);
+}
+
+// collapseCommitFiles 收起一条提交的文件子行：子行都紧跟在这条行后面，摘到下一个提交行为止
+function collapseCommitFiles(hash) {
+  expandedCommits.delete(hash);
+  const row = graphListEl.querySelector('.g-row[data-hash="' + hash + '"]');
+  if (!row) return;
+  let el = row.nextElementSibling;
+  while (el && el.classList.contains('g-file-row')) {
+    const next = el.nextElementSibling;
+    el.remove();
+    el = next;
+  }
+  setRowExpanded(row, false);
+}
+
+// cancelGraphPin 丢掉那次还没到点的“单击钉卡”。换仓库、换筛选、关卡片时都要调：
+// 被延后的那一下若留着，会在新画的那张图上钉一条可能已经不存在的提交
+function cancelGraphPin() {
+  if (!graphPinTimer) return;
+  clearTimeout(graphPinTimer);
+  graphPinTimer = null;
+}
+
 // renderGraphRows 整表重建而不是追加：泳道是逐行递推出来的，续取之后前面那些行的列宽也可能变，
 // 只追加会让新旧两段错位。行数上限由 Go 侧的 graphMaxLimit 管着，重建代价可控
 function renderGraphRows() {
@@ -3199,6 +3391,18 @@ function renderGraphRows() {
     row.appendChild(cmp);
 
     frag.appendChild(row);
+
+    // 展开态在心跳重建后要复原：清单已经在缓存里就直接画出子行，没有就先画一行占位、
+    // 并挂上补内容的回调（见 fillCommitFilesAfter）。子行紧跟在这条提交行后面
+    if (expandedCommits.has(vm.item.hash)) {
+      setRowExpanded(row, true);
+      const cached = commitCardCache.get(vm.item.hash);
+      const els = cached
+        ? commitFileRowEls(vm, cached.files, colW)
+        : [commitFileNoteEl(vm, colW, t('graphLoading'))];
+      for (const el of els) frag.appendChild(el);
+      if (!cached) fillCommitFilesAfter(els[0], vm, colW);
+    }
   }
 
   // 尾部一行：还有更多就说“加载中”，到底了就说“已加载全部”。滚动到底的判据就看它
@@ -3339,6 +3543,10 @@ function openRepoCard(spec) {
   // 基线只对当前这张图有意义：换了仓库，那条提交可能根本不在图上，
   // 留着它就会出现“没有任何标记，点下去却在跟一条看不见的提交比”
   compareBase = null;
+  // 展开的提交与延后的那次单击都只对旧的那张图有意义：留着它们，心跳会在新仓库的图上
+  // 复原出别人的展开态，或钉一条不在图上的提交
+  expandedCommits.clear();
+  cancelGraphPin();
   hideCommitCard(true);
   graphItems = [];
   graphTotal = 0;
@@ -3365,6 +3573,10 @@ function closeCardState() {
   cardOpen = false;
   cardSeq++; // 作废在路上的那次响应
   hoverSeq++;
+  // 子行与延时器都跟着这次收起一起丢掉：元素即将被释放，留着 Set 只会让下次打开
+  // 在别人的图上凭空复原出展开态
+  expandedCommits.clear();
+  cancelGraphPin();
   hideCommitCard(true);
   graphEl.classList.remove('open');
   graphEl.setAttribute('aria-hidden', 'true');
@@ -3406,6 +3618,9 @@ graphAllRefsEl.addEventListener('change', () => {
   cardSelected = '';
   // 同 openGraphCard：换筛选范围会换掉整份行，基线可能已经不在图上
   compareBase = null;
+  // 展开态同理：筛选后这条提交可能根本不在图上，那份展开态留着只会在下一次画表时落空
+  expandedCommits.clear();
+  cancelGraphPin();
   hideCommitCard(true);
   loadGraph(false);
 });
@@ -3419,6 +3634,9 @@ graphAllRefsEl.addEventListener('change', () => {
  *   - 点一下（或按上下键 / 回车）：固定，不再随鼠标移开消失，Esc 或点别处才收
  */
 const commitCardCache = new Map(); // 提交哈希 -> 文件清单：同一个提交反复划过时不重复请求
+// 正在飞的那次请求。与上面那份缓存一起构成“同一提交只取一次”的两道口：缓存管取过的，
+// 这张表管正在取的（见 loadCommitFiles）；展开与详情卡因此共用同一次请求
+const commitFilesInflight = new Map(); // 提交哈希 -> Promise
 let hoverSeq = 0;
 let cardPinned = false;
 let hoverCardTimer = null;
@@ -3505,22 +3723,14 @@ function showCommitCard(vm, x, y, pinned) {
   if (cached) return;
 
   const seq = ++hoverSeq;
-  const params = new URLSearchParams({ repo: cardSpec.repo.path, hash: vm.item.hash });
-  fetch('/api/commit-files?' + params.toString(), { cache: 'no-store', headers: authHeaders })
-    .then((res) => res.json())
-    .then((data) => {
-      // 用户可能已经移到别的提交、或把卡片收起来了：只在卡片还开着时补内容
-      if (seq !== hoverSeq || !graphPopupEl.classList.contains('open')) return;
-      const files = data && !data.error ? data : null;
-      if (!files) return;
-      commitCardCache.set(vm.item.hash, files);
-      // 补内容不做交叉淡入，理由见上面 changed 那段
-      swapCommitCardContent(renderCommitCard(vm, files, cardPinned), false);
-      commitCardPosition(x, y);
-    })
-    .catch(() => {
-      // 文件清单取不到不影响元信息：那一半照常显示
-    });
+  // 取数与文件子行共用 loadCommitFiles（缓存 + 在途去重）。用户可能已经移到别的提交、
+  // 或把卡片收起来了：只在卡片还开着时补内容
+  loadCommitFiles(vm.item.hash).then((files) => {
+    if (seq !== hoverSeq || !graphPopupEl.classList.contains('open') || !files) return;
+    // 补内容不做交叉淡入，理由见上面 changed 那段
+    swapCommitCardContent(renderCommitCard(vm, files, cardPinned), false);
+    commitCardPosition(x, y);
+  });
 }
 
 // swapCommitCardContent 换掉卡片正文。crossfade 为真时，旧正文先搬进一层浮层淡出，
@@ -3687,7 +3897,10 @@ graphPopupEl.addEventListener('mouseleave', () => {
   hoverCardTimer = setTimeout(() => hideCommitCard(false), 120);
 });
 
-// 点一下即固定：这条路径不依赖悬浮，鼠标停在别处也能把详情留在屏幕上
+// 点一下即固定：这条路径不依赖悬浮，鼠标停在别处也能把详情留在屏幕上。
+//
+// 单击与双击共存靠这里的延时（见 GRAPH_PIN_DELAY_MS）：第一下 click 只起定时器，
+// dblclick 到达就把它清掉。第二下 click 的 detail 是 2，交给下面那条 dblclick 路径，这里不接
 graphListEl.addEventListener('click', (e) => {
   // “比较”按钮得先认出来：它长在行里面，不挡住的话这一下会顺带把详情卡固定住，
   // 而用户点的是比较，不该同时弹出一张卡片压在上面
@@ -3699,10 +3912,42 @@ graphListEl.addEventListener('click', (e) => {
     clickCompare(picked && picked.item);
     return;
   }
+  // 文件子行：点一个文件就看它在那次提交里改了什么，与详情卡里的文件行同一个入口。
+  // 子行没有双击动作，因此不必等那 250ms
+  const fileRow = e.target.closest('.g-file-row');
+  if (fileRow) {
+    // 第二下 click（detail 为 2）不再重开一次 diff：子行本身没有双击动作，重开只会白发一次请求，
+    // 还会让刚打开的那一次响应作废。这里与下面 .g-row 的判据同源，只是子行不必等那 250ms
+    if (e.detail !== 1) return;
+    const vm = graphItems.find((v) => v.item.hash === fileRow.dataset.commit);
+    const files = vm && commitCardCache.get(vm.item.hash);
+    const f = files && files.files[Number(fileRow.dataset.file)];
+    if (f) openCommitDiff(vm.item, f);
+    return;
+  }
   const row = e.target.closest('.g-row');
   if (!row) return;
+  if (e.detail !== 1) return;
   const vm = graphItems.find((v) => v.item.hash === row.dataset.hash);
-  if (vm) pinCommitCard(vm, row);
+  if (!vm) return;
+  cancelGraphPin();
+  graphPinTimer = setTimeout(() => {
+    graphPinTimer = null;
+    pinCommitCard(vm, row);
+  }, GRAPH_PIN_DELAY_MS);
+});
+
+// 双击提交行展开/收起它改动的文件。挂在图容器上与 click 分开，与 VSCode 把原生 click 与
+// dblclick 接成两条流是同一个做法（listView.ts）；树那边的判据是 browserEvent.detail === 2，
+// 这里由浏览器直接给 dblclick 事件，不必自己数次数
+graphListEl.addEventListener('dblclick', (e) => {
+  // 比较按钮上的双击不展开：与 click 那里同理，两个手势不该落在同一个位置上
+  if (e.target.closest('.g-compare')) return;
+  const row = e.target.closest('.g-row');
+  if (!row) return;
+  cancelGraphPin(); // 第一下 click 起的那个定时器要在这里断掉，否则卡片会跟着弹出来
+  const vm = graphItems.find((v) => v.item.hash === row.dataset.hash);
+  if (vm) toggleCommitFiles(vm, row);
 });
 
 // 键盘：上下键在提交之间移动并固定详情，回车同样固定当前这条。
