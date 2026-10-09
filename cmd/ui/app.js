@@ -124,6 +124,11 @@ const MSG = {
     settingsPath: 'Config file',
     settingsEmpty: 'No settings to show',
     settingManaged: 'Managed by {{cmd}}; change it there',
+    applyImmediate: 'Applies immediately',
+    applyReload: 'Needs a page reload',
+    applyRestart: 'Needs a ggt restart',
+    settingsSavedReload: 'Saved · reloading the page to apply {{keys}}',
+    settingsSavedRestart: 'Saved · restart ggt to apply {{keys}}',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -210,10 +215,22 @@ const MSG = {
     settingsPath: '配置文件',
     settingsEmpty: '没有可显示的配置项',
     settingManaged: '由 {{cmd}} 管理，请在那里修改',
+    applyImmediate: '立即生效',
+    applyReload: '需刷新页面',
+    applyRestart: '需重启 ggt',
+    settingsSavedReload: '已保存 · 页面即将刷新以应用 {{keys}}',
+    settingsSavedRestart: '已保存 · 需重启 ggt 后生效 {{keys}}',
   },
 };
 
 const LANG = (typeof window.__GGT_LANG__ === 'string' && window.__GGT_LANG__) || 'en';
+
+// LIST_SEP 是拼接“需重启：A、B”这类列表时的连接符，随语言走：中文用顿号，其余用逗号加空格
+const LIST_SEP = LANG.indexOf('zh') === 0 ? '、' : ', ';
+
+// SETTINGS_NOTE_KEY 是跨页面刷新暂存“保存后提示”的 sessionStorage 键。
+// 保存时若同时含“需刷新页面”和“需重启 ggt”的项，刷新会把重启那句冲掉，故先存下、刷新后补显
+const SETTINGS_NOTE_KEY = 'ggt.settingsNote';
 
 // PAGE_SETTINGS 是服务端随首页注入的设置快照（按配置注册表生成），供“页面行为”读用。
 // 不在页面启动时去 /api/settings 取一次，是因为这些取值只影响页面行为、不影响首屏渲染，
@@ -1784,6 +1801,20 @@ function notify(text, severity) {
   return item;
 }
 
+// consumeSettingsNote 补显上一次保存因刷新页面而没来得及展示的提示。
+// 场景：一次改动同时含“需刷新页面”和“需重启 ggt”的项，刷新会把后者那句冲掉，
+// 因此保存前把它写进 sessionStorage（见 persistSettingsNote），这里取出补显一次
+(function consumeSettingsNote() {
+  let note = null;
+  try {
+    note = sessionStorage.getItem(SETTINGS_NOTE_KEY);
+    if (note) sessionStorage.removeItem(SETTINGS_NOTE_KEY);
+  } catch (e) {
+    return; // sessionStorage 不可用（隐私模式等）：没有提示可补，直接跳过
+  }
+  if (note) notify(note, 'info');
+})();
+
 // notifFromResult 是 runWrite 那个“显示结果”回调的适配层：
 // 把它的 (文本, 是否出错) 翻成一条通知
 function notifFromResult(text, isError) {
@@ -2243,6 +2274,14 @@ function settingsRow(item) {
   key.textContent = item.key;
   head.append(title, key);
 
+  // 生效时机常驻标注：改完一项最想知道“现在生效了吗、还要不要做点什么”，而保存后那句提示
+  // 会随页面刷新消失，因此把结论钉在每一项自己的标题行上，随时可见（三档文案见 MSG）
+  const mode = item.applyAt || 'immediate';
+  const apply = document.createElement('span');
+  apply.className = 'setting-apply setting-apply--' + mode;
+  apply.textContent = t('apply' + mode.charAt(0).toUpperCase() + mode.slice(1));
+  head.appendChild(apply);
+
   // “恢复默认”只在这一项确实偏离默认值时出现：无条件画在每一项上，等于宣告所有项都被改过，
   // 真正改过的那几项反而认不出来——而这个按钮存在的意义正是把改过的那几项标出来。
   // 判据是当前值与 item.default 的比较，未保存的改动也算：改回默认值，按钮随之消失
@@ -2394,23 +2433,61 @@ async function saveSettings() {
     return;
   }
 
+  // 按生效时机把本批改动分组，分别说清“现在生效了 / 要刷新 / 要重启 ggt”。
+  // 只靠后端那句 notes 不够：它只覆盖“需重启”一档，而用户真正想知道的是每一项何时生效
+  const text = settingsSavedText(out.applied || []);
   // 结果写在面板自己那一行，而不是发成通知：通知堆叠区就在右下角，恰好压在面板页脚那颗
   // 保存按钮上（通知的层级高于浮层），保存一次之后想再点一次就会被它挡住。
   // 这也是 #diff-op / #graph-op 一直以来的做法——动作发生在这个面里，结果就写在这个面里；
   // 只有“这件事在动作结束后还有用”的消息才值得发成通知
-  const notes = Object.values(out.notes || {});
-  const text = notes.length > 0 ? t('settingsSaved') + ' · ' + notes.join(' ') : t('settingsSaved');
-  // notes 是“这项改完还要做什么”，例如语言要下次运行才生效：与结果写在一起，
-  // 用户不必去别处找这句话
   setSettingsOp(text, false);
-  // 主题这类由服务端烧进首页的取值，只改配置文件不会反映到当前页面上，必须刷新
+  // 主题这类由服务端烧进首页的取值，只改配置文件不会反映到当前页面上，必须刷新。
+  // 但刷新会把上面那句提示一起冲掉：若本批还含“需重启”的项，先把它存进 sessionStorage，
+  // 由下次加载补显一次，避免那条最容易被忽略的提示（重启 ggt）被刷新吞掉
   if (out.reload) {
+    persistSettingsNote(out.applied || []);
     location.reload();
     return;
   }
   await loadSettings();
   // 提示写在重画之后：renderSettings 会先把这一行清空，先写的话会被一起清掉
   setSettingsOp(text, false);
+}
+
+// settingsAppliedGroups 把写入成功的键按生效时机分成三组，并取各自的标题用于展示。
+// 标题取自当前视图（settingsItems）：提示里写“语言”比写 language 更像给用户看的话
+function settingsAppliedGroups(keys) {
+  const groups = { immediate: [], reload: [], restart: [] };
+  for (const key of keys) {
+    const it = settingsItems.find((x) => x.key === key);
+    const mode = (it && it.applyAt) || 'immediate';
+    (groups[mode] || groups.immediate).push(it ? (it.title || key) : key);
+  }
+  return groups;
+}
+
+// settingsSavedText 拼保存后的提示：先宣布已保存，再按档位说明各自何时生效。
+// 立即生效的一档不逐项罗列、只说一句；需要用户额外动作的刷新 / 重启两档才点名，免得被淹没
+function settingsSavedText(keys) {
+  const groups = settingsAppliedGroups(keys);
+  const parts = [t('settingsSaved')];
+  if (groups.immediate.length > 0) parts.push(t('applyImmediate'));
+  if (groups.reload.length > 0) parts.push(t('settingsSavedReload', { keys: groups.reload.join(LIST_SEP) }));
+  if (groups.restart.length > 0) parts.push(t('settingsSavedRestart', { keys: groups.restart.join(LIST_SEP) }));
+  return parts.join(' · ');
+}
+
+// persistSettingsNote 在刷新页面之前，把“需重启 ggt”的提示暂存起来（若有）。
+// 只有这一档值得跨刷新保留：需刷新的项刷新后就生效了，无需再提示；而重启这一档恰恰最容易被
+// 刷新吞掉、也最容易被用户忽略。这里只做暂存，补显在页面加载时的那段（见 consumeSettingsNote）
+function persistSettingsNote(keys) {
+  const restart = settingsAppliedGroups(keys).restart;
+  if (restart.length === 0) return;
+  try {
+    sessionStorage.setItem(SETTINGS_NOTE_KEY, t('settingsSavedRestart', { keys: restart.join(LIST_SEP) }));
+  } catch (e) {
+    // 隐私模式等场景下 sessionStorage 不可用：宁可丢这句提示，也不要让保存流程在这里中断
+  }
 }
 
 // resetSetting 把一项恢复成内置默认值：服务端会把这个键从配置文件里删掉，
@@ -2426,6 +2503,8 @@ async function resetSetting(key) {
     return;
   }
   if (out.reload) {
+    // 恢复默认同样可能动到“需重启”的项（例如把语言重置回默认）：刷新前也要留住那句提示
+    persistSettingsNote(out.applied || [key]);
     location.reload();
     return;
   }

@@ -1096,6 +1096,22 @@ body {
    于是按钮照样露在页面上。这里的规则比 .btn 更具体，才真的藏得住 */
 .setting-reset[hidden] { display: none; }
 
+/* 生效时机标记：钉在标题行，回答“改完什么时候生效”这个每次改配置都会冒出来的问题。
+   立即生效的项占多数，用最弱的中性色，避免满屏都是标签；需要用户再动手的两档
+   （刷新页面 / 重启 ggt）才上色，一眼能挑出“改完还得做点什么”的那几项 */
+.setting-apply {
+  flex: none;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.setting-apply--reload { color: var(--git-modified); border-color: currentColor; }
+.setting-apply--restart { color: var(--git-conflicting); border-color: currentColor; }
+
 /* 控件：输入框、下拉框、多行框共用一套外观。
    配色取 input.* 与 dropdown.*（VSCode 的 inputColors.ts 那组令牌），与卡片里的控件同一来源。
    边框不用 card-border：那是给轻淡分隔线调的浓度，用来标“此处能输入”太弱，12 套主题实测

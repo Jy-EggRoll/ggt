@@ -106,6 +106,10 @@ func TestHandleSettingsGetCoversRegistry(t *testing.T) {
 		if item.Options == nil {
 			t.Errorf("%q 的候选是 null，页面还得为此多写一个分支", item.Key)
 		}
+		// 生效时机必须随每项下发：面板据此常驻标注，缺了它页面只能显示一个空标签
+		if item.ApplyAt == "" {
+			t.Errorf("%q 缺 applyAt：页面没法标注它何时生效", item.Key)
+		}
 	}
 }
 
@@ -237,14 +241,23 @@ func TestHandleSettingsMethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestUIReloadKeysExist 断言 uiReloadKeys 里没有悬空的名字。
+// TestUIReloadKeysDeriveFromRegistry 断言“改完要刷新页面”的键名清单来自注册表。
 //
-// 这份清单是“页面已经烧进去的键名”，与注册表分处两个文件；配置项被删掉或改名之后，
-// 清单里残留的名字不会有任何编译错误，只会让刷新提示永远不出现
-func TestUIReloadKeysExist(t *testing.T) {
+// 这份清单曾经手写、与注册表分处两个文件：那时配置项改名或删除会留下悬空的名字，不报错，
+// 只是刷新提示永远不出现。改为派生后，清单与注册表不可能分叉；这里顺带确认它非空——
+// 空了意味着所有项都被误标成“立即生效”，保存后不再提示刷新
+func TestUIReloadKeysDeriveFromRegistry(t *testing.T) {
+	if len(uiReloadKeys) == 0 {
+		t.Fatal("uiReloadKeys 为空：没有任何配置项被标成 ApplyReload")
+	}
 	for _, key := range uiReloadKeys {
-		if _, ok := config.Lookup(key); !ok {
+		s, ok := config.Lookup(key)
+		if !ok {
 			t.Errorf("uiReloadKeys 里的 %q 在注册表里不存在", key)
+			continue
+		}
+		if s.ApplyAt != config.ApplyReload {
+			t.Errorf("%q 出现在 uiReloadKeys 里，但它的 ApplyAt 是 %q", key, s.ApplyAt)
 		}
 	}
 }
