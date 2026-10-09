@@ -275,7 +275,16 @@ func collectUIPayload(ctx context.Context) *uiPayload {
 }
 
 // handleRepos 是 /api/repos 的处理函数。
-func (c *uiCache) handleRepos(w http.ResponseWriter, _ *http.Request) {
+//
+// 只接受 GET 与 HEAD：这是读接口，它返回的是一份当前快照，任何其他方法在这里都没有语义。
+// 收窄方法而不是照单全收，是为了让“用错方法”这件事在接口边界上立刻暴露成 405，
+// 而不是悄悄返回一份看起来正常的 JSON（与 handleSettings 同一取向）
+func (c *uiCache) handleRepos(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeUIWrite(w, http.StatusMethodNotAllowed, uiWriteResult{Error: l10n.T("Only GET and HEAD are allowed", nil)})
+		return
+	}
+
 	payload := c.repos()
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

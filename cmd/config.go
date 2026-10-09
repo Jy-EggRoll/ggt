@@ -369,13 +369,17 @@ var errSilent = errors.New("error already reported")
 // 各写一份就会出现“命令行提示了、页面却没提示”这种不对称，
 // 而缺了这句话的用户会反复刷新页面等一个永远不会自己生效的改动
 func settingNote(key string) string {
-	// 重启档的项（当前只有 language）改完不影响本次进程，刷新页面也没用。
+	// 重启档的项（当前是 language 与 log_level）改完不影响本次进程，刷新页面也没用。
 	// 判断走注册表的 ApplyAt，而不是把键名硬编码在这里：这样日后加一项“需重启”的配置时，
 	// 命令行 set 与网页设置面板都会自动带上提示，不会漏
 	s, ok := config.Lookup(key)
 	if ok && s.ApplyAt == config.ApplyRestart {
 		// 刻意不在这里重新 Init：那会违反 i18n 包“Init 之后状态只读”的契约
-		return l10n.T("The new language takes effect on the next run", nil)
+		//
+		// 文案刻意不点名具体哪一项：这一档的判断是通用的，若把“语言”写死在这里，
+		// 日后新增的项（如 log_level）就会弹出与它无关的一句提示。逐项的理由
+		// 由注册表各自 ApplyAt 标注旁的注释承担，页面另有按项列出的生效时机
+		return l10n.T("The new value takes effect on the next run", nil)
 	}
 	return ""
 }

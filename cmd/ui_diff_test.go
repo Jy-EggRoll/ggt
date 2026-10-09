@@ -433,3 +433,31 @@ func initCompareTestRepo(t *testing.T) (string, string, string) {
 	head := gitOut(t, dir, "rev-parse", "HEAD")
 	return dir, base, head
 }
+
+// TestHandleReposRejectsNonReadMethods 断言 /api/repos 这个读接口只接受 GET 与 HEAD。
+//
+// 它此前不看方法，任何方法都能拿到一份快照：用错方法的调用方（例如误发 POST 的脚本、
+// 或者把写请求拼错地址打到这里的路径）不会得到任何提示，只会看到一份看起来正常的 JSON，
+// 于是问题被推到很远的地方才暴露。这里把“读接口收窄到 GET/HEAD”钉住
+func TestHandleReposRejectsNonReadMethods(t *testing.T) {
+	// 注入一份空配置：读接口会去采集仓库列表，测试只为看方法校验，不该依赖真实配置
+	withConfig(t, &config.Config{})
+	cache := &uiCache{ctx: context.Background()}
+	handler := cache.handleRepos
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		rec := httptest.NewRecorder()
+		handler(rec, httptest.NewRequest(method, "/api/repos", nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s 应返回 200，实得 %d", method, rec.Code)
+		}
+	}
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		rec := httptest.NewRecorder()
+		handler(rec, httptest.NewRequest(method, "/api/repos", nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s 应返回 405，实得 %d（%s）", method, rec.Code, rec.Body.String())
+		}
+	}
+}

@@ -245,6 +245,12 @@ var settings = []Setting{
 		Expected: l10n.T("debug, info, warn, or error", nil),
 		Parse:    parseLogLevel,
 		Options:  logLevelOptions,
+		// 级别在进程启动时由 logger.Init 定死（cmd/root.go 的 PersistentPreRunE），
+		// 全仓没有第二处 Init，设置面板保存完也不会回灌，因此改完必须重启 ggt。
+		// 级别来源链还有一层命令行 -v/-vv 优先级高于本项：运行期重设就得重放这条链，
+		// 否则 `ggt web -vv` 的用户在面板上保存一个 warn，会把自己的调试输出关掉。
+		// 两处合起来，这一档与 language 同属“启动时定死”，不假装立即生效
+		ApplyAt: ApplyRestart,
 	},
 	{
 		Key:   "theme",

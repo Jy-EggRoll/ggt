@@ -316,6 +316,7 @@ func TestSettingsViewApplyAtIsConcrete(t *testing.T) {
 func TestApplyAtDeclaredForDeferredKeys(t *testing.T) {
 	want := map[string]ApplyAt{
 		"language":       ApplyRestart,
+		"log_level":      ApplyRestart,
 		"theme":          ApplyReload,
 		"theme_dark":     ApplyReload,
 		"theme_light":    ApplyReload,
@@ -343,7 +344,7 @@ func TestApplyAtDeclaredForDeferredKeys(t *testing.T) {
 		t.Errorf("ApplyReload 档应有 6 项，实得 %d：%v", len(reload), reload)
 	}
 	restart := KeysWithApplyAt(ApplyRestart)
-	if len(restart) != 1 || restart[0] != "language" {
-		t.Errorf("ApplyRestart 档应只有 language，实得 %v", restart)
+	if len(restart) != 2 || restart[0] != "language" || restart[1] != "log_level" {
+		t.Errorf("ApplyRestart 档应为 language 与 log_level（按注册表顺序），实得 %v", restart)
 	}
 }
