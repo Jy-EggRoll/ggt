@@ -2058,16 +2058,27 @@ pre.diff .meta { color: var(--text-dim); }
  * 换任意 VSCode 主题都不会化进背景里；浓度比 compare-base（18%）低，展开只作背景提示，
  * 不抢基线那层“实选”的视觉
  * ———————————————————————————————————————————————— */
-.g-row::before {
-  content: '';
+/* 展开箭头。做成真实元素而不是伪元素，是为了让它能单独接点击（伪元素收不到事件）：
+   点它切换这条提交的文件子行，与“点整行看详情”分成两个动作。
+   外层 .g-expander 是 8×14 的点击热区，绝对定位在行左内边距里；箭头本体由 ::before 画、垂直居中。
+   位置依据（实测）：左侧归属实线占 0–2px，泳道列从 12px 起、圆点左缘在 16px，两者之间只有
+   14px；热区取 4–12px、箭头落在 6–10px，与实线留 4px、与圆点留 6px，两端都有余量，也不进入泳道列 */
+.g-expander {
   position: absolute;
-  /* 左侧归属实线占 0–2px；箭头从 7px 起，两者之间留 5px 空隙，避免挤成一团被读成同一个记号。
-     7px + 5px 宽 = 12px，正好停在 --sp-4 内边距的右端，不进入泳道列 */
-  left: 7px;
+  left: 4px;
   top: 50%;
-  width: 5px;
-  height: 5px;
-  margin-top: -3px;
+  width: 8px;
+  height: 14px;
+  margin-top: -7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.g-expander::before {
+  content: '';
+  width: 4px;
+  height: 4px;
   /* 只留右、下两条描边拼成一个直角，旋转后即折叠箭头：-45° 指向右（收起）、45° 指向下（展开） */
   border-right: 1.5px solid var(--text-dim);
   border-bottom: 1.5px solid var(--text-dim);
@@ -2078,8 +2089,13 @@ pre.diff .meta { color: var(--text-dim); }
     border-color var(--dur-fast) ease,
     opacity var(--dur-fast) ease;
 }
-.g-row:hover::before { opacity: 1; }
-.g-row[aria-expanded='true']::before {
+.g-row:hover .g-expander::before { opacity: 1; }
+.g-expander:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+.g-row[aria-expanded='true'] .g-expander::before {
   transform: rotate(45deg);
   border-color: var(--focus-border, var(--git-modified));
   opacity: 1;
@@ -2264,6 +2280,6 @@ pre.diff .meta { color: var(--text-dim); }
   .loading-spinner { animation: none; }
   /* 展开态的箭头旋转与子行淡入一并关掉：两者都是“因为操作而出现”的装饰性动态，
      降级下应瞬时到位。左侧归属实线与淡底是静态标记，不受影响、照常显示 */
-  .g-row::before { transition: none; }
+  .g-expander::before { transition: none; }
   .g-file-row { animation: none; }
 }

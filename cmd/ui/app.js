@@ -101,6 +101,7 @@ const MSG = {
     graphCompareTitle: 'Compare this commit with another one',
     graphCompareBase: 'Baseline',
     graphCompareClearTitle: 'Baseline — click again to clear it, or click Compare on another commit to see what differs between the two',
+    graphToggleFiles: 'Expand or collapse the changed files',
     graphFiles: 'Changed files',
     graphFilesSummary: '{{n}} files, +{{adds}} −{{dels}}',
     graphBinary: 'binary',
@@ -192,6 +193,7 @@ const MSG = {
     graphCompareTitle: '与另一条提交比较',
     graphCompareBase: '基线',
     graphCompareClearTitle: '基线 —— 再点一次取消；或点另一条提交的“比较”，看两点之间的差异',
+    graphToggleFiles: '展开或收起改动的文件',
     graphFiles: '改动的文件',
     graphFilesSummary: '{{n}} 个文件，+{{adds}} −{{dels}}',
     graphBinary: '二进制',
@@ -3469,6 +3471,15 @@ function renderGraphRows() {
     cmp.setAttribute('aria-pressed', isBase ? 'true' : 'false');
     row.appendChild(cmp);
 
+    // 展开箭头：真实元素（不是伪元素），因此能单独接点击。点击交给下面 graphListEl 的委托，
+    // 与“点整行看详情”分成两个动作。它绝对定位在行左内边距里（见样式表），不占 flex 流、不动泳道列
+    const expander = mkEl('span', 'g-expander');
+    expander.setAttribute('role', 'button');
+    expander.setAttribute('tabindex', '0');
+    expander.title = t('graphToggleFiles');
+    expander.setAttribute('aria-label', t('graphToggleFiles'));
+    row.appendChild(expander);
+
     frag.appendChild(row);
 
     // 展开态在心跳重建后要复原：清单已经在缓存里就直接画出子行，没有就先画一行占位、
@@ -3981,6 +3992,18 @@ graphPopupEl.addEventListener('mouseleave', () => {
 // 单击与双击共存靠这里的延时（见 GRAPH_PIN_DELAY_MS）：第一下 click 只起定时器，
 // dblclick 到达就把它清掉。第二下 click 的 detail 是 2，交给下面那条 dblclick 路径，这里不接
 graphListEl.addEventListener('click', (e) => {
+  // 展开箭头：点它只切换文件子行，不钉详情卡。放在最前判，免得落到下面行级的钉卡路径上。
+  // detail !== 1 直接放行（第二下 click 不再切换），与下面 .g-row 的处理同源
+  const expander = e.target.closest('.g-expander');
+  if (expander) {
+    if (e.detail !== 1) return;
+    const row = expander.closest('.g-row');
+    if (!row) return;
+    cancelGraphPin();
+    const vm = graphItems.find((v) => v.item.hash === row.dataset.hash);
+    if (vm) toggleCommitFiles(vm, row);
+    return;
+  }
   // “比较”按钮得先认出来：它长在行里面，不挡住的话这一下会顺带把详情卡固定住，
   // 而用户点的是比较，不该同时弹出一张卡片压在上面
   const compare = e.target.closest('.g-compare');
@@ -4022,6 +4045,8 @@ graphListEl.addEventListener('click', (e) => {
 graphListEl.addEventListener('dblclick', (e) => {
   // 比较按钮上的双击不展开：与 click 那里同理，两个手势不该落在同一个位置上
   if (e.target.closest('.g-compare')) return;
+  // 箭头自己的单击已经切换过了，双击不再叠加一次
+  if (e.target.closest('.g-expander')) return;
   const row = e.target.closest('.g-row');
   if (!row) return;
   cancelGraphPin(); // 第一下 click 起的那个定时器要在这里断掉，否则卡片会跟着弹出来
@@ -4032,6 +4057,17 @@ graphListEl.addEventListener('dblclick', (e) => {
 // 键盘：上下键在提交之间移动并固定详情，回车同样固定当前这条。
 // 没有这条路的话，键盘用户永远看不到提交详情
 graphListEl.addEventListener('keydown', (e) => {
+  // 箭头是 role=button 且可聚焦，回车/空格应与点它一致
+  const expander = e.target.closest('.g-expander');
+  if (expander && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    const row = expander.closest('.g-row');
+    if (row) {
+      const vm = graphItems.find((v) => v.item.hash === row.dataset.hash);
+      if (vm) toggleCommitFiles(vm, row);
+    }
+    return;
+  }
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
   if (graphItems.length === 0) return;
   e.preventDefault();
