@@ -203,7 +203,7 @@ func TestSettingViewJSONFieldNames(t *testing.T) {
 	}
 	for _, name := range []string{
 		"key", "title", "kind", "value", "default", "expected",
-		"options", "allowCustom", "min", "max", "managedBy",
+		"options", "allowCustom", "min", "max", "managedBy", "applyAt",
 	} {
 		if _, ok := raw[name]; !ok {
 			t.Errorf("视图 JSON 缺字段 %q，实得 %v", name, jsonKeys(raw))
@@ -290,5 +290,60 @@ func TestSettingBoundsMatchParse(t *testing.T) {
 				t.Errorf("%q 声明上界 %d，但 Parse 接受了 %d", s.Key, *s.Max, *s.Max+1)
 			}
 		}
+	}
+}
+
+// TestSettingsViewApplyAtIsConcrete 断言投影给页面的生效时机总是三个具体取值之一。
+//
+// 注册表里未标注的项 ApplyAt 是零值（空串），投影时必须归一成 immediate；否则页面按这个字符串
+// 拼 i18n 键（applyImmediate / applyReload / applyRestart）时会取到 "apply"，显示一个空标签，
+// 而服务端这边一切正常——契约横跨两种语言，只能在这里钉住
+func TestSettingsViewApplyAtIsConcrete(t *testing.T) {
+	path := newViewConfigPath(t)
+	valid := map[ApplyAt]bool{ApplyImmediate: true, ApplyReload: true, ApplyRestart: true}
+	for _, v := range SettingsViewAt(path) {
+		if !valid[v.ApplyAt] {
+			t.Errorf("%q 的 applyAt 是 %q，不是 immediate / reload / restart 之一", v.Key, v.ApplyAt)
+		}
+	}
+}
+
+// TestApplyAtDeclaredForDeferredKeys 断言“不能立即生效”的配置项都显式标注了 ApplyAt。
+//
+// 这份标注是设置面板标注、保存后提示、以及命令行 note 的唯一来源：漏标一项，用户改完就得不到
+// 任何“要刷新 / 要重启”的提示，且不会有任何编译错误或服务端报错。这里把当前的三档归属固化下来，
+// 顺带确认派生清单与标注一致——它一旦与注册表分叉，页面就会对错项的提示
+func TestApplyAtDeclaredForDeferredKeys(t *testing.T) {
+	want := map[string]ApplyAt{
+		"language":       ApplyRestart,
+		"theme":          ApplyReload,
+		"theme_dark":     ApplyReload,
+		"theme_light":    ApplyReload,
+		"notify_timeout": ApplyReload,
+		"font_ui":        ApplyReload,
+		"font_mono":      ApplyReload,
+	}
+	got := map[string]ApplyAt{}
+	for _, s := range Settings() {
+		if s.ApplyAt != "" {
+			got[s.Key] = s.ApplyAt
+		}
+	}
+	for key, at := range want {
+		if got[key] != at {
+			t.Errorf("%q 的 ApplyAt 应为 %q，实得 %q", key, at, got[key])
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("显式标注 ApplyAt 的项有 %d 个，预期 %d 个：%v", len(got), len(want), got)
+	}
+
+	reload := KeysWithApplyAt(ApplyReload)
+	if len(reload) != 6 {
+		t.Errorf("ApplyReload 档应有 6 项，实得 %d：%v", len(reload), reload)
+	}
+	restart := KeysWithApplyAt(ApplyRestart)
+	if len(restart) != 1 || restart[0] != "language" {
+		t.Errorf("ApplyRestart 档应只有 language，实得 %v", restart)
 	}
 }

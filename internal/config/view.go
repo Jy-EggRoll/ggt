@@ -36,6 +36,8 @@ type SettingView struct {
 	Max *int `json:"max"`
 	// ManagedBy 非空表示这一项由别的命令管理，面板只显示、不给改
 	ManagedBy string `json:"managedBy"`
+	// ApplyAt 是这一项改完之后何时生效（immediate / reload / restart），面板据此常驻标注
+	ApplyAt ApplyAt `json:"applyAt"`
 }
 
 // SettingsViewAt 返回全部配置项在设置面板里的样子，顺序与注册表一致。
@@ -65,6 +67,8 @@ func SettingsViewAt(path string) []SettingView {
 			Min:         s.Min,
 			Max:         s.Max,
 			ManagedBy:   s.ManagedBy,
+			// 零值（注册表未标注）统一规范成 immediate，页面因此总是拿到三个具体取值之一
+			ApplyAt: s.ApplyAt.normalized(),
 		})
 	}
 	return out

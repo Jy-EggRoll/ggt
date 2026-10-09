@@ -44,6 +44,38 @@ const (
 	KindPaths  Kind = "paths" // 字符串数组
 )
 
+// ApplyAt 描述一项配置改完之后“何时生效”，是注册表里的一份面向用户的承诺。
+//
+// 为什么要声明在注册表而不是页面：用户在设置面板改完一项，最想知道的正是“现在生效了吗、
+// 还要不要做点什么”。这份信息此前散在三处——cmd 包的 uiReloadKeys 记“改完要刷新页面的键”、
+// settingNote 记“改完要重启的键”、其余靠默认立即生效。三处各写一份，加一项配置就可能漏掉提示。
+// 收进注册表后，页面与命令行都从这里派生，只有一份真相。
+//
+// 它描述的是“对用户的生效承诺”，不是“页面怎么实现”：页面仍可自行决定拿到 reload 档时做什么
+// （当前是自动刷新页面），但“这一项要不要刷新/重启”这个判断统一由这里给出。
+type ApplyAt string
+
+const (
+	// ApplyImmediate 表示保存后立即生效。它是零值：绝大多数配置项都属于这一档，
+	// 注册表里因此不必满屏显式标注，只在需要刷新或重启的少数项上打破默认。
+	ApplyImmediate ApplyAt = "immediate"
+	// ApplyReload 表示取值在渲染首页时被写进 HTML 或样式表，需刷新页面才看得到效果。
+	ApplyReload ApplyAt = "reload"
+	// ApplyRestart 表示取值在进程启动时定死（如语言由 l10n.Init 决定），需重启 ggt 才生效。
+	ApplyRestart ApplyAt = "restart"
+)
+
+// normalized 把零值（注册表里未标注）规范成 ApplyImmediate。
+//
+// 注册表允许“不填即立即”，而对外（投影给页面、派生键名清单）只希望见到三个具体取值之一，
+// 因此统一在这里归一，避免每处判断都写成“== \"\" || == ApplyImmediate”这种双重条件。
+func (a ApplyAt) normalized() ApplyAt {
+	if a == "" {
+		return ApplyImmediate
+	}
+	return a
+}
+
 // 数值上限不是洁癖，而是跨平台安全边界：
 //   - concurrency 会一路传到 worker.Map 的 make(chan struct{}, concurrency)，
 //     本项目发布 386 目标，若允许填 20 亿就会直接 OOM
@@ -109,6 +141,10 @@ type Setting struct {
 	// ManagedBy 非空表示该项由别的命令管理：get 可读，set/reset 拒绝。
 	// 仓库列表就属于这种——增删要走 ggt repo，那里有去重、git 仓库校验、路径规范化。
 	ManagedBy string
+
+	// ApplyAt 是这一项改完之后何时生效，供设置面板标注与保存后提示使用（见 ApplyAt 类型）。
+	// 零值表示立即生效，因此只有需要刷新页面或重启 ggt 的项才显式标注。
+	ApplyAt ApplyAt
 
 	// Options 返回本项的候选取值，为空表示这一项只能自由输入。
 	//
@@ -198,6 +234,8 @@ var settings = []Setting{
 		Parse:    parseLanguage,
 		// 语言清单取自 locales 包，注册表不另抄一份
 		Options: languageOptions,
+		// 语言在进程启动时由 l10n.Init 定死，改完必须重启 ggt——这一档目前只有它
+		ApplyAt: ApplyRestart,
 	},
 	{
 		Key:      "log_level",
@@ -219,6 +257,8 @@ var settings = []Setting{
 		// 候选里含一个空值项，代表“跟随系统”：这一项允许清空这件事由清单本身表达，
 		// 而不是另加一个字段
 		Options: themeOptions,
+		// 主题在渲染首页时被解析成 CSS 写进 <style>，改完要刷新页面才看得到
+		ApplyAt: ApplyReload,
 	},
 	{
 		// 这两个键对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme：
@@ -233,6 +273,8 @@ var settings = []Setting{
 		// 与 theme 的区别只在候选里有没有空值：这两个偏好为空时无从渲染，
 		// 因此清单里不含空值，写入校验据此拒绝空串
 		Options: themePreferenceOptions,
+		// 与 theme 同一条理由：配色由服务端注入首页，改完要刷新页面
+		ApplyAt: ApplyReload,
 	},
 	{
 		Key:      "theme_light",
@@ -242,6 +284,8 @@ var settings = []Setting{
 		Expected: l10n.T("a theme id used when following the system and the system is light", nil),
 		Parse:    parseTheme,
 		Options:  themePreferenceOptions,
+		// 与 theme 同一条理由：配色由服务端注入首页，改完要刷新页面
+		ApplyAt: ApplyReload,
 	},
 	{
 		// 字体按“区域”分成两项，而不是给一个全局字体：同一个页面上，界面文字与等宽文字
@@ -260,6 +304,8 @@ var settings = []Setting{
 		// 而清单里写到的字体在别人机器上多半没装。也不去枚举本机已装字体：三平台各要一套实现
 		// （Linux 靠 fc-list、Windows 靠注册表、macOS 靠 system_profiler），代价远大于收益。
 		// 面板因此是一个普通输入框，写什么字体栈由使用者决定，字面里出现字体名是使用者自己的选择
+		// 字体栈在渲染首页时被拼进 <style>，改完要刷新页面
+		ApplyAt: ApplyReload,
 	},
 	{
 		// 与 font_ui 同一套口径：不给候选清单，留空则由浏览器挑一个等宽字体
@@ -269,6 +315,8 @@ var settings = []Setting{
 		Default:  "",
 		Expected: l10n.T("a font-family list, or empty for the browser's monospace font", nil),
 		Parse:    parseFontFamily,
+		// 与 font_ui 同一条理由：字体栈在渲染首页时被拼进 <style>，改完要刷新页面
+		ApplyAt: ApplyReload,
 	},
 	{
 		// 通知自动消失的时长，秒。0 表示不自动消失——这也是默认值：
@@ -281,6 +329,8 @@ var settings = []Setting{
 		Parse:    parseIntInRange(0, maxNotifyTimeout),
 		Min:      intPtr(0),
 		Max:      intPtr(maxNotifyTimeout),
+		// 通知时长被页面读成一个常量（加载时就定下），改完要刷新页面才生效
+		ApplyAt: ApplyReload,
 	},
 	{
 		Key:       "repo_paths",
@@ -315,6 +365,22 @@ func Lookup(key string) (Setting, bool) {
 		}
 	}
 	return Setting{}, false
+}
+
+// KeysWithApplyAt 返回 ApplyAt 等于 at 的全部键名，顺序与注册表一致。
+//
+// 供 page 层派生“改完要刷新页面”这类键名清单：那份清单此前在 cmd 包手写了一份，
+// 与注册表分处两个文件，配置项改名或删除后只会留下悬空的名字——不报错，只是提示永远不出现。
+// 改为从这里派生后，清单只随注册表走。
+func KeysWithApplyAt(at ApplyAt) []string {
+	want := at.normalized()
+	var out []string
+	for _, s := range settings {
+		if s.ApplyAt.normalized() == want {
+			out = append(out, s.Key)
+		}
+	}
+	return out
 }
 
 // parseConcurrency 解析并发数：三种 CPU 相对语义（大小写不敏感）或正整数。
