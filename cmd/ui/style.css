@@ -1779,6 +1779,10 @@ pre.diff .meta { color: var(--text-dim); }
   overflow: auto;
   overscroll-behavior: contain;
   padding: var(--sp-2) 0;
+  /* 双击提交行是“展开/收起改动文件”，而浏览器的默认双击行为是选中光标下的一个词，
+     两者会同时发生：展开的同时行里多出一片高亮选区，观感上像是误操作。整块列表禁掉
+     文本选择。详情卡（#graph-popup）不在这里面，它的内容仍可照常选中复制 */
+  user-select: none;
 }
 
 /*
