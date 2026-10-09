@@ -1012,6 +1012,137 @@ body {
 }
 #fetch-btn:disabled { cursor: default; }
 
+/* ——— 仓库信息浮层（大小 / 文件清单） ———
+   与设置面板共用 .overlay 的结构（几何、底色、圆角、阴影、标题栏），这里只写它自己的部分：
+   层级、标题栏与提示行、正文滚动区，以及两条只读视图的行布局。
+
+   层级取 --z-diff，与 diff、设置面板同层：它不是第三种“浮在浮层之上”的东西，而是与它们
+   并列的一层，靠 DOM 顺序压在看板与仓库卡片之上（#repoinfo 排在 #graph 之后）。这里必须
+   写出来，不能留给定位元素默认的 auto——auto 在同一层里按 0 参与排序，而仓库卡片的
+   --z-card 是 9，于是浮层会被它自己的入口卡片整块盖住，用户只会看到“点了没反应” */
+#repoinfo {
+  z-index: var(--z-diff);
+  /* 内部水平留白比设置面板窄一档：那边有控件、说明与错误行，需要更宽的边距把它们分开；
+     这一层只有若干行数值或一列文件路径，照抄那么宽就只剩空。
+     收成一个局部变量是因为标题栏、提示行、正文三处都得分到，漏一处就左右不齐 */
+  --repoinfo-pad-x: var(--sp-5);
+}
+
+/* 标题栏走通用规则 .overlay > header，只在这里调整内部留白：直接改通用规则会让 diff、
+   仓库卡片等所有浮层的标题栏跟着变。
+   截断与加粗的理由同 #graph-title：仓库名可能很长，而标题栏不允许换行 */
+#repoinfo-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+#repoinfo > header { padding-inline: var(--repoinfo-pad-x); }
+/* Esc 提示靠右、与标题分开：它是键盘操作提示，不属于标题内容 */
+#repoinfo-esc {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* 取数失败或 git 的原话。角色与 #graph-op 相同，但位置在正文之上：正文每次重开都会重建，
+   写进正文里会被冲掉。
+   默认用普通正文色、只有 .error 才转红，与 #graph-op 一致——这样将来给成功结果也留一行提示时，
+   不必先回来改颜色 */
+#repoinfo-op {
+  flex: none;
+  margin: 0;
+  padding: var(--sp-2) var(--repoinfo-pad-x) 0;
+  font-size: var(--fs-xs);
+  line-height: var(--line-relaxed);
+  white-space: pre-wrap;
+  color: var(--cont-fg);
+}
+#repoinfo-op:empty { display: none; }
+#repoinfo-op.error { color: var(--status-error, var(--git-conflicting)); }
+
+/* 正文占满剩余高度并自己滚：文件清单可能有上万条，滚动必须落在这一层，
+   否则长清单会把内容推出浮层（.overlay 是 fixed + inset，撑出去的部分看不见也滚不到） */
+#repoinfo-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-3) var(--repoinfo-pad-x) var(--sp-5);
+}
+
+/* 一块只读信息。大小视图与文件清单各一整块，两块同时出现时才需要间距 */
+.info-block + .info-block { margin-top: var(--sp-5); }
+
+/* 一行键值。行与行之间用分隔线而不是各给一张卡：一屏要看十来行数值，卡片会把浮层撑得很长
+   （与设置面板同一条理由） */
+.info-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--card-border);
+  font-size: var(--fs-md);
+  line-height: var(--line-relaxed);
+}
+.info-block > .info-row:last-child { border-bottom: 0; }
+.info-key {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+/* 数值右对齐：两行的位数不同（磁盘占用与包大小差着量级），左对齐时小数点不在同一列，
+   扫一眼比不出来。等宽字体给数字用，与 diff 行数、提交号同一套 */
+.info-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+
+/* 分桶结论与次要指标都是整段文字，不是键值对，因此退出上面的 flex 布局：
+   flex 容器里的裸文本会成为匿名项，换行与对齐都不受控 */
+.info-row.info-bucket,
+.info-row.info-detail { display: block; }
+
+/* 分桶结论按小/中/大三档着色，沿用终端 ggt size 的同一套语义色（信息 / 警告 / 错误），
+   于是同一次分桶在页面上与终端里是同一个颜色。
+   颜色一律走主题令牌，缺值时都有既有兜底接住，样式表里因此仍然没有颜色字面量 */
+.info-bucket { font-weight: 600; }
+.bucket-small { color: var(--status-info, var(--text-dim)); }
+.bucket-mid { color: var(--status-warn, var(--text)); }
+.bucket-large { color: var(--status-error, var(--git-conflicting)); }
+
+/* 次要指标：大小视图里是 git 的原话（count、in-pack…），文件清单里是“只显示前 N 个”。
+   两类用途共用一个类，因此只取它们的共同点——退到次要字号与次要色，不指定字体族：
+   前者用等宽更整齐，后者是一句中文提示，用等宽反而别扭 */
+.info-row.info-detail {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* 文件清单：路径是等宽字体的典型内容（纵向对齐、区分相近字符），与 diff 正文同一套字体 */
+.info-files {
+  margin: var(--sp-3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: var(--line-tight);
+}
+/* 每条路径一行。长路径允许在任意位置断开，否则它会把这一行横向撑出去，溢出部分被浮层的
+   圆角裁掉，尾部读不到也复制不到。
+   上万条时还要跳过屏幕外那些行的排版与绘制（与 .diff-file 同一手段），不给
+   contain-intrinsic-size 的话，滚动条会随内容进出视口而跳动 */
+.info-files li {
+  padding: var(--sp-1) 0;
+  overflow-wrap: anywhere;
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--row-h);
+}
+
 /* ——— 设置面板 ———
    与仓库卡片共用 .overlay 的结构（几何、底色、圆角、阴影、标题栏），这里只写它自己的部分：
    层级、正文滚动区、每一项的行布局、控件外观与页脚。
