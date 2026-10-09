@@ -78,6 +78,13 @@
     底栏腾出来的位置给它。图标与铃铛同一套做法——内联 SVG + currentColor，颜色只有一个来源
     （按钮的前景令牌），形状是两条带滑块的横杆：比齿轮更容易用几条路径画准，语义也够清楚
   -->
+  <!--
+    版本检查入口：只检查、不升级。为什么先查设置按钮：这里是一排页面级动作，检查更新
+    与设置一样属于“与某个仓库无关”的事；升级本身刻意不放进页面（理由见 cmd/ui_upgrade.go
+    抬头——这个进程正在跑的就是要被替换的可执行文件）。
+    它是显式触发：点击才发一次请求，绝不挂在 5 秒轮询上（那会变成持续出网）
+  -->
+  <button id="upgrade-btn" class="btn btn--secondary" type="button"></button>
   <button id="settings-btn" class="btn btn--secondary" type="button">
     <svg class="settings-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
       <path fill="currentColor" d="M1.5 3.8h7.2v1.4H1.5zM11.3 3.8h3.2v1.4h-3.2zM1.5 10.8h1.2v1.4H1.5zM6.7 10.8h7.8v1.4H6.7z"/>
@@ -175,6 +182,12 @@
     <button id="graph-pull" class="btn btn--secondary" type="button"></button>
     <button id="graph-sync" class="btn btn--secondary" type="button"></button>
     <button id="graph-push" class="btn btn--secondary" type="button"></button>
+    <!--
+      协议切换与拉取/同步/推送同处一排：它们都是“只作用于这个仓库”的动作。
+      为什么只做单个仓库、不做全部：理由写在 cmd/ui_remote.go 抬头（批量改写会让
+      只配了部分主机凭据的用户一次性弄坏多个仓库的推送）
+    -->
+    <button id="graph-remote" class="btn btn--secondary" type="button"></button>
     <button id="graph-diff" class="btn btn--secondary" type="button"></button>
     <!-- 两项只读信息（磁盘占用/包大小、全库文件清单）的入口。放在这张卡片的顶栏，
          与拉取/同步/推送同处一行：它们同样是“作用在这个仓库上”的动作，只是不改任何东西。

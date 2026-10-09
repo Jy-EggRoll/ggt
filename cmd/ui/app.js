@@ -135,6 +135,12 @@ const MSG = {
     notifEmpty: 'No notifications',
     notifBell: 'Notifications',
     settings: 'Settings',
+    remoteToggle: 'Switch origin protocol',
+    remoteToggleTitle: 'Switch this repository\'s origin between HTTPS and SSH',
+    upgrade: 'Check for updates',
+    upgradeUpToDate: 'Already on the latest version ({{cur}})',
+    upgradeAvailable: 'Latest version: {{v}} (current {{cur}})',
+    upgradeHighest: 'Highest version in the stable channel: {{v}}',
     settingsSave: 'Save',
     settingsSaveCount: 'Save ({{n}})',
     settingsSaved: 'Settings saved',
@@ -242,6 +248,12 @@ const MSG = {
     notifEmpty: '没有通知',
     notifBell: '通知中心',
     settings: '设置',
+    remoteToggle: '切换协议',
+    remoteToggleTitle: '在 HTTPS 与 SSH 之间切换这个仓库的 origin 地址',
+    upgrade: '检查更新',
+    upgradeUpToDate: '已是最新版本（当前 {{cur}}）',
+    upgradeAvailable: '最新版本 {{v}}（当前 {{cur}}）',
+    upgradeHighest: '稳定通道中的最高版本：{{v}}',
     settingsSave: '保存',
     settingsSaveCount: '保存（{{n}}）',
     settingsSaved: '设置已保存',
@@ -330,6 +342,9 @@ const commitBtnEl = document.getElementById('graph-commit-btn');
 const fetchBtnEl = document.getElementById('fetch-btn');
 // 设置面板：底栏的入口按钮，以及面板的头部、正文、结果行、配置文件路径、保存按钮
 const settingsBtnEl = document.getElementById('settings-btn');
+// 版本检查入口。它不走 runWrite：那个外壳是给“改仓库状态”的写操作用的，
+// 而这一步只读外网、不动任何仓库
+const upgradeBtnEl = document.getElementById('upgrade-btn');
 const settingsEl = document.getElementById('settings');
 const settingsBackEl = document.getElementById('settings-back');
 const settingsTitleEl = document.getElementById('settings-title');
@@ -355,6 +370,8 @@ const graphPushEl = document.getElementById('graph-push');
 const graphDiffEl = document.getElementById('graph-diff');
 const graphSizeEl = document.getElementById('graph-size');
 const graphFilesEl = document.getElementById('graph-files');
+// 远程协议切换：与拉取/同步/推送同处卡片顶栏，只作用于当前卡片这个仓库
+const graphRemoteEl = document.getElementById('graph-remote');
 // 仓库只读信息浮层（大小、文件清单）
 const infoEl = document.getElementById('repoinfo');
 const infoBackEl = document.getElementById('repoinfo-back');
@@ -2118,7 +2135,7 @@ async function runWrite(path, body, show) {
   board.classList.add('busy');
   // 一次只允许一个写操作在飞：把卡片上的写控件与底栏那个按钮一起置灰。
   // 分支选择器只在列表为空时保持禁用，别把它永久锁上
-  const writable = [commitBtnEl, graphPushEl, graphSyncEl, graphPullEl, graphFetchEl];
+  const writable = [commitBtnEl, graphPushEl, graphSyncEl, graphPullEl, graphFetchEl, graphRemoteEl];
   for (const el of writable) el.disabled = true;
   graphBranchEl.disabled = true;
   fetchBtnEl.disabled = true;
@@ -2602,6 +2619,9 @@ settingsBackEl.textContent = '← ' + t('back');
 settingsBtnEl.setAttribute('aria-label', t('settings'));
 settingsSaveEl.textContent = t('settingsSave');
 settingsBtnEl.addEventListener('click', openSettings);
+// 版本检查按钮的文案与绑定也在这里接：文案跟随语言，而结构在 HTML 里
+upgradeBtnEl.textContent = t('upgrade');
+upgradeBtnEl.addEventListener('click', checkUpgrade);
 settingsBackEl.addEventListener('click', closeSettings);
 settingsSaveEl.addEventListener('click', saveSettings);
 
@@ -3821,6 +3841,8 @@ function openRepoCard(spec) {
   graphSyncEl.textContent = t('pullPush');
   graphSyncEl.title = t('pullPushTitle');
   graphPushEl.textContent = t('push');
+  graphRemoteEl.textContent = t('remoteToggle');
+  graphRemoteEl.title = t('remoteToggleTitle');
   graphDiffEl.textContent = t('openDiff', { n: r.files.length });
   graphDiffEl.title = t('openWholeRepoDiff');
   graphSizeEl.textContent = t('repoSize');
@@ -4313,5 +4335,42 @@ graphFetchEl.addEventListener('click', () => cardWrite('/api/fetch', { repo: car
 graphPullEl.addEventListener('click', () => cardWrite('/api/pull', { repo: cardSpec.repo.path }));
 graphSyncEl.addEventListener('click', () => cardWrite('/api/sync', { repo: cardSpec.repo.path }));
 graphPushEl.addEventListener('click', () => cardWrite('/api/push', { repo: cardSpec.repo.path }));
+// 协议切换走 cardWrite：结果照旧由通知显示，服务端把切换前后的 origin 原话放在 output 里，
+// 用户能自己核对该仓库的地址（页面不复制一份“已切换”的说法）
+graphRemoteEl.addEventListener('click', () =>
+  cardWrite('/api/remote', { repo: cardSpec.repo.path, protocol: 'toggle' }));
+
+// checkUpgrade 触发一次版本检查并把结论通知出来。
+//
+// 刻意不放进 heartbeat：这一步要出网访问 GitHub，慢的时候十几秒，挂在 5 秒轮询上会变成
+// 一直发外网请求，既拖慢页面也会耗尽匿名配额。只有用户点底栏那个按钮才走到这里，
+// 等待期间按钮禁用，避免连点发出多次检查
+async function checkUpgrade() {
+  if (upgradeBtnEl.disabled) return;
+  upgradeBtnEl.disabled = true;
+  try {
+    const out = await postJSON('/api/upgrade-check', {});
+    if (out.error) {
+      notify(out.error, 'error');
+      return;
+    }
+    const cur = out.current || '';
+    if (out.upToDate) {
+      notify(t('upgradeUpToDate', { cur }), 'info');
+      return;
+    }
+    // 本地版本无法比较时（本地源码构建）服务端把 comparable 置为假：那时只能说通道里
+    // 的最高版本是哪个，不能说“有新版本”——与命令行 upgrade 的措辞保持同一口径
+    if (!out.comparable) {
+      notify(t('upgradeHighest', { v: out.latest || '' }), 'info');
+      return;
+    }
+    notify(t('upgradeAvailable', { v: out.latest || '', cur }), 'info');
+  } catch (err) {
+    notify(t('loadFailed', { err: err.message }), 'error');
+  } finally {
+    upgradeBtnEl.disabled = false;
+  }
+}
 // 全仓 diff 从卡片顶栏进：它浮在卡片之上，关掉回到卡片（不再占据“入口行”那样的对等地位）
 graphDiffEl.addEventListener('click', () => openDiff({ repo: currentRepo() }));

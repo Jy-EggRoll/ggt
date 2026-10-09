@@ -185,21 +185,32 @@ func toggleCurrentRepo() {
 		return
 	}
 
-	raw, err := git.RunContext(context.Background(), wd, "remote", "get-url", remoteOrigin)
+	target, err := resolveToggleTarget(context.Background(), wd)
 	if err != nil {
-		ErrorMsg(l10n.T("Failed to get the remote URL: {{.Err}}", map[string]any{"Err": err}))
+		ErrorMsg(err.Error())
 		return
-	}
-
-	// detectProtocol 返回大写的 "HTTPS" 或 "SSH"，据此计算相反协议
-	current := detectProtocol(strings.TrimSpace(raw))
-	target := "https"
-	if current == "HTTPS" {
-		target = "ssh"
 	}
 
 	entries := ExpandRepos(context.Background(), []string{wd})
 	processSwitchResults(entries, target)
+}
+
+// resolveToggleTarget 读取指定仓库 origin 的当前协议，返回与之相反的目标协议（"https" 或 "ssh"）。
+//
+// 抽出来是为了让命令行与看板共用同一份取反规则：命令行的 toggle 作用于当前目录的仓库
+// （含子模块），看板的 toggle 作用于用户点中的那个仓库，两者只是“哪个仓库”不同，
+// 判定与取反必须一致，否则同一个仓库在两边会切向不同方向
+func resolveToggleTarget(ctx context.Context, repoPath string) (string, error) {
+	raw, err := git.RunContext(ctx, repoPath, "remote", "get-url", remoteOrigin)
+	if err != nil {
+		return "", errors.New(l10n.T("Failed to get the remote URL: {{.Err}}", map[string]any{"Err": err}))
+	}
+
+	// detectProtocol 返回大写的 "HTTPS" 或 "SSH"，据此计算相反协议
+	if detectProtocol(strings.TrimSpace(raw)) == "HTTPS" {
+		return "ssh", nil
+	}
+	return "https", nil
 }
 
 // switchAllRepos 切换所有配置仓库（含子模块，受 ignore_submodules 控制）的远程协议。

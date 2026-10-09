@@ -1269,6 +1269,12 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	// 设置面板：GET 读全部配置项（由注册表投影而来），POST 写。
 	// 它不碰仓库，只读写配置文件，因此与上面那些端点没有共同前提
 	mux.HandleFunc("/api/settings", handleSettings(config.GetDefaultConfigPath()))
+	// 远程协议切换：改的是仓库 .git/config 里的一行，同样只认 POST。
+	// 网页里只作用于请求指定的那一个仓库，理由见 ui_remote.go 抬头
+	mux.HandleFunc("/api/remote", cache.handleRemote)
+	// 版本检查：只查 GitHub Release 并比版本，不下载、不替换可执行文件（理由见 ui_upgrade.go）。
+	// 它必须由用户显式触发，绝不能出现在页面的轮询路径上
+	mux.HandleFunc("/api/upgrade-check", handleUpgradeCheck(uiUpgradeCheckerFromEnv()))
 
 	// 页面自己不会说“当前语言是哪个”，由 Go 端把语言写进两个占位符：
 	//   - __GGT_LANG_VALUE__ 供页面内翻译表选语言
