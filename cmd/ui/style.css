@@ -831,6 +831,23 @@ body {
 .g-file-row {
   padding: 0 var(--sp-4);
   cursor: pointer;
+  /* 左侧那条归属实线（::before）定位在这条子行上 */
+  position: relative;
+  /* 归属底色：比父提交行更淡一层，与左侧实线一起说明“这一串属于上面那条提交”。
+     同样写 background-image，让 :hover 的 background 简写能干净地盖掉它——
+     鼠标掠过某一行时，反馈只该来自 hover */
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--focus-border, var(--git-modified)) 7%, transparent),
+    color-mix(in srgb, var(--focus-border, var(--git-modified)) 7%, transparent)
+  );
+  /* 展开时子行淡入。插入是 JS 就地插 DOM，没有这一下就是一帧硬切。
+     只淡不位移：行高是常量、泳道竖线按行边界逐段画，任何位移或高度变化都会让那一小段线错位，
+     淡入不动几何，是这个约束下唯一安全的入场 */
+  animation: g-file-in var(--dur-fast) var(--ease-decel);
+}
+@keyframes g-file-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 /* 展开区左侧的泳道图列：必须给出确定高度，内部的 SVG 也必须按块级摆。
    SVG 是替换元素，留在 inline 流里会坐在基线上、下方给 descender 留出一小截空隙，
@@ -1966,6 +1983,9 @@ pre.diff .meta { color: var(--text-dim); }
   padding: 0 var(--sp-4);
   cursor: pointer;
   white-space: nowrap;
+  /* 展开箭头与左侧色条都定位在这条行上（见下面的“展开态”段），因此行要成为它们的定位基准。
+     它们都是绝对定位，不进 flex 流，泳道列的 x 因此不受影响 */
+  position: relative;
 }
 .g-row:hover { background: var(--hover-bg); }
 /* 选中态与 hover 分开：hover 是“鼠标正经过”，选中是“用户固定了这一条”。
@@ -2019,6 +2039,83 @@ pre.diff .meta { color: var(--text-dim); }
     color-mix(in srgb, var(--focus-border, var(--git-modified)) 18%, transparent)
   );
   box-shadow: inset 0 0 0 1px var(--focus-ring);
+}
+
+/* ————————————————————————————————————————————————
+ * 展开态：既标“哪一条展开了”，也标“展开出来的几行属于它”
+ *
+ * 两件事分开做，因为用户要回答的是两个不同的问题：
+ *   - 哪一条：提交行左侧内边距里一枚方向随状态变的折叠箭头 + 一层淡底
+ *   - 属于谁：提交行与它下面所有文件子行共用一条 2px 的左侧实线，子行再叠一层更淡的连续底色，
+ *     三者一起把这几行框成一块
+ *
+ * 为什么箭头与色条都用绝对定位而不是新开一列：提交行与子行的泳道列必须落在同一个 x 上，
+ * 行与行之间的竖线也首尾相接（见 .g-row / .g-file-row 的 .lanes 注释）。往 flex 流里插一列会把
+ * 这一行整体右移，竖线就在行间断开。绝对定位只占现有 --sp-4 左内边距的空档（泳道首列在 11px
+ * 之后，与箭头不重叠），几何一点不动，滚动之后标记也一直看得见。
+ *
+ * 为什么底色用 focus-border：它是主题作者保证在背景上看得见的强调色，与 compare-base 同源，
+ * 换任意 VSCode 主题都不会化进背景里；浓度比 compare-base（18%）低，展开只作背景提示，
+ * 不抢基线那层“实选”的视觉
+ * ———————————————————————————————————————————————— */
+.g-row::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -3px;
+  /* 只留右、下两条描边拼成一个直角，旋转后即折叠箭头：-45° 指向右（收起）、45° 指向下（展开） */
+  border-right: 1.5px solid var(--text-dim);
+  border-bottom: 1.5px solid var(--text-dim);
+  transform: rotate(-45deg);
+  opacity: 0.5;
+  transition:
+    transform var(--dur-fast) var(--ease-decel),
+    border-color var(--dur-fast) ease,
+    opacity var(--dur-fast) ease;
+}
+.g-row:hover::before { opacity: 1; }
+.g-row[aria-expanded='true']::before {
+  transform: rotate(45deg);
+  border-color: var(--focus-border, var(--git-modified));
+  opacity: 1;
+}
+
+/* 展开块左侧实线：提交行与每条子行各画一小段，行高固定、彼此相接，因此看上去是一条贯通的竖线 */
+.g-row[aria-expanded='true']::after,
+.g-file-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--focus-border, var(--git-modified));
+}
+
+/* 展开提交行的淡底。写 background-image 而非 background：行 hover / 选中 / 基线各自改的是
+   background 简写里的另一层（见 .g-row:hover 与 .g-row.selected），只有走 background-image
+   才能与它们叠在一起，而不是把其中一层整块抹掉 */
+.g-row[aria-expanded='true'] {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--focus-border, var(--git-modified)) 12%, transparent),
+    color-mix(in srgb, var(--focus-border, var(--git-modified)) 12%, transparent)
+  );
+}
+/* 一条行同时是展开行与基线行时，两条 background-image 会在各自规则里互相顶掉，只剩后写的那个。
+   这里把两层按顺序一并列出（先基线后展开），两种状态才都画得出来 */
+.g-row[aria-expanded='true'].compare-base {
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--focus-border, var(--git-modified)) 18%, transparent),
+      color-mix(in srgb, var(--focus-border, var(--git-modified)) 18%, transparent)
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--focus-border, var(--git-modified)) 12%, transparent),
+      color-mix(in srgb, var(--focus-border, var(--git-modified)) 12%, transparent)
+    );
 }
 
 /*
@@ -2163,4 +2260,8 @@ pre.diff .meta { color: var(--text-dim); }
   /* 进度指示那一圈转动也停掉：它幅度虽小却一直在动，而持续运动正是这类用户最难受的一类。
      文字那半仍在，加载状态因此不会失去提示 */
   .loading-spinner { animation: none; }
+  /* 展开态的箭头旋转与子行淡入一并关掉：两者都是“因为操作而出现”的装饰性动态，
+     降级下应瞬时到位。左侧归属实线与淡底是静态标记，不受影响、照常显示 */
+  .g-row::before { transition: none; }
+  .g-file-row { animation: none; }
 }
