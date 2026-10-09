@@ -125,6 +125,7 @@
   "Notification timeout": "通知自动消失",
   "Only GET and HEAD are allowed": "只接受 GET 与 HEAD 请求",
   "Only GET and POST are allowed": "只接受 GET 与 POST 请求",
+  "Only GET is allowed": "只接受 GET 请求",
   "Only POST is allowed": "只接受 POST 请求",
   "Only check the version, do not upgrade": "只检查版本，不执行升级",
   "Open a local web dashboard for every repository": "为所有仓库打开本机网页看板",

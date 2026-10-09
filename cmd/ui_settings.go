@@ -95,14 +95,14 @@ func handleSettings(path string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			writeUISettingsJSON(w, http.StatusOK, uiSettings{
+			writeUIJSON(w, http.StatusOK, uiSettings{
 				Path:  path,
 				Items: config.SettingsViewAt(path),
 			})
 		case http.MethodPost:
 			applySettings(w, r, path)
 		default:
-			writeUISettingsJSON(w, http.StatusMethodNotAllowed,
+			writeUIJSON(w, http.StatusMethodNotAllowed,
 				uiSettings{Error: l10n.T("Only GET and POST are allowed", nil)})
 		}
 	}
@@ -116,7 +116,7 @@ func handleSettings(path string) http.HandlerFunc {
 func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 	var req uiSettingsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeUISettingsJSON(w, http.StatusBadRequest, uiSettingsResult{Error: l10n.T("Invalid request body", nil)})
+		writeUIJSON(w, http.StatusBadRequest, uiSettingsResult{Error: l10n.T("Invalid request body", nil)})
 		return
 	}
 
@@ -171,12 +171,14 @@ func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 	if len(out.Errors) == 0 {
 		out.Errors = nil
 	}
-	writeUISettingsJSON(w, http.StatusOK, out)
+	writeUIJSON(w, http.StatusOK, out)
 }
 
-// writeUISettingsJSON 输出设置端点响应。与 diff 端点一样关掉 HTML 转义：
-// 取值里有路径与主题名，转义后排查接口时看到的 JSON 无法阅读
-func writeUISettingsJSON(w http.ResponseWriter, status int, out any) {
+// writeUIJSON 输出只读端点的 JSON 响应（设置面板与仓库大小/文件清单两处共用）。
+// 与 diff 端点一样关掉 HTML 转义：取值里有路径与主题名，转义后排查接口时看到的 JSON 无法阅读。
+// 收 any 而不是各自的结构体：这几个响应都是“一个结构体加一个可选错误字段”，
+// 每加一个端点就复制一遍这五行没有意义
+func writeUIJSON(w http.ResponseWriter, status int, out any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	// 配置随时可能在另一个终端被 ggt config set 改掉，缓存留不得
 	w.Header().Set("Cache-Control", "no-store")

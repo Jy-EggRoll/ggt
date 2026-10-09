@@ -176,6 +176,12 @@
     <button id="graph-sync" class="btn btn--secondary" type="button"></button>
     <button id="graph-push" class="btn btn--secondary" type="button"></button>
     <button id="graph-diff" class="btn btn--secondary" type="button"></button>
+    <!-- 两项只读信息（磁盘占用/包大小、全库文件清单）的入口。放在这张卡片的顶栏，
+         与拉取/同步/推送同处一行：它们同样是“作用在这个仓库上”的动作，只是不改任何东西。
+         不放进底栏（底栏是作用于整个看板的），也不放进设置面板（那里是整个程序的配置，
+         挂上会让“只对当前仓库生效”变成一种很容易产生的误解） -->
+    <button id="graph-size" class="btn btn--secondary" type="button"></button>
+    <button id="graph-files" class="btn btn--secondary" type="button"></button>
     <span id="graph-esc"><kbd>Esc</kbd></span>
   </header>
   <!-- 提交信息与提交：VSCode 的源码管理视图里这两件也在最上方，与“改动列表”同处一个视图 -->
@@ -189,6 +195,21 @@
   <div id="graph-body">
     <div id="graph-list" tabindex="0"></div>
   </div>
+</div>
+<!--
+  仓库只读信息浮层：卡片顶栏的“大小”“文件”按钮打开，展示同一个仓库的磁盘占用/包大小
+  或全库文件清单。形态与设置面板一致（同用 .overlay），因此不必为它另写一套样式；
+  排在这里是为了盖住仓库卡片——入口就在卡片顶栏上，开出来的面板必须压得住它
+-->
+<div id="repoinfo" class="overlay" aria-hidden="true">
+  <header>
+    <button id="repoinfo-back" class="btn btn--secondary" type="button"></button>
+    <span id="repoinfo-title"></span>
+    <span id="repoinfo-esc"><kbd>Esc</kbd></span>
+  </header>
+  <!-- 取数失败或 git 的原话。与 #graph-op 同样的角色，单独一行是因为正文每次重开都会重建 -->
+  <p id="repoinfo-op"></p>
+  <div id="repoinfo-body"></div>
 </div>
 <!--
   设置面板：底栏的设置按钮打开（VSCode 的设置也从齿轮那样的入口进）。
@@ -216,6 +237,10 @@
   <div id="settings-body"></div>
   <footer>
     <span id="settings-path"></span>
+    <!-- 版本号：由服务端在渲染首页时写进占位符（见 cmd/ui.go 的 renderIndexHTML）。
+         它一个进程内不会变，因此随首页一次带过来，不为一个常量再开一个接口；
+         与配置文件路径并排在页脚，两者都是“关于这份程序”的说明 -->
+    <span id="settings-version">__GGT_VERSION__</span>
     <button id="settings-save" class="btn btn--primary" type="button" disabled></button>
   </footer>
 </div>

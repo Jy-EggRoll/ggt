@@ -125,6 +125,7 @@
   "Notification timeout": "Notification timeout",
   "Only GET and HEAD are allowed": "Only GET and HEAD are allowed",
   "Only GET and POST are allowed": "Only GET and POST are allowed",
+  "Only GET is allowed": "Only GET is allowed",
   "Only POST is allowed": "Only POST is allowed",
   "Only check the version, do not upgrade": "Only check the version, do not upgrade",
   "Open a local web dashboard for every repository": "Open a local web dashboard for every repository",

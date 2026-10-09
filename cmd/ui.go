@@ -1212,6 +1212,9 @@ func renderIndexHTML(indexHTML []byte, lang string) []byte {
 	out := bytes.ReplaceAll(indexHTML, []byte("__GGT_HTML_LANG__"), []byte(lang))
 	out = bytes.ReplaceAll(out, []byte("__GGT_LANG_VALUE__"), []byte(lang))
 	out = bytes.ReplaceAll(out, []byte("__GGT_SETTINGS_JSON__"), uiSettingsJSON(config.GetDefaultConfigPath()))
+	// 版本号是进程级常量，随首页一次带过来：为它开一个接口等于让页面只为一行字多发一次请求。
+	// 与语言那两个占位符同理，每次请求现渲染——将来若把版本做成可切换的，页面刷新即可跟上
+	out = bytes.ReplaceAll(out, []byte("__GGT_VERSION__"), []byte(effectiveVersion()))
 	out = bytes.ReplaceAll(out, []byte("__GGT_THEME_CSS__"), []byte(resolveTheme()))
 	return bytes.ReplaceAll(out, []byte("__GGT_FONT_CSS__"), []byte(fontBlock()))
 }
@@ -1258,6 +1261,11 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	// 另有各自的端点，见上面那几行
 	mux.HandleFunc("/api/log", cache.handleLog)
 	mux.HandleFunc("/api/commit-files", cache.handleCommitFiles)
+	// 按需查看单个仓库的两项只读信息：磁盘占用/包大小（含分桶）与全库文件清单。
+	// 它们不进 /api/repos 快照、也不参与轮询——每个仓库各跑一条 git 的代价只能由
+	// “用户确实点开了这个仓库”来付账
+	mux.HandleFunc("/api/size", cache.handleSize)
+	mux.HandleFunc("/api/files", cache.handleFiles)
 	// 设置面板：GET 读全部配置项（由注册表投影而来），POST 写。
 	// 它不碰仓库，只读写配置文件，因此与上面那些端点没有共同前提
 	mux.HandleFunc("/api/settings", handleSettings(config.GetDefaultConfigPath()))

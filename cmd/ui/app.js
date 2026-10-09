@@ -81,6 +81,17 @@ const MSG = {
     pullPushTitle: 'Pull --ff-only, then push',
     branchLabel: 'Branch',
     openDiff: 'Changes ({{n}})',
+    repoSize: 'Size',
+    repoFiles: 'Files',
+    sizeDisk: 'Disk usage',
+    sizePack: 'Package size',
+    sizeUnitDecimal: 'decimal MB (1 MB = 1,000,000 bytes)',
+    sizeUnitBinary: 'binary MB (1 MB = 1024×1024 bytes)',
+    sizeBucketSmall: 'Below {{n}} MB',
+    sizeBucketMid: '{{low}}~{{high}} MB',
+    sizeBucketLarge: 'Above {{n}} MB',
+    filesTotal: '{{n}} files in total',
+    filesTruncated: 'Only the first {{n}} are shown',
     openWholeRepoDiff: 'Show the whole repository diff',
     stageAll: 'Stage all changes',
     unstageAll: 'Unstage all changes',
@@ -180,6 +191,17 @@ const MSG = {
     pullPushTitle: '先 git pull --ff-only，成功后再 git push',
     branchLabel: '分支',
     openDiff: '改动 {{n}}',
+    repoSize: '大小',
+    repoFiles: '文件',
+    sizeDisk: '磁盘占用',
+    sizePack: '包大小',
+    sizeUnitDecimal: '十进制 MB（1 MB = 1,000,000 字节）',
+    sizeUnitBinary: '二进制 MB（1 MB = 1024×1024 字节）',
+    sizeBucketSmall: '小于 {{n}} MB',
+    sizeBucketMid: '{{low}}~{{high}} MB',
+    sizeBucketLarge: '大于 {{n}} MB',
+    filesTotal: '共 {{n}} 个文件',
+    filesTruncated: '只显示前 {{n}} 个',
     openWholeRepoDiff: '查看整个仓库的改动',
     stageAll: '暂存全部',
     unstageAll: '全部取消暂存',
@@ -331,6 +353,19 @@ const graphPullEl = document.getElementById('graph-pull');
 const graphSyncEl = document.getElementById('graph-sync');
 const graphPushEl = document.getElementById('graph-push');
 const graphDiffEl = document.getElementById('graph-diff');
+const graphSizeEl = document.getElementById('graph-size');
+const graphFilesEl = document.getElementById('graph-files');
+// 仓库只读信息浮层（大小、文件清单）
+const infoEl = document.getElementById('repoinfo');
+const infoBackEl = document.getElementById('repoinfo-back');
+const infoTitleEl = document.getElementById('repoinfo-title');
+const infoOpEl = document.getElementById('repoinfo-op');
+const infoBodyEl = document.getElementById('repoinfo-body');
+// 只读信息浮层的状态：当前看的是哪一项、以及用来作废过期响应的序号
+let infoOpen = false;
+let infoMode = 'size';
+let infoSeq = 0;
+let infoFocusReturn = null;
 // 提交详情卡（悬浮即显，点一下固定）
 const graphPopupEl = document.getElementById('graph-popup');
 const boardOpEl = document.getElementById('op');
@@ -990,7 +1025,7 @@ let settingsOpen = false;
 // 需要它的至少三处：锁住页面滚动、浮层关掉后恢复看板、以及判断纵向滚轮该不该让回浏览器。
 // 最后那处原先自己写了一遍三标志的判断且漏掉了设置面板，所以这里只留一个入口
 function anyOverlayOpen() {
-  return diffOpen || cardOpen || settingsOpen;
+  return diffOpen || cardOpen || settingsOpen || infoOpen;
 }
 
 // syncScrollLock 统一决定要不要锁住页面滚动，并顺带切换遮罩层。
@@ -2570,6 +2605,144 @@ settingsBtnEl.addEventListener('click', openSettings);
 settingsBackEl.addEventListener('click', closeSettings);
 settingsSaveEl.addEventListener('click', saveSettings);
 
+// ——— 仓库只读信息浮层：磁盘占用/包大小与全库文件清单 ———
+//
+// 两项都按需现取，不进看板的 5 秒轮询：每项都要为一个仓库跑一条 git（count-objects / ls-files），
+// 让它们随心跳回来等于每 5 秒为所有仓库各起两个进程，而这两份数据本身变化很慢。
+// 两项共用一个面板（入口是卡片顶栏相邻的两个按钮）：看大的时候想看一眼文件清单，
+// 不该要求先关掉再开
+function setInfoOp(text, isError) {
+  infoOpEl.textContent = text || '';
+  infoOpEl.classList.toggle('error', !!isError);
+}
+
+async function openRepoInfo(mode) {
+  const r = currentRepo();
+  if (!r) return;
+  infoMode = mode;
+  infoOpen = true;
+  infoFocusReturn = document.activeElement;
+  infoTitleEl.textContent = t(mode === 'size' ? 'repoSize' : 'repoFiles') + (r.name ? ' · ' + r.name : '');
+  setInfoOp('');
+  // 先摆占位：两条 git 都不是瞬时的，正文空着会让人以为点了没反应
+  infoBodyEl.replaceChildren(loadingBlock());
+  infoEl.classList.add('open');
+  infoEl.setAttribute('aria-hidden', 'false');
+  syncScrollLock();
+  infoBackEl.focus();
+
+  const seq = ++infoSeq;
+  try {
+    const res = await fetch('/api/' + (mode === 'size' ? 'size' : 'files') + '?repo=' + encodeURIComponent(r.path));
+    const data = await res.json();
+    // 关掉浮层或又点了一次时这次响应已经过期：写进去就会盖住更新的那一份
+    if (seq !== infoSeq || !infoOpen) return;
+    renderRepoInfo(data);
+  } catch (err) {
+    if (seq !== infoSeq || !infoOpen) return;
+    infoBodyEl.replaceChildren();
+    setInfoOp(String(err), true);
+  }
+}
+
+function closeRepoInfo() {
+  if (!infoOpen) return;
+  infoOpen = false;
+  infoSeq++; // 作废在路上的那次响应
+  infoEl.classList.remove('open');
+  infoEl.setAttribute('aria-hidden', 'true');
+  infoBodyEl.replaceChildren();
+  syncScrollLock();
+  if (infoFocusReturn && infoFocusReturn.focus) infoFocusReturn.focus();
+  infoFocusReturn = null;
+}
+
+// renderRepoInfo 按当前模式渲染响应。两种结构的差别只有正文那一段，错误行与标题共用
+function renderRepoInfo(data) {
+  infoBodyEl.replaceChildren();
+  if (data.error) {
+    setInfoOp(data.error, true);
+    return;
+  }
+  setInfoOp('');
+  if (infoMode === 'files') renderFileList(data);
+  else renderSizeInfo(data);
+}
+
+// renderSizeInfo 渲染磁盘占用与包大小。两个数照抄 git 的原话（形如 "80.85 MiB"），
+// 不在页面里换算第二次：那样就会有两套单位换算，与终端 ggt size 的输出慢慢对不上
+function renderSizeInfo(d) {
+  const box = document.createElement('div');
+  box.className = 'info-block';
+  const row = (label, value) => {
+    const p = document.createElement('p');
+    p.className = 'info-row';
+    const k = document.createElement('span');
+    k.className = 'info-key';
+    k.textContent = label;
+    const v = document.createElement('span');
+    v.className = 'info-value';
+    v.textContent = value;
+    p.append(k, v);
+    return p;
+  };
+  box.append(row(t('sizeDisk'), d.disk || '-'));
+  box.append(row(t('sizePack'), d.pack || '-'));
+  // 分桶：阈值与口径都由服务端按 size_bucket_*/size_unit 算好，页面只按取值选颜色
+  const bucket = document.createElement('p');
+  bucket.className = 'info-row info-bucket bucket-' + (d.bucket || 'mid');
+  bucket.textContent = sizeBucketText(d);
+  box.append(bucket);
+  // 次要指标：键沿用 git 的原话不翻译，与终端输出保持一致
+  if (d.details && d.details.length) {
+    const p = document.createElement('p');
+    p.className = 'info-row info-detail';
+    p.textContent = d.details.map((it) => it.key + ': ' + it.value).join(' | ');
+    box.append(p);
+  }
+  infoBodyEl.append(box);
+}
+
+// sizeBucketText 拼出“这个仓库落在哪一档”那句话，并写明本次生效的口径：
+// 同一份数字换口径差约 4.8%，不写清楚用户无从判断阈值是按哪种算的
+function sizeBucketText(d) {
+  const unit = d.unit === 'binary' ? t('sizeUnitBinary') : t('sizeUnitDecimal');
+  if (d.bucket === 'small') return t('sizeBucketSmall', { n: d.lowMb }) + ' · ' + unit;
+  if (d.bucket === 'large') return t('sizeBucketLarge', { n: d.highMb }) + ' · ' + unit;
+  return t('sizeBucketMid', { low: d.lowMb, high: d.highMb }) + ' · ' + unit;
+}
+
+// renderFileList 渲染文件清单。被服务端截断时如实说明，而不是让人以为仓库只有这些文件
+function renderFileList(d) {
+  const box = document.createElement('div');
+  box.className = 'info-block';
+  const head = document.createElement('p');
+  head.className = 'info-row';
+  head.textContent = t('filesTotal', { n: d.total });
+  box.append(head);
+  if (d.truncated) {
+    const tip = document.createElement('p');
+    tip.className = 'info-row info-detail';
+    tip.textContent = t('filesTruncated', { n: d.files.length });
+    box.append(tip);
+  }
+  const list = document.createElement('ul');
+  list.className = 'info-files';
+  for (const f of d.files) {
+    const li = document.createElement('li');
+    // 用 textContent 而不是拼 HTML：文件名里可能有 < &，拼进去就是一处注入点
+    li.textContent = f;
+    list.append(li);
+  }
+  box.append(list);
+  infoBodyEl.append(box);
+}
+
+infoBackEl.textContent = '← ' + t('back');
+infoBackEl.addEventListener('click', closeRepoInfo);
+graphSizeEl.addEventListener('click', () => openRepoInfo('size'));
+graphFilesEl.addEventListener('click', () => openRepoInfo('files'));
+
 
 
 
@@ -2625,6 +2798,11 @@ commitMsgEl.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  // 仓库信息浮层是卡片之上的一层，先收它——一层一层退，顺序与打开时相反
+  if (infoOpen) {
+    closeRepoInfo();
+    return;
+  }
   // 设置面板与通知中心都是“后开的先收”：面板是整页浮层，压在看板之上，因此排在第一个
   if (settingsOpen) {
     closeSettings();
@@ -3641,6 +3819,8 @@ function openRepoCard(spec) {
   graphPushEl.textContent = t('push');
   graphDiffEl.textContent = t('openDiff', { n: r.files.length });
   graphDiffEl.title = t('openWholeRepoDiff');
+  graphSizeEl.textContent = t('repoSize');
+  graphFilesEl.textContent = t('repoFiles');
   commitBtnEl.textContent = t('commit');
   commitMsgEl.placeholder = t('commitMsg');
   commitMsgEl.value = draftMsg.get(r.path) || '';

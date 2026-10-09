@@ -87,24 +87,13 @@ Examples:
 			pterm.Println()
 			InfoMsg(l10n.T("Total size: {{.Size}}", map[string]any{"Size": formatSize(totalSize)}))
 
-			// 分桶统计：命令行 flag 优先于配置文件，未指定时取配置默认值
-			low := GetConfig().SizeBucketLowMB
-			if sizeLow > 0 {
-				low = sizeLow
-			}
-			high := GetConfig().SizeBucketHighMB
-			if sizeHigh > 0 {
-				high = sizeHigh
-			}
-			unit := GetConfig().SizeUnit
-			if sizeUnit != "" {
-				unit = sizeUnit
-			}
-			if unit != "decimal" && unit != "binary" {
+			// 阈值与口径的解析（flag 优先于配置文件、非法口径回退 decimal）与看板共用同一份实现：
+			// 各写一份的话，同一次 size_unit 配置在命令行与页面上会给出不同的分桶结果
+			low, high, unit, badUnit := sizeThresholds(sizeLow, sizeHigh, sizeUnit)
+			if badUnit != "" {
 				// 走 Msg 系列而非格式串通道：译文已由 T 渲染完毕，套 "%s" 只是多余的间接层
 				// 译文里的 "decimal" 是配置枚举值，刻意保留原文，便于用户对照配置文件里的 size_unit
-				WarnMsg(l10n.T(`Invalid size_unit value ("{{.Unit}}"), falling back to "decimal"`, map[string]any{"Unit": unit}))
-				unit = "decimal"
+				WarnMsg(l10n.T(`Invalid size_unit value ("{{.Unit}}"), falling back to "decimal"`, map[string]any{"Unit": badUnit}))
 			}
 
 			small, mid, large := classifyBySize(results, low, high, unit)
@@ -143,7 +132,7 @@ Examples:
 // 主要展示“磁盘占用”和“包文件大小”两个核心指标。
 // 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
 func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
-	output, err := git.RunContext(ctx, e.Path, "count-objects", "-vH")
+	info, err := collectRepoSize(ctx, e.Path)
 	if err != nil {
 		return repoSizeResult{
 			name:        e.Name,
@@ -155,8 +144,6 @@ func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 		}
 	}
 
-	// 解析 git count-objects 的输出为键值映射
-	info := parseSizeOutput(output)
 	label := RepoLabel(e.Name, e.IsSubmodule)
 	var b strings.Builder
 
@@ -205,6 +192,65 @@ func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 	}
 }
 
+// collectRepoSize 采集单个仓库的对象存储信息，返回 git count-objects -vH 的解析结果。
+//
+// 抽出来是因为终端命令与看板都要这份数据：两边各自调一次 git 并各自解析的话，
+// 字段名、单位换算就有两处实现，将来 git 改了输出格式只改得动其中一处
+func collectRepoSize(ctx context.Context, path string) (map[string]string, error) {
+	output, err := git.RunContext(ctx, path, "count-objects", "-vH")
+	if err != nil {
+		return nil, err
+	}
+	return parseSizeOutput(output), nil
+}
+
+// sizeThresholds 解析分桶阈值与换算口径。
+//
+// 优先级：命令行 flag（非零/非空才算指定）> 配置文件 > 内置默认。
+// badUnit 非空表示配置里的 size_unit 不是合法取值，此时返回值已回退为 "decimal"，
+// 调用方自行决定要不要告警——终端要打印警告，看板只把生效的口径显示出来即可。
+func sizeThresholds(lowFlag, highFlag int, unitFlag string) (low, high int, unit, badUnit string) {
+	low = GetConfig().SizeBucketLowMB
+	if lowFlag > 0 {
+		low = lowFlag
+	}
+	high = GetConfig().SizeBucketHighMB
+	if highFlag > 0 {
+		high = highFlag
+	}
+	unit = GetConfig().SizeUnit
+	if unitFlag != "" {
+		unit = unitFlag
+	}
+	if unit != "decimal" && unit != "binary" {
+		badUnit = unit
+		unit = "decimal"
+	}
+	return low, high, unit, badUnit
+}
+
+// 分桶的取值。字符串而不是数字：它要进 JSON，页面上按它选颜色，出问题时一眼看得出是哪一档
+const (
+	sizeBucketSmall = "small"
+	sizeBucketMid   = "mid"
+	sizeBucketLarge = "large"
+)
+
+// sizeBucket 判定一个仓库落在哪一档。
+// 边界比较与换算口径只有这一份实现：终端的分桶着色与看板的着色必须给出同一个结论，
+// 否则用户会看到同一个仓库在两处属于不同档位
+func sizeBucket(size int64, lowMB, highMB int, unit string) string {
+	mb := bytesToMB(size, unit)
+	switch {
+	case mb < float64(lowMB):
+		return sizeBucketSmall
+	case mb > float64(highMB):
+		return sizeBucketLarge
+	default:
+		return sizeBucketMid
+	}
+}
+
 // bytesToMB 将字节数按指定口径换算为 MB 数值。
 // unit 为 "decimal" 时 1 MB = 1,000,000 字节；为 "binary" 时 1 MB = 1024×1024 字节（即 MiB）。
 // 纯函数，不依赖任何外部状态，便于单元测试。
@@ -228,11 +274,10 @@ func classifyBySize(results []repoSizeResult, lowMB, highMB int, unit string) (s
 		if !r.ok {
 			continue
 		}
-		mb := bytesToMB(r.size, unit)
-		switch {
-		case mb < float64(lowMB):
+		switch sizeBucket(r.size, lowMB, highMB, unit) {
+		case sizeBucketSmall:
 			small = append(small, RepoLabel(r.name, r.isSubmodule))
-		case mb > float64(highMB):
+		case sizeBucketLarge:
 			large = append(large, RepoLabel(r.name, r.isSubmodule))
 		default:
 			mid = append(mid, RepoLabel(r.name, r.isSubmodule))
