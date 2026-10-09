@@ -2061,7 +2061,9 @@ pre.diff .meta { color: var(--text-dim); }
 .g-row::before {
   content: '';
   position: absolute;
-  left: 3px;
+  /* 左侧归属实线占 0–2px；箭头从 7px 起，两者之间留 5px 空隙，避免挤成一团被读成同一个记号。
+     7px + 5px 宽 = 12px，正好停在 --sp-4 内边距的右端，不进入泳道列 */
+  left: 7px;
   top: 50%;
   width: 5px;
   height: 5px;
