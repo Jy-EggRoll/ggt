@@ -170,6 +170,9 @@
     </label>
     <select id="graph-branch" disabled></select>
     <button id="graph-fetch" class="btn btn--secondary" type="button"></button>
+    <!-- 获取、拉取、拉取并推送三件分开摆：git fetch 只取数据、git pull 快进当前分支、
+         pull+push 才是 VSCode 式的“同步”。合并成一个按钮会让人说不清点了之后远程有没有被改 -->
+    <button id="graph-pull" class="btn btn--secondary" type="button"></button>
     <button id="graph-sync" class="btn btn--secondary" type="button"></button>
     <button id="graph-push" class="btn btn--secondary" type="button"></button>
     <button id="graph-diff" class="btn btn--secondary" type="button"></button>

@@ -70,8 +70,15 @@ const MSG = {
     diffCompareNote: 'Two trees compared directly — the commits in between, including anything reverted, do not count toward this difference',
     groupUnmerged: 'Unmerged Changes',
     changes: 'Changes',
+    // 顶栏三个按钮对应 git 的三件事，名字必须各归其位：fetch 只取远程数据、pull 拉取并快进、
+    // pull+push 是拉取并推送。命令行的 ggt sync 是另一回事（带脏检查与三方分析、绝不推送），
+    // 前端因此不再有叫“同步”的按钮，否则用户会把两端当成同一件事
     fetchRepo: 'Fetch',
-    sync: 'Sync',
+    fetchRepoTitle: 'Fetch the remote data only; the working tree is untouched',
+    pullRepo: 'Pull',
+    pullRepoTitle: 'Fast-forward this branch to its upstream; no merge, no push',
+    pullPush: 'Pull & Push',
+    pullPushTitle: 'Pull --ff-only, then push',
     branchLabel: 'Branch',
     openDiff: 'Changes ({{n}})',
     openWholeRepoDiff: 'Show the whole repository diff',
@@ -165,8 +172,12 @@ const MSG = {
     diffCompareNote: '直接比较两份树 —— 中间的提交（包括被回退掉的改动）不计入这次差异',
     groupUnmerged: '未合并的改动',
     changes: '改动',
-    fetchRepo: '拉取',
-    sync: '同步',
+    fetchRepo: '获取',
+    fetchRepoTitle: '只获取远程数据，不动工作区',
+    pullRepo: '拉取',
+    pullRepoTitle: '把当前分支快进到上游；不合并、不推送',
+    pullPush: '拉取并推送',
+    pullPushTitle: '先 git pull --ff-only，成功后再 git push',
     branchLabel: '分支',
     openDiff: '改动 {{n}}',
     openWholeRepoDiff: '查看整个仓库的改动',
@@ -178,8 +189,8 @@ const MSG = {
     commit: '提交',
     push: '推送',
     commitMsg: '提交信息',
-    fetch: '拉取全部',
-    fetching: '正在拉取…',
+    fetch: '获取全部',
+    fetching: '正在获取…',
     themeFollow: '跟随系统',
     graphEntry: '分支图',
     graphAllRefs: '全部分支与 tag',
@@ -304,7 +315,7 @@ const settingsBodyEl = document.getElementById('settings-body');
 const settingsOpEl = document.getElementById('settings-op');
 const settingsPathEl = document.getElementById('settings-path');
 const settingsSaveEl = document.getElementById('settings-save');
-// 仓库卡片：容器、列表、头部，以及顶栏上的仓库操作（分支选择、拉取、同步、推送、全仓 diff）
+// 仓库卡片：容器、列表、头部，以及顶栏上的仓库操作（分支选择、获取、拉取、拉取并推送、推送、全仓 diff）
 const graphEl = document.getElementById('graph');
 const graphListEl = document.getElementById('graph-list');
 const graphTitleEl = document.getElementById('graph-title');
@@ -316,6 +327,7 @@ const graphAllRefsEl = document.getElementById('graph-all-refs');
 const graphFilterLabelEl = document.getElementById('graph-filter-label');
 const graphBranchEl = document.getElementById('graph-branch');
 const graphFetchEl = document.getElementById('graph-fetch');
+const graphPullEl = document.getElementById('graph-pull');
 const graphSyncEl = document.getElementById('graph-sync');
 const graphPushEl = document.getElementById('graph-push');
 const graphDiffEl = document.getElementById('graph-diff');
@@ -1647,7 +1659,7 @@ diffBodyEl.addEventListener('keydown', (e) => {
 // 再挂一个自动消失只是把同一个问题换个地方重现。
 //
 // 三行文字因此只留给“需要一直可见的持续状态”：取数失败（要一直看着才知道仓库读不出来）、
-// 续取上限提示（要一直提醒为什么滚不到更早的提交）、拉取进行中的“正在拉取…”
+// 续取上限提示（要一直提醒为什么滚不到更早的提交）、获取进行中的“正在获取…”
 // （网络操作期间的状态，结束时由结果通知接手）。一次性动作的结果一律走通知
 
 // 通知在内存里的上限。为什么要上限：页面开着不动也会一直攒，上限保证内存与面板高度都是常数级。
@@ -2071,7 +2083,7 @@ async function runWrite(path, body, show) {
   board.classList.add('busy');
   // 一次只允许一个写操作在飞：把卡片上的写控件与底栏那个按钮一起置灰。
   // 分支选择器只在列表为空时保持禁用，别把它永久锁上
-  const writable = [commitBtnEl, graphPushEl, graphSyncEl, graphFetchEl];
+  const writable = [commitBtnEl, graphPushEl, graphSyncEl, graphPullEl, graphFetchEl];
   for (const el of writable) el.disabled = true;
   graphBranchEl.disabled = true;
   fetchBtnEl.disabled = true;
@@ -2114,10 +2126,10 @@ function applyFileAction(spec, action) {
   );
 }
 
-// fetchAll 拉取全部仓库的远程数据。
-// 拉取是网络操作，几十个仓库可能要等好几秒：期间在底栏留一行“正在拉取…”，否则会让人以为
+// fetchAll 获取全部仓库的远程数据（git fetch --all --prune，不动任何工作区与远程）。
+// 获取是网络操作，几十个仓库可能要等好几秒：期间在底栏留一行“正在获取…”，否则会让人以为
 // 按钮没反应。这一行是持续状态——操作没结束就一直在，结束时无论成败都由下面的回调清掉，
-// 因此留在底栏而不发通知：发成通知的话，操作结束后它会变成一条永远停在“正在拉取”的假消息
+// 因此留在底栏而不发通知：发成通知的话，操作结束后它会变成一条永远停在“正在获取”的假消息
 function fetchAll() {
   if (writeBusy) return;
   setBoardOp(t('fetching'), false);
@@ -3606,7 +3618,7 @@ function repoStateText(r) {
 // openRepoCard 打开某个仓库的卡片：默认就是这个仓库的提交分支图，顶栏是这个仓库的操作。
 //
 // 这一层替代了原来的“仓库面板”：点仓库直接进来，不再有中间那一步选择；仓库自身的操作
-// （切分支、拉取、同步、推送、提交）也都收在这张卡片里，不散落到页面上别处
+// （切分支、获取、拉取、拉取并推送、推送、提交）也都收在这张卡片里，不散落到页面上别处
 function openRepoCard(spec) {
   cardSpec = spec;
   const r = spec.repo;
@@ -3621,7 +3633,11 @@ function openRepoCard(spec) {
 
   // 顶栏与提交行的文案按当前语言填（结构在 HTML 里，文案在这里）
   graphFetchEl.textContent = t('fetchRepo');
-  graphSyncEl.textContent = t('sync');
+  graphFetchEl.title = t('fetchRepoTitle');
+  graphPullEl.textContent = t('pullRepo');
+  graphPullEl.title = t('pullRepoTitle');
+  graphSyncEl.textContent = t('pullPush');
+  graphSyncEl.title = t('pullPushTitle');
   graphPushEl.textContent = t('push');
   graphDiffEl.textContent = t('openDiff', { n: r.files.length });
   graphDiffEl.title = t('openWholeRepoDiff');
@@ -4083,7 +4099,7 @@ graphListEl.addEventListener('keydown', (e) => {
 
 /* ——— 卡片顶栏上的仓库操作 ———
  *
- * 五件：切分支、拉取本仓库、同步、推送、提交，外加进入全仓 diff 的入口。
+ * 六件：切分支、获取本仓库、拉取、拉取并推送、推送、提交，外加进入全仓 diff 的入口。
  * 全部走 runWrite：统一处理“一次只允许一个写操作在飞”、失败时把 git 的原话交出来、
  * 以及写完之后失效快照
  */
@@ -4108,6 +4124,9 @@ graphBranchEl.addEventListener('change', async () => {
   if (out && out.error) graphBranchEl.value = cardSpec.repo.branch || '';
 });
 graphFetchEl.addEventListener('click', () => cardWrite('/api/fetch', { repo: cardSpec.repo.path }));
+// “拉取”接 /api/pull（git pull --ff-only）：后端的 /api/pull 一直都有，此前没有任何按钮调它，
+// 界面上因此没有“拉取当前分支并快进”的入口——“拉取”却被接去了只取数据的 /api/fetch
+graphPullEl.addEventListener('click', () => cardWrite('/api/pull', { repo: cardSpec.repo.path }));
 graphSyncEl.addEventListener('click', () => cardWrite('/api/sync', { repo: cardSpec.repo.path }));
 graphPushEl.addEventListener('click', () => cardWrite('/api/push', { repo: cardSpec.repo.path }));
 // 全仓 diff 从卡片顶栏进：它浮在卡片之上，关掉回到卡片（不再占据“入口行”那样的对等地位）
