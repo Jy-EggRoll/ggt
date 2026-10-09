@@ -832,7 +832,14 @@ body {
   padding: 0 var(--sp-4);
   cursor: pointer;
 }
-.g-file-row .lanes { flex: none; }
+/* 展开区左侧的泳道图列：必须给出确定高度，内部的 SVG 也必须按块级摆。
+   SVG 是替换元素，留在 inline 流里会坐在基线上、下方给 descender 留出一小截空隙，
+   而展开区每行只有 22px，这点空隙正好把上下两段竖线断开，整条泳道看着就像虚线。
+   VSCode 那边对展开出来的文件行用的是 position:absolute + height:22px
+   （scm.css 的 .history-item-change > .graph-placeholder），这里照本项目 .g-row 的既有写法，
+   用固定高度 + display:block 达到同样效果 */
+.g-file-row .lanes { flex: none; height: var(--row-h); }
+.g-file-row .lanes svg { display: block; }
 .g-file-row:hover { background: var(--hover-bg); }
 .g-file-row.dim { color: var(--text-dim); cursor: default; }
 .g-file-row.dim:hover { background: none; }
