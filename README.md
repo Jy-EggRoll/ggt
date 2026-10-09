@@ -112,6 +112,8 @@ ggt config validate            # 体检配置文件
 | `theme` | string | 空 | 看板选用的主题；空表示跟随系统深浅。取值是主题 id（见设置面板的“主题”） |
 | `theme_dark` | string | `builtin:vscode/2026-dark.json` | 跟随系统时，系统为深色用哪套主题（对应 VSCode 的 `workbench.preferredDarkColorTheme`） |
 | `theme_light` | string | `builtin:vscode/2026-light.json` | 跟随系统时，系统为浅色用哪套主题（对应 `workbench.preferredLightColorTheme`） |
+| `font_ui` | string | 空 | 看板界面文字的字体，取值是一串候选字体（写法与 CSS 的 `font-family` 相同，用逗号分隔）；留空则由浏览器自行决定。只作用于网页看板，改完需刷新页面生效 |
+| `font_mono` | string | 空 | 看板等宽文字的字体（diff 正文、提交号、设置面板里的配置键名）；留空则由浏览器挑一个等宽字体。同样只作用于网页看板，改完需刷新页面生效 |
 | `notify_timeout` | int | `0` | 网页通知自动消失的秒数，`0` 表示不自动关闭。错误档通知不受这一项影响，鼠标停在通知上时暂停计时 |
 
 示例配置：
@@ -211,7 +213,7 @@ task l10n:check    # 只读门禁，已接入 task verify，CI 会跑
 
 `ggt ui` 起一个只绑本机的网页服务，用多列看板展示所有仓库的变更明细。每列填满窗口高度，
 变更文件多的仓库会延续到下一列（断口处保持直角，一眼看得出是同一张卡片）；页面只横向滚动，
-滚轮与触控板横扫都能横向浏览。脏仓库置顶，同级按名称升序。看板与 `ggt status` 共用同一份
+滚轮与触控板横扫都能横向浏览。脏仓库置顶，同级按名称升序。看板与 `ggt summary` 共用同一份
 `git status --porcelain=v2` 采集结论，因此两者不会给出不同答案。
 
 在页面上还能直接干活：
@@ -334,6 +336,18 @@ ggt size --low 200 --high 600 --unit binary
 - **< 低阈值**（默认 <500MB）：浅蓝信息展示
 - **低阈值 ~ 高阈值**（默认 500~800MB）：黄色警告
 - **> 高阈值**（默认 >800MB）：红色警告
+
+### files —— 列出仓库中的文件
+
+`ggt files`（别名 `ggt fl`）并发列出每个已配置仓库的文件，每行一个完整路径（仓库路径与文件相对路径拼接而成）。清单取自 `git ls-files --cached --others --exclude-standard`，因此已纳入版本控制的文件与未跟踪的文件都在其中，被 `.gitignore` 排除的文件不在。某个仓库读取失败时只告警并跳过，不影响其余仓库。
+
+```bash
+ggt files              # 打印所有仓库的文件列表
+ggt fl                 # 简写
+ggt files -o out.txt   # 写入 out.txt，不打印到终端
+```
+
+加 `-o` 后终端不再打印清单，只写文件并提示写入路径。
 
 ### sync —— 批量同步
 
