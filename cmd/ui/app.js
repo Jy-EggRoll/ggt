@@ -2633,7 +2633,11 @@ async function openRepoInfo(mode) {
 
   const seq = ++infoSeq;
   try {
-    const res = await fetch('/api/' + (mode === 'size' ? 'size' : 'files') + '?repo=' + encodeURIComponent(r.path));
+    // 必须带 token 头：基座的 token 门禁先于 handler 生效，没有它的请求拿到的是纯文本
+    // “Unauthorized”而不是 JSON，紧跟着的 res.json() 会因此抛 SyntaxError。
+    // 为什么只有这里漏过：Go 侧端点测试直接调 handler，绕过了基座那一层，
+    // 静态检查又只看语法，所以只有真在浏览器里点一次才会暴露
+    const res = await fetch('/api/' + (mode === 'size' ? 'size' : 'files') + '?repo=' + encodeURIComponent(r.path), { headers: authHeaders, cache: 'no-store' });
     const data = await res.json();
     // 关掉浮层或又点了一次时这次响应已经过期：写进去就会盖住更新的那一份
     if (seq !== infoSeq || !infoOpen) return;
