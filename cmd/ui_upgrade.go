@@ -49,7 +49,7 @@ type uiUpgradeResult struct {
 	// 此时 Latest 只是该通道里的最高版本，页面不能说成“有更新的版本”
 	Comparable bool `json:"comparable"`
 	// UpToDate 为真表示检查器确认没有可升级的目标（updater 的约定：info 为 nil 且无错误）
-	UpToDate bool   `json:"upToDate"`
+	UpToDate bool `json:"upToDate"`
 	// Channel 是本次检查所在的通道，供页面显示
 	Channel string `json:"channel,omitempty"`
 	// Platform 是当前平台标签，供页面显示；本地构建没有产物时用户能据此判断原因
