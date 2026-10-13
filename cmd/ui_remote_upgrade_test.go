@@ -84,6 +84,24 @@ func TestDoSwitchRemote(t *testing.T) {
 			t.Fatalf("status = %q, 期望 same", res.status)
 		}
 	})
+
+	t.Run("无法解析的地址不改动 origin", func(t *testing.T) {
+		// 本地路径形式的 origin（git 允许，正则认不出）：这是“解析失败”这条分支的现实来源。
+		// 目标取 https 而不是与地址同协议的 ssh：后者一旦解析这层守卫失效，函数会落进 same
+		// 分支、用例仍然通过，只有取相反协议才能让“悄悄写坏 origin”这件事暴露出来
+		const origin = "/srv/git/mirror/repo.git"
+		dir := newProtocolTestRepo(t, origin)
+		res := doSwitchRemote(ctx, dir, "https")
+		if res.status != "error" {
+			t.Fatalf("status = %q, 期望 error（err=%s）", res.status, res.err)
+		}
+		if res.err == "" {
+			t.Fatal("解析失败却没有给出失败原因")
+		}
+		if got := originOf(t, dir); got != origin {
+			t.Fatalf("origin 被改坏 = %q", got)
+		}
+	})
 }
 
 // TestResolveToggleTarget 验证取反规则与命令行共用同一份实现：
