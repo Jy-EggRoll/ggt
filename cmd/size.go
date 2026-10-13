@@ -127,6 +127,12 @@ Examples:
 	return c
 }
 
+// secondarySizeKeys 是 git count-objects -vH 输出里除总大小与包大小之外的次要指标，
+// 依次为对象数、包内对象、包数、可裁剪、垃圾。
+// 终端与 WebUI 看板这两处都要按同样的顺序列出它们，因此只保留这一份定义，
+// 免得键名或顺序在两边各自演化。
+var secondarySizeKeys = []string{"count", "in-pack", "packs", "prune-packable", "garbage"}
+
 // showRepoSize 分析单个仓库的大小并返回格式化结果。
 // 从 git count-objects -vH 的输出中提取关键字段，
 // 主要展示“磁盘占用”和“包文件大小”两个核心指标。
@@ -171,9 +177,8 @@ func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 		b.WriteByte('\n')
 	}
 
-	// 次要指标：对象数、包内对象、包数、可裁剪、垃圾
 	var parts []string
-	for _, k := range []string{"count", "in-pack", "packs", "prune-packable", "garbage"} {
+	for _, k := range secondarySizeKeys {
 		if v, ok := info[k]; ok {
 			parts = append(parts, fmt.Sprintf("%s: %s", k, v))
 		}

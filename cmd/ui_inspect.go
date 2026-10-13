@@ -104,8 +104,7 @@ func (c *uiCache) handleSize(w http.ResponseWriter, r *http.Request) {
 	out.Pack = info["size-pack"]
 	out.Bytes = calcTotalBytes(info)
 	out.Bucket = sizeBucket(out.Bytes, low, high, unit)
-	// 次要指标的键与顺序与终端的 showRepoSize 一致
-	for _, k := range []string{"count", "in-pack", "packs", "prune-packable", "garbage"} {
+	for _, k := range secondarySizeKeys {
 		if v, ok := info[k]; ok {
 			out.Details = append(out.Details, uiSizeDetail{Key: k, Value: v})
 		}
