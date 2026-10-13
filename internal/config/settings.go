@@ -234,7 +234,7 @@ var settings = []Setting{
 		Parse:    parseLanguage,
 		// 语言清单取自 locales 包，注册表不另抄一份
 		Options: languageOptions,
-		// 语言在进程启动时由 l10n.Init 定死，改完必须重启 ggt——这一档目前只有它
+		// 语言在进程启动时由 l10n.Init 定死，改完必须重启 ggt——这一档当前是 language 与 log_level
 		ApplyAt: ApplyRestart,
 	},
 	{
