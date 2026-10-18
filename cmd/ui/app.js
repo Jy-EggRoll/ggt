@@ -313,20 +313,6 @@ const POLL_MS = 5000;
 // 列间距也从 CSS 变量读：它是布局参数，与 --col-w 一样只该有一处定义
 const GAP = cssVar('--col-gap', 16);
 
-// 滚轮平滑的参数。曲线照抄宿主已有的
-// AvaloniaDesktopKit/Behaviors/SmoothWheelScroll.cs（它又刻意与 Slint 1.18 对齐），
-// 详细理由见下方 smoothScrollBy 处注释。
-// 时长必须与样式表的 --dur-move 同值：滚轮与浮层进退、行位移属于同一类变化，两边不一致就会
-// 出现两种时间感。CSS 没法引用 JS 常量，只能靠这条注释约束两处一起改
-const WHEEL_MS = 400;
-const NOMINAL_FRAME_MS = 1000 / 60;
-// DOM_DELTA_LINE 时一行折算的像素。与 Slint 的 line→60 逻辑像素对齐
-// （i-slint-backend-winit 的 LineDelta(lx, ly) => (lx * 60., ly * 60.)）
-const LINE_PX = 60;
-// 判定“位置被别人改了”的像素阈值：拖滚动条、按方向键、触控板横扫都会改它，
-// 阈值用来吸收浏览器取整的误差
-const EXTERNAL_SCROLL_TOLERANCE = 3;
-
 const board = document.getElementById('board');
 const contLayer = document.getElementById('cont-layer');
 const emptyEl = document.getElementById('empty');
@@ -489,7 +475,7 @@ function loadingBlock() {
 //     documentElement.clientWidth  390    clientHeight  844
 // 看板的宽高偏偏又由 JS 按列数算出来写到元素上（见 layout 末尾的 board.style.width/height），
 // 于是“尺寸读大了 → 看板算大了 → 溢出更多 → 尺寸读得更大”会这样一直互相放大：窄屏下按 4 列
-// 排并横向溢出。分列、贴边、滚轮横滚上限与翻页折算因此全都按一个被撑大的尺寸在算。
+// 排并横向溢出。分列与贴边因此全都按一个被撑大的尺寸在算。
 // 更隐蔽的一层：layout 是轮询也会重跑的，一次重排就能把列高按 2944 算成近三倍，整块看板
 // 塌成一列。改读 documentElement 的 client 尺寸后，这两条路都不会再被内容反过来影响
 //
@@ -1022,7 +1008,7 @@ function layout(els, specs) {
 
 // diffOpen 为真表示覆盖层正打开。它同时关掉两件事，理由都与刷新无关：
 //   - resize 重排：看板仍是“被盖住但仍在布局中”，尺寸没有变化，重排纯属白花
-//   - 滚轮转横向：覆盖层里滚轮应当滚动 diff 正文，被抢去滚看板会让 diff 滚不动
+//   - 滚动位置跟随：见下面的 diffScrollX
 // 轮询曾经也在这个列表里，理由是“看板被盖住，刷了也没人看”。那条已经删掉：
 // 看板被盖住时照样刷新，见下面“刷新心跳”一节
 let diffOpen = false;
@@ -1035,12 +1021,11 @@ let diffSeq = 0;
 // settingsOpen 为真表示设置面板正打开。
 // 它刻意与 diff、卡片这两个标志声明在一起，并由下面的 anyOverlayOpen 统一汇总：
 // 三者都是“整页覆盖 + 锁滚动”的浮层，凡是要问“现在有没有浮层开着”的地方都该走那一个入口，
-// 散着写迟早漏一处——wheel 处理器就漏过设置面板，表现为面板正文用滚轮滚不动、只能拖滚动条
+// 散着写迟早漏一处
 let settingsOpen = false;
 
 // anyOverlayOpen 汇总“当前有没有浮层开着”。
-// 需要它的至少三处：锁住页面滚动、浮层关掉后恢复看板、以及判断纵向滚轮该不该让回浏览器。
-// 最后那处原先自己写了一遍三标志的判断且漏掉了设置面板，所以这里只留一个入口
+// 需要它的至少两处：锁住页面滚动，以及浮层开着时不重排看板。
 function anyOverlayOpen() {
   return diffOpen || cardOpen || settingsOpen || infoOpen;
 }
@@ -3033,90 +3018,6 @@ const prefersLight = window.matchMedia('(prefers-color-scheme: light)');
 prefersLight.addEventListener('change', () => {
   if (lastRepos.length > 0) render(lastRepos);
 });
-
-// ——— 滚轮转横向滚动 ———
-
-// 为什么必须自己把 deltaY 接到 scrollLeft 上：普通鼠标滚轮只产生 deltaY，横向容器不会
-// 因此滚动（浏览器只在触控板横扫 / Shift+滚轮 时给出 deltaX），而纵向滚动已被禁用，
-// 不做转换的话滚轮会毫无反应，用户会以为页面卡死。
-//
-// 为什么不用 CSS 的 scroll-behavior: smooth：它由 UA 按滚动距离决定时长（明显长于 WHEEL_MS），
-// 而每拨一格都会重新发起一次滚动，连续拨动时表现为“上一段动画没走完就被生硬截断”。
-//
-// 曲线照抄宿主自己的 AvaloniaDesktopKit/Behaviors/SmoothWheelScroll.cs，它又刻意与
-// Slint 1.18 的 Flickable 对齐：固定时长（WHEEL_MS）等减速——以恒定减速度走完全程、终点速度恰好
-// 降到 0，归一化位置 p(u) = 2u - u²（u 为已过时长占比），起手最快、结尾干脆停住。
-// 每个滚轮事件都从“当前位置”重起一段曲线（Slint 本身就是这个行为，不是缺陷），
-// 并先按一个标称帧推进一次，保证即使下一帧还没到，拨动当帧也立刻有反馈
-// reduceMotion 定义在文件靠前的常量区：这里的平滑滚动与 fadeIn 等 JS 驱动的动画共用它
-let scrollAnim = null;
-let scrollRaf = 0;
-
-function smoothScrollBy(px) {
-  // 减的是视口宽而不是 window.innerWidth：有横向溢出时后者会等于 scrollWidth，相减恒为 0，
-  // 滚轮横滚于是彻底失效——窄屏看板正是这种情形（见 viewportSize 的注释）
-  const max = Math.max(0, document.documentElement.scrollWidth - viewportSize().w);
-  // 目标基于“当前位置”累加：连续拨动因此不会丢失位移，也不会跳回去
-  const target = Math.min(max, Math.max(0, window.scrollX + px));
-  if (reduceMotion.matches) {
-    scrollAnim = null;
-    window.scrollTo(target, 0);
-    return;
-  }
-  scrollAnim = {
-    start: window.scrollX,
-    target,
-    elapsed: NOMINAL_FRAME_MS,
-    last: performance.now(),
-    // 记录我们刚写进去的位置，用来分辨下一帧读到的位置是不是自己造成的
-    written: Math.round(window.scrollX),
-  };
-  // 已经有一帧在排队就不重复排队：它会在下一帧读到刚换成的新目标
-  if (!scrollRaf) scrollRaf = requestAnimationFrame(stepScroll);
-}
-
-// 轨迹只由“已过时长”决定，因此与帧率无关：掉帧只会让采样变粗，不会改变曲线形状
-function stepScroll(now) {
-  scrollRaf = 0;
-  const a = scrollAnim;
-  if (!a) return;
-  // 位置被别人改了（拖滚动条、方向键、触控板横扫）就放弃本轮动画、改为跟随真实位置，
-  // 免得两边互相打架。事件可能是异步送达的，所以只能按位置差判断来源、不能用标志位
-  // ——参照实现遇到过这个问题：标志位会把自己的每帧写入当成外部滚动，动画第一帧就被掐断
-  if (Math.abs(window.scrollX - a.written) > EXTERNAL_SCROLL_TOLERANCE) {
-    scrollAnim = null;
-    return;
-  }
-  a.elapsed += now - a.last;
-  a.last = now;
-  const u = Math.min(1, a.elapsed / WHEEL_MS);
-  const p = 2 * u - u * u;
-  const x = a.start + (a.target - a.start) * p;
-  a.written = Math.round(x);
-  window.scrollTo(x, 0);
-  if (u < 1) scrollRaf = requestAnimationFrame(stepScroll);
-  else scrollAnim = null;
-}
-
-window.addEventListener(
-  'wheel',
-  (e) => {
-    // diff 覆盖层、仓库面板或设置面板打开时把手势让回浏览器：那边要滚的是正文（纵向），
-    // 被本处理器抢去转横向会让正文完全滚不动。判据走 anyOverlayOpen，别在这里另写一遍
-    if (anyOverlayOpen()) return;
-    // 横向手势（触控板横扫、Shift+滚轮）交给浏览器原生处理：那条路自带缓动，手感最好
-    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.deltaY === 0) return;
-    e.preventDefault();
-    // 距离直接用事件给的增量，不强行折算成“一格 60px”：浏览器给的是像素增量
-    // （鼠标一格约 100px，触控板是细粒度像素），照搬 60px 会把触控板的手感拉坏。
-    // 只有行/页两种模式需要折算，行模式按 Slint 的 line→60px 对齐
-    const px = e.deltaMode === 1 ? e.deltaY * LINE_PX
-      : e.deltaMode === 2 ? e.deltaY * viewportSize().h
-        : e.deltaY;
-    smoothScrollBy(px);
-  },
-  { passive: false },
-);
 
 // 页面切到后台时停掉心跳：那时没有眼睛留在页面上，而每 5 秒要起 37 个 git 进程。
 // 回到前台立刻补跑一轮再恢复定时，否则切回来看到的还是切走那一刻的旧数据。
