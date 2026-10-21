@@ -903,6 +903,11 @@ type uiWriteRequest struct {
 	Hash string `json:"hash"`
 	// Name 是标签名，仅创建标签使用
 	Name string `json:"name"`
+	// Push 表示创建标签后是否立刻推到远端，仅 /api/tag 使用。
+	// 不复用 push_tags：那是“看板推送按钮默认带不带标签”的全局偏好，
+	// 而这里是“这一次打标签要不要顺手推走”，两者方向相反，混用会让一次点击
+	// 把无关的标签也推出去
+	Push bool `json:"push"`
 }
 
 // uiWriteResult 是写端点的统一响应。
@@ -1071,11 +1076,77 @@ func (c *uiCache) handleTag(w http.ResponseWriter, r *http.Request) {
 		// 引用名的完整规则交给 git 复核：规则很多（连续的点、以 .lock 结尾、@ 单独成段等），
 		// 在 Go 里另写一份必然与 git 分叉，表现为“看板放行、git 拒绝”或反过来。
 		// refs/tags/ 前缀让 check-ref-format 按标签全名判断，不必另给 --allow-onelevel
-		if _, err := git.RunCombinedContext(ctx, repo.Path, "check-ref-format", "refs/tags/"+strings.TrimSpace(req.Name)); err != nil {
+		name := strings.TrimSpace(req.Name)
+		if _, err := git.RunCombinedContext(ctx, repo.Path, "check-ref-format", "refs/tags/"+name); err != nil {
 			return "", &uiParamError{http.StatusBadRequest, l10n.T("Invalid tag name", nil)}
 		}
-		return git.RunCombinedContext(ctx, repo.Path, args...)
+		out, err := git.RunCombinedContext(ctx, repo.Path, args...)
+		if err != nil {
+			return out, err
+		}
+		if !req.Push {
+			return out, nil
+		}
+		// 远端解析放在标签建好之后：解析失败时本地标签已经存在，这里不回滚它。
+		// 回滚需要“删掉刚建的标签”，而在解析失败与推送失败两种情况下，用户要的
+		// 往往只是修好远端再推一次；擅自删掉重来会让重试变成“标签已存在”而失败
+		remote, err := tagPushRemote(ctx, repo.Path)
+		if err != nil {
+			return "", err
+		}
+		pushOut, pushErr := git.RunCombinedContext(ctx, repo.Path, tagPushArgs(remote, name)...)
+		if pushErr != nil {
+			detail := strings.TrimSpace(pushOut)
+			if detail == "" {
+				detail = pushErr.Error()
+			}
+			// 把“本地已建好”写在最前面：用户看到失败提示后的第一反应常是重试，
+			// 而重试一次 git tag 只会得到“标签已存在”，先讲清现状他才不会白试
+			msg := l10n.T("The tag was created locally, but pushing it to {{.Remote}} failed: {{.Err}}",
+				map[string]any{"Remote": remote, "Err": detail})
+			return msg, pushErr
+		}
+		return l10n.T("Tag {{.Name}} created and pushed to {{.Remote}}",
+			map[string]any{"Name": name, "Remote": remote}), nil
 	})
+}
+
+// tagPushRemote 解析推送标签时要用的远端名。
+//
+// 优先取当前分支的上游，取第一段作远端名：用户在看板上给某个提交打标签时，
+// 他心里的对象通常就是这条分支对应的远端。取不到上游才退回仓库里唯一的远端；
+// 零个或多个远端都拒绝，因为此时选哪一个都没有依据，替他猜一次并推错对象，
+// 代价高于让他先把当前分支的上游设置好
+func tagPushRemote(ctx context.Context, repoPath string) (string, error) {
+	if out, err := git.RunContext(ctx, repoPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err == nil {
+		if remote, _, ok := strings.Cut(strings.TrimSpace(out), "/"); ok && remote != "" {
+			return remote, nil
+		}
+	}
+	out, err := git.RunContext(ctx, repoPath, "remote")
+	if err != nil {
+		return "", err
+	}
+	remotes := strings.Fields(out)
+	if len(remotes) == 1 {
+		return remotes[0], nil
+	}
+	return "", &uiParamError{
+		http.StatusConflict,
+		l10n.T("Cannot determine which remote to push the tag to; set an upstream branch for the current branch first", nil),
+	}
+}
+
+// tagPushArgs 构造推送单个标签的参数。
+//
+// 用 refs/tags/<name> 这个完整引用名，而不是只写标签名：只写名字时 git 会先按分支名
+// 解析，同名分支与标签并存时会推错对象，标签名与任何分支都不重名时也会以
+// "src refspec ... does not match any" 失败（实测）。
+//
+// 必须显式带 --no-follow-tags：本机可能配置了全局 push.followTags=true（实测本机即是），
+// 不带它时 git 会把与本次操作无关的附注标签一并推到远端
+func tagPushArgs(remote, name string) []string {
+	return []string{"push", remote, "refs/tags/" + name, "--no-follow-tags"}
 }
 
 // tagArgs 校验请求并构造 git tag 的参数。
