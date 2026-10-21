@@ -157,8 +157,9 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 			map[string]any{"Label": label})), l10n.T("Commit or stash your changes first", nil))
 	}
 
-	// 第二步：拉取远程最新数据，修剪已删除的远程分支
-	_, err = git.RunContext(ctx, e.Path, "fetch", "--all", "--prune")
+	// 第二步：拉取远程最新数据。是否修剪远程跟踪分支由 prune_branches 决定，
+	// 参数与网页看板共用 fetchArgs（本地标签一律不修剪，因此不用 --prune-tags）
+	_, err = git.RunContext(ctx, e.Path, fetchArgs(GetConfig().PruneBranches)...)
 	if err != nil {
 		return warn(outcomeFailed, WarnStrLn(l10n.T("{{.Label}}: fetch failed: {{.Err}}",
 			map[string]any{"Label": label, "Err": err})), l10n.T("Check your network or the remote repository permissions", nil))
