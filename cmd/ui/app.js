@@ -108,6 +108,7 @@ const MSG = {
     // 右键菜单与标签对话框的文案。菜单项按“对这条提交 / 这个仓库能做什么”命名，
     // 与按钮文案分开，避免以后改按钮时误改菜单里的动作名
     ctxCreateTag: 'Create tag…',
+    ctxCreateAndPushTag: 'Create and push tag…',
     ctxCopyHash: 'Copy commit hash',
     ctxCopySubject: 'Copy commit subject',
     ctxSetCompareBase: 'Set as compare baseline',
@@ -123,6 +124,7 @@ const MSG = {
     tagMessagePlaceholder: 'What is this tag for?',
     tagCancel: 'Cancel',
     tagCreate: 'Create',
+    tagCreateAndPush: 'Create and push',
     tagCreating: 'Creating…',
     tagCreated: 'Tag created',
     graphAllRefs: 'All branches and tags',
@@ -242,6 +244,7 @@ const MSG = {
     themeFollow: '跟随系统',
     graphEntry: '分支图',
     ctxCreateTag: '创建标签…',
+    ctxCreateAndPushTag: '创建并推送…',
     ctxCopyHash: '复制提交哈希',
     ctxCopySubject: '复制提交信息',
     ctxSetCompareBase: '设为比较基线',
@@ -257,6 +260,7 @@ const MSG = {
     tagMessagePlaceholder: '写一句这个标签的用途',
     tagCancel: '取消',
     tagCreate: '创建',
+    tagCreateAndPush: '创建并推送',
     tagCreating: '正在创建…',
     tagCreated: '标签已创建',
     graphAllRefs: '全部分支与 tag',
@@ -4439,6 +4443,7 @@ function commitMenuItems(commit) {
   const isBase = !!compareBase && compareBase.hash === commit.hash;
   return [
     { label: t('ctxCreateTag'), action: () => openTagDialog(commit) },
+    { label: t('ctxCreateAndPushTag'), action: () => openTagDialog(commit, true) },
     { separator: true },
     { label: t('ctxCopyHash'), action: () => copyText(commit.hash) },
     { label: t('ctxCopySubject'), action: () => copyText(commit.subject || t('graphNoSubject')) },
@@ -4511,6 +4516,9 @@ const tagCreateEl = document.getElementById('tag-create');
 let tagDialogOpen = false;
 let tagSubmitting = false;
 let tagCommit = null;
+// tagPush 记下这次是从哪个菜单项打开的：两个入口共用一张对话框，
+// 创建与“创建并推送”的区别只在主按钮文案和请求体里的 push，打开时定下就不再变
+let tagPush = false;
 
 // syncTagForm 把“按钮能不能按”收在一处：标签名与说明都非空才能提交，
 // 提交在飞时整张表单一起锁住，避免连点发出两条 CreateTag 请求
@@ -4520,12 +4528,13 @@ function syncTagForm() {
   tagNameEl.disabled = tagSubmitting;
   tagMessageEl.disabled = tagSubmitting;
   tagCancelEl.disabled = tagSubmitting;
-  tagCreateEl.textContent = tagSubmitting ? t('tagCreating') : t('tagCreate');
+  tagCreateEl.textContent = tagSubmitting ? t('tagCreating') : tagPush ? t('tagCreateAndPush') : t('tagCreate');
 }
 
-function openTagDialog(commit) {
+function openTagDialog(commit, pushMode) {
   if (!cardSpec || !commit) return;
   tagCommit = commit;
+  tagPush = pushMode === true;
   tagDialogOpen = true;
   tagSubmitting = false;
   // 文案只在打开时填一次：语言在页面加载时就定了，不会在使用中切换；
@@ -4571,7 +4580,7 @@ async function submitTag() {
   tagErrorEl.hidden = true;
   tagErrorEl.textContent = '';
   syncTagForm();
-  const out = await runWrite('/api/tag', { repo, hash, name, message }, (text, isError) => {
+  const out = await runWrite('/api/tag', { repo, hash, name, message, push: tagPush }, (text, isError) => {
     if (!isError) return;
     tagErrorEl.textContent = text;
     tagErrorEl.hidden = false;
