@@ -157,8 +157,9 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 			map[string]any{"Label": label})), l10n.T("Commit or stash your changes first", nil))
 	}
 
-	// 第二步：拉取远程最新数据，修剪已删除的远程分支
-	_, err = git.RunContext(ctx, e.Path, "fetch", "--all", "--prune")
+	// 第二步：拉取远程最新数据。是否修剪远程跟踪分支由 prune_branches 决定，
+	// 参数与网页看板共用 fetchArgs（本地标签一律不修剪，因此不用 --prune-tags）
+	_, err = git.RunContext(ctx, e.Path, fetchArgs(GetConfig().PruneBranches)...)
 	if err != nil {
 		return warn(outcomeFailed, WarnStrLn(l10n.T("{{.Label}}: fetch failed: {{.Err}}",
 			map[string]any{"Label": label, "Err": err})), l10n.T("Check your network or the remote repository permissions", nil))
@@ -198,7 +199,9 @@ func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 	case syncFastForward:
 		// 本地落后于远程，且历史线性 → 可以用 fast-forward
 		output := WarnStrLn(l10n.T("{{.Label}}: fast-forward available, pulling...", map[string]any{"Label": label}))
-		_, err := git.RunContext(ctx, e.Path, "pull", "--ff-only")
+		// 参数与看板共用 pullArgs：同一份 prune_branches 决定两处，写死一份就会出现
+		// “看板不修剪、命令行修剪”这种按入口不同的行为
+		_, err := git.RunContext(ctx, e.Path, pullArgs(GetConfig().PruneBranches)...)
 		if err != nil {
 			return warn(outcomeFailed, output+ErrorStrLn(l10n.T("{{.Label}}: pull failed: {{.Err}}",
 				map[string]any{"Label": label, "Err": err})), l10n.T("Run git pull manually", nil))

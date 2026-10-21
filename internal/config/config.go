@@ -14,6 +14,9 @@
 //   - language: 输出语言（如 "en"、"zh-CN"），默认 "en"；命令行 --lang 优先级更高
 //   - log_level: 诊断日志级别（debug/info/warn/error），默认 "warn"；
 //     命令行 -v/-vv 优先级更高。它只影响诊断日志，不影响面向用户的正常输出
+//   - push_tags: 网页看板推送时是否附带 --follow-tags，默认 true
+//   - prune_branches: fetch / pull / sync 时是否加 --prune 修剪远程跟踪分支，默认 true；
+//     它只管分支，本地标签一律不自动修剪
 package config
 
 import (
@@ -60,6 +63,12 @@ type Config struct {
 	// NotifyTimeout 是网页通知自动消失的秒数。0 表示不自动消失，也就是零值即默认，
 	// 因此 applyConfigDefaults 同样不需要为它补值
 	NotifyTimeout int `mapstructure:"notify_timeout" json:"notify_timeout"`
+	// PushTags 决定网页看板推送时是否附带 --follow-tags。它默认 true，而 bool 的零值是
+	// false，因此这个默认值只能来自 settings 注册表经 DefaultRaw 的解码（见 defaultConfig）
+	PushTags bool `mapstructure:"push_tags" json:"push_tags"`
+	// PruneBranches 决定 fetch / pull / sync 时是否加 --prune。理由同上：默认 true，
+	// 不能靠零值表达。它只修剪远程跟踪分支，不要把它扩展成“连本地标签也修剪”
+	PruneBranches bool `mapstructure:"prune_branches" json:"prune_branches"`
 }
 
 // getConfigPath 计算配置文件的默认路径，失败时返回 error 而不终止进程。
@@ -152,7 +161,16 @@ func LoadConfigAt(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decodeConfig(raw)
+}
 
+// decodeConfig 把“settings 默认值 + 传入的键值”解码成 Config，并补上非法取值的回退。
+//
+// LoadConfigAt 与 defaultConfig 共用这一处，默认值因此只有 DefaultRaw 一份来源。
+// 早先 defaultConfig 是在零值结构体上跑 applyConfigDefaults，bool 型配置项会拿到 Go 的
+// 零值 false，而 LoadConfigAt 给出 true——两条读路径对同一个键给出不同答案，
+// 且只有“文件里没写这个键”时才暴露，很难在测试之外发现
+func decodeConfig(raw map[string]any) (*Config, error) {
 	// 默认值先取：文件里缺哪个键，哪个键就保持 settings 里的默认值
 	merged := DefaultRaw()
 	for k, v := range raw {
@@ -183,10 +201,16 @@ func LoadConfigAt(path string) (*Config, error) {
 }
 
 // defaultConfig 返回所有字段填好默认值的配置。
-// 与 LoadConfigAt 共用 applyConfigDefaults，默认值同源，不存在第二份默认值逻辑。
+//
+// 走的是“空文件 + settings 默认值”这条与 LoadConfigAt 完全相同的路径，因此两者不可能
+// 对某个键给出不同答案；改回“零值结构体 + applyConfigDefaults”会让 bool 项退回 false
 func defaultConfig() *Config {
-	cfg := &Config{}
-	applyConfigDefaults(cfg)
+	cfg, err := decodeConfig(nil)
+	if err != nil {
+		// 这里的错误只可能来自解码器自身的配置（在源码里固定），运行期无法触发；
+		// 返回零值结构体等于在没有人知情的情况下给出另一份默认值，不如直接暴露
+		panic(err)
+	}
 	return cfg
 }
 
@@ -200,6 +224,8 @@ func defaultConfig() *Config {
 //   - repo_paths / parent_paths 为 nil → 空切片，使序列化结果是 [] 而不是 null
 //   - ignore_submodules 是 bool，零值 false 即“默认包含子模块”，无需补值
 //   - notify_timeout 是 int，零值 0 即“通知不自动消失”，无需补值
+//   - push_tags / prune_branches 默认 true，而 bool 的零值是 false，这里补不出这个区别；
+//     它们的默认值由 decodeConfig 统一从 DefaultRaw 解码得到，本函数不碰
 //
 // 取值一律向 settings 注册表要，本函数不再出现任何默认值字面量：原先这里把
 // 500/800/"decimal"/"en" 又抄了一遍，与 settings[].Default 分叉时没有任何测试能拦住。

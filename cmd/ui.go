@@ -31,6 +31,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/jy-eggroll/eggokit/fileicon"
@@ -141,6 +142,33 @@ type uiCache struct {
 	// 若挂在某个请求上，用户刷新页面（旧请求被取消）就会把这次采集一并中断，
 	// 于是缓存永远填不上，每次都从零开始
 	ctx context.Context
+	// configPath 是配置文件的路径，供 configNow 现读。它由 runUI 在启动时定下，
+	// 而不是每处都调 config.GetDefaultConfigPath：那个函数在主目录不可用时会退出进程，
+	// 不该出现在请求处理路径上
+	configPath string
+}
+
+// configNow 重新读一次配置文件，读失败时退回进程启动时加载的全局配置。
+//
+// 为什么每次现读：设置面板保存只写文件，进程启动时加载的全局 cfg 不会跟着变，而
+// push_tags / prune_branches 在注册表里承诺的是“立即生效”。不选“保存时顺手改全局变量”
+// 那条路，因为全局 cfg 被多个请求并发读取，运行期改写它就是数据竞争
+func (c *uiCache) configNow() *config.Config {
+	cfg, err := config.LoadConfigAt(c.configPath)
+	if err != nil {
+		// 回退而不是报错：文件被外部改坏时，用户至少还能用推送、拉取这些按钮，
+		// 具体哪里坏了由设置面板与 ggt config validate 去说
+		logger.Warn(l10n.T("Failed to reload the configuration, using the values loaded at startup", nil),
+			"path", c.configPath, "err", err)
+		if fallback := GetConfig(); fallback != nil {
+			return fallback
+		}
+		// 全局配置由命令启动流程赋值，正常运行时不会为 nil；直接构造 uiCache 的测试里它是空的。
+		// 返回空结构体意味着两项都按 false 处理（不附带标签、不修剪分支），这是读不到配置时
+		// 最保守的一侧：少做副作用，而不是多做
+		return &config.Config{}
+	}
+	return cfg
 }
 
 // repos 返回一份仓库状态快照，必要时重新采集。
@@ -871,6 +899,15 @@ type uiWriteRequest struct {
 	Message string `json:"message"`
 	// Branch 是分支名，仅切换分支使用
 	Branch string `json:"branch"`
+	// Hash 是提交哈希，仅创建标签使用
+	Hash string `json:"hash"`
+	// Name 是标签名，仅创建标签使用
+	Name string `json:"name"`
+	// Push 表示创建标签后是否立刻推到远端，仅 /api/tag 使用。
+	// 不复用 push_tags：那是“看板推送按钮默认带不带标签”的全局偏好，
+	// 而这里是“这一次打标签要不要顺手推走”，两者方向相反，混用会让一次点击
+	// 把无关的标签也推出去
+	Push bool `json:"push"`
 }
 
 // uiWriteResult 是写端点的统一响应。
@@ -975,16 +1012,183 @@ func (c *uiCache) handleCommit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// pushArgs 返回推送要用的 git 参数。withTags 为真时附 --follow-tags。
+//
+// 单独抽成函数是为了让网页看板与 ggt sync 共用同一份参数，也便于单测直接断言参数形状：
+// 这段逻辑此前藏在 HTTP 处理函数里，只能靠起服务、建仓库、真的推一次才能验证
+//
+// 用 --follow-tags 而不是 --tags：前者只推附注标签（git 认为“跟着提交走”的那些），
+// 后者会把本地所有轻量标签一起推走。本项目的发布标记一律是附注标签
+// 官方信源：https://git-scm.com/docs/git-push（--follow-tags）
+func pushArgs(withTags bool) []string {
+	if withTags {
+		return []string{"push", "--follow-tags"}
+	}
+	return []string{"push"}
+}
+
+// fetchArgs 返回 fetch 要用的 git 参数。prune 为真时加 --prune。
+//
+// --prune 只修剪远程跟踪分支；本地标签一律不自动修剪，因此刻意不用 --prune-tags——
+// 那个选项会让“远端删了一个标签”变成“本地少一条发布记录”
+func fetchArgs(prune bool) []string {
+	args := []string{"fetch", "--all"}
+	if prune {
+		args = append(args, "--prune")
+	}
+	return args
+}
+
+// pullArgs 返回拉取当前分支要用的 git 参数。--ff-only 与 ggt sync 的语义一致，
+// --prune 的理由同 fetchArgs。
+func pullArgs(prune bool) []string {
+	args := []string{"pull", "--ff-only"}
+	if prune {
+		args = append(args, "--prune")
+	}
+	return args
+}
+
 // handlePush 推送当前分支。
 //
 // 不替用户建立跟踪关系（不加 -u）：往哪个远程、哪个分支推送是仓库拓扑的一部分，
 // 由服务自作主张建好跟踪，一旦推错对象代价很高。git 自己会明确拒绝并说明该怎么建
 // （有远程但没 upstream 时说 "has no upstream branch" 并给出 --set-upstream 的用法；
 // 连远程都没配时说 "No configured push destination"），这些原话直接透给页面
+//
+// 是否附带标签由 push_tags 决定，取值现读配置文件（理由见 configNow）
 func (c *uiCache) handlePush(w http.ResponseWriter, r *http.Request) {
 	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
-		return git.RunCombinedContext(ctx, repo.Path, "push")
+		return git.RunCombinedContext(ctx, repo.Path, pushArgs(c.configNow().PushTags)...)
 	})
+}
+
+// handleTag 在指定提交上创建一个附注标签。
+//
+// 只做附注标签（git tag -a）：附注标签带作者、时间与说明，--follow-tags 推送的正是这一类；
+// 轻量标签既不会被顺带推走，也没有地方放说明，与本功能“给某个提交留下解释”的目的不符
+func (c *uiCache) handleTag(w http.ResponseWriter, r *http.Request) {
+	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, req uiWriteRequest) (string, error) {
+		args, err := tagArgs(req.Hash, req.Name, req.Message)
+		if err != nil {
+			return "", err
+		}
+		// 引用名的完整规则交给 git 复核：规则很多（连续的点、以 .lock 结尾、@ 单独成段等），
+		// 在 Go 里另写一份必然与 git 分叉，表现为“看板放行、git 拒绝”或反过来。
+		// refs/tags/ 前缀让 check-ref-format 按标签全名判断，不必另给 --allow-onelevel
+		name := strings.TrimSpace(req.Name)
+		if _, err := git.RunCombinedContext(ctx, repo.Path, "check-ref-format", "refs/tags/"+name); err != nil {
+			return "", &uiParamError{http.StatusBadRequest, l10n.T("Invalid tag name", nil)}
+		}
+		out, err := git.RunCombinedContext(ctx, repo.Path, args...)
+		if err != nil {
+			return out, err
+		}
+		if !req.Push {
+			return out, nil
+		}
+		// 远端解析放在标签建好之后：解析失败时本地标签已经存在，这里不回滚它。
+		// 回滚需要“删掉刚建的标签”，而在解析失败与推送失败两种情况下，用户要的
+		// 往往只是修好远端再推一次；擅自删掉重来会让重试变成“标签已存在”而失败
+		remote, err := tagPushRemote(ctx, repo.Path)
+		if err != nil {
+			return "", err
+		}
+		pushOut, pushErr := git.RunCombinedContext(ctx, repo.Path, tagPushArgs(remote, name)...)
+		if pushErr != nil {
+			detail := strings.TrimSpace(pushOut)
+			if detail == "" {
+				detail = pushErr.Error()
+			}
+			// 把“本地已建好”写在最前面：用户看到失败提示后的第一反应常是重试，
+			// 而重试一次 git tag 只会得到“标签已存在”，先讲清现状他才不会白试
+			msg := l10n.T("The tag was created locally, but pushing it to {{.Remote}} failed: {{.Err}}",
+				map[string]any{"Remote": remote, "Err": detail})
+			return msg, pushErr
+		}
+		return l10n.T("Tag {{.Name}} created and pushed to {{.Remote}}",
+			map[string]any{"Name": name, "Remote": remote}), nil
+	})
+}
+
+// tagPushRemote 解析推送标签时要用的远端名。
+//
+// 优先取当前分支的上游，取第一段作远端名：用户在看板上给某个提交打标签时，
+// 他心里的对象通常就是这条分支对应的远端。取不到上游才退回仓库里唯一的远端；
+// 零个或多个远端都拒绝，因为此时选哪一个都没有依据，替他猜一次并推错对象，
+// 代价高于让他先把当前分支的上游设置好
+func tagPushRemote(ctx context.Context, repoPath string) (string, error) {
+	if out, err := git.RunContext(ctx, repoPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err == nil {
+		if remote, _, ok := strings.Cut(strings.TrimSpace(out), "/"); ok && remote != "" {
+			return remote, nil
+		}
+	}
+	out, err := git.RunContext(ctx, repoPath, "remote")
+	if err != nil {
+		return "", err
+	}
+	remotes := strings.Fields(out)
+	if len(remotes) == 1 {
+		return remotes[0], nil
+	}
+	return "", &uiParamError{
+		http.StatusConflict,
+		l10n.T("Cannot determine which remote to push the tag to; set an upstream branch for the current branch first", nil),
+	}
+}
+
+// tagPushArgs 构造推送单个标签的参数。
+//
+// 用 refs/tags/<name> 这个完整引用名，而不是只写标签名：只写名字时 git 会先按分支名
+// 解析，同名分支与标签并存时会推错对象，标签名与任何分支都不重名时也会以
+// "src refspec ... does not match any" 失败（实测）。
+//
+// 必须显式带 --no-follow-tags：本机可能配置了全局 push.followTags=true（实测本机即是），
+// 不带它时 git 会把与本次操作无关的附注标签一并推到远端
+func tagPushArgs(remote, name string) []string {
+	return []string{"push", remote, "refs/tags/" + name, "--no-follow-tags"}
+}
+
+// tagArgs 校验请求并构造 git tag 的参数。
+//
+// 与 handleTag 分开是为了能单测校验与参数形状：handleWrite 要求请求命中已有仓库快照，
+// 从端点一路走到这些分支要起服务、建仓库，代价远大于直接调用本函数
+func tagArgs(hash, name, message string) ([]string, error) {
+	hash = strings.TrimSpace(hash)
+	name = strings.TrimSpace(name)
+	message = strings.TrimSpace(message)
+
+	if !validHash(hash) {
+		return nil, &uiParamError{http.StatusBadRequest, l10n.T("Invalid commit hash", nil)}
+	}
+	if err := checkTagName(name); err != nil {
+		return nil, err
+	}
+	// 附注标签必须带说明：-m 为空时 git 会去开编辑器，而网页看板没有终端可开，
+	// 命令会直接失败并留下一条看不懂的原话
+	if message == "" {
+		return nil, &uiParamError{http.StatusBadRequest, l10n.T("A tag message is required", nil)}
+	}
+	return []string{"tag", "-a", name, hash, "-m", message}, nil
+}
+
+// checkTagName 拦截明显会出问题的标签名形态，其余交给 git check-ref-format。
+//
+// 这里只管两件事：以 - 开头的名字会被 git 当成选项（例如 -d 是删除标签），
+// 空白与控制字符会让参数在命令行与界面上错位。合法字符集刻意不在这里另定义
+func checkTagName(name string) error {
+	if name == "" {
+		return &uiParamError{http.StatusBadRequest, l10n.T("A tag name is required", nil)}
+	}
+	if strings.HasPrefix(name, "-") {
+		return &uiParamError{http.StatusBadRequest, l10n.T("Invalid tag name", nil)}
+	}
+	for _, r := range name {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return &uiParamError{http.StatusBadRequest, l10n.T("Invalid tag name", nil)}
+		}
+	}
+	return nil
 }
 
 // handleStageAll 暂存整个仓库的改动（看板上“未暂存的改动”那一行右边的 + 按钮）。
@@ -1047,21 +1251,25 @@ func (c *uiCache) handleCheckout(w http.ResponseWriter, r *http.Request) {
 // 而那正是用户需要看到的信息（要不要 rebase 还是 merge，由他决定）
 func (c *uiCache) handlePull(w http.ResponseWriter, r *http.Request) {
 	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
-		return git.RunCombinedContext(ctx, repo.Path, "pull", "--ff-only")
+		return git.RunCombinedContext(ctx, repo.Path, pullArgs(c.configNow().PruneBranches)...)
 	})
 }
 
 // handleSync 对应 VSCode 的“同步”：先 pull --ff-only，成功之后再 push。
 //
 // 两步串行而不是并行：pull 失败（本地分叉、没配 upstream）时不该再推一次——
-// 那会把“同步失败”变成“推了一半”，用户更难判断当前处在什么状态
+// 那会把“同步失败”变成“推了一半”，用户更难判断当前处在什么状态。
+// 两步各自按配置取参数：pull 看 prune_branches，push 看 push_tags
 func (c *uiCache) handleSync(w http.ResponseWriter, r *http.Request) {
 	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
-		pullOut, err := git.RunCombinedContext(ctx, repo.Path, "pull", "--ff-only")
+		// 配置只读一次：pull 与 push 之间文件被改的话，两步应当来自同一份判断，
+		// 否则用户看到的结果取决于保存设置的时间点
+		cfg := c.configNow()
+		pullOut, err := git.RunCombinedContext(ctx, repo.Path, pullArgs(cfg.PruneBranches)...)
 		if err != nil {
 			return pullOut, err
 		}
-		pushOut, err := git.RunCombinedContext(ctx, repo.Path, "push")
+		pushOut, err := git.RunCombinedContext(ctx, repo.Path, pushArgs(cfg.PushTags)...)
 		if err != nil {
 			return pullOut + pushOut, err
 		}
@@ -1104,9 +1312,12 @@ func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
 		}
 		repos = []uiRepo{*repo}
 	}
+	// 修剪行为在这一次行动里固定：多个仓库并发跑，各自现读配置只会读到同一份文件的多个版本，
+	// 而一次按钮点击本来就该是一个统一动作；用户改完设置再点一次即可
+	args := fetchArgs(c.configNow().PruneBranches)
 	outcomes := worker.Map(r.Context(), repos, Concurrency(), func(ctx context.Context, repo uiRepo) outcome {
 		// 用 RunCombinedContext：失败原因在 git 的 stderr 里，err 本身只是 "exit status N"
-		out, err := git.RunCombinedContext(ctx, repo.Path, "fetch", "--all", "--prune")
+		out, err := git.RunCombinedContext(ctx, repo.Path, args...)
 		if err != nil {
 			return outcome{name: repo.Name, err: strings.TrimSpace(out)}
 		}
@@ -1236,7 +1447,7 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 		return fmt.Errorf("%s: %w", l10n.T("Failed to load the WebUI assets", nil), err)
 	}
 
-	cache := &uiCache{ctx: ctx}
+	cache := &uiCache{ctx: ctx, configPath: config.GetDefaultConfigPath()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/repos", cache.handleRepos)
 	// 点开某个仓库或文件时的只读 diff。与 /api/repos 挂在同一个 mux 上，
@@ -1250,6 +1461,8 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	mux.HandleFunc("/api/stage-all", cache.handleStageAll)
 	mux.HandleFunc("/api/unstage-all", cache.handleUnstageAll)
 	mux.HandleFunc("/api/commit", cache.handleCommit)
+	// 在某个提交上创建附注标签：标签是分支图里“这个版本是什么”的说明，页面从提交右键菜单进来
+	mux.HandleFunc("/api/tag", cache.handleTag)
 	mux.HandleFunc("/api/push", cache.handlePush)
 	// 仓库卡片顶栏上的三个仓库级动作：切换分支、拉取当前分支、同步（pull --ff-only + push）
 	mux.HandleFunc("/api/checkout", cache.handleCheckout)

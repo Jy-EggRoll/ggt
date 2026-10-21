@@ -110,8 +110,16 @@
   --z-hover: 20;
   /* 通知压在所有浮层之上：刚做完一次写操作，结果不该被任何一层挡住。
      分两档是因为通知中心是“用户主动点开、要停在上面看”的面板，而单条通知是它自己的内容 */
+  /* 已知缺陷，暂不修：通知区固定在右下角，层级又高于设置面板（--z-diff），
+     而 notify_timeout 默认 0 表示不自动消失。用户攒下一条通知后，设置面板右下角的
+     “保存”按钮就被盖住、点不到。后续要修从这里和通知区的定位入手，不要只调数值 */
   --z-toast: 21;
   --z-notif-center: 22;
+  /* 右键菜单与标签对话框是“浮层之上的操作层”：菜单由浮层里的行打开，必须盖住那张浮层；
+     对话框又由菜单项打开，打开时菜单已经收起，因此把对话框排在菜单之下、通知之上。
+     两者都不跟通知抢位置——通知是动作结果的回执，不该被一张对话框压在底下看不见 */
+  --z-tag-dialog: 30;
+  --z-menu: 31;
 
   --fs-xs: 11px;
   --fs-sm: 12px;
@@ -2411,4 +2419,136 @@ pre.diff .meta { color: var(--text-dim); }
      降级下应瞬时到位。左侧归属实线与淡底是静态标记，不受影响、照常显示 */
   .g-expander::before { transition: none; }
   .g-file-row { animation: none; }
+}
+
+/* ——— 右键菜单 ———
+   全页只有一个菜单节点（app.js 动态建），定位由 app.js 按 clientX/clientY 写入 left/top，
+   因此这里只写 appearance。层级取 --z-menu：它要盖住触发它的那张浮层。
+   颜色一律走主题令牌，与卡片、设置面板同一来源，不写任何颜色字面量 */
+.ctx-menu {
+  position: fixed;
+  z-index: var(--z-menu);
+  min-width: 180px;
+  max-width: 320px;
+  padding: var(--sp-1) 0;
+  background: var(--panel-bg, var(--bg));
+  border: 1px solid var(--editor-widget-border, var(--card-border));
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-dialog);
+}
+/* 收起态用 hidden 属性，作者样式里的 display 会压过 UA 的 [hidden] 规则，
+   这里必须自己写一条，否则菜单关掉后仍留在布局里 */
+.ctx-menu[hidden] { display: none; }
+.ctx-menu-item {
+  display: block;
+  width: 100%;
+  padding: var(--sp-2) var(--sp-4);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ctx-menu-item:hover,
+.ctx-menu-item:focus-visible {
+  background: var(--hover-bg);
+  outline: none;
+}
+.ctx-menu-item:disabled {
+  color: var(--text-dim);
+  background: transparent;
+  cursor: default;
+}
+.ctx-menu-sep {
+  height: 1px;
+  margin: var(--sp-1) 0;
+  background: var(--card-border);
+}
+
+/* ——— 标签对话框 ———
+   结构与设置面板同源（同一套底色、边框、圆角、阴影令牌），但只占视口中央一小块，
+   不是整页浮层。层级取 --z-tag-dialog，压住历史图与卡片。
+   显隐由 .open 类驱动，与 .overlay 同样的“常驻 + 过渡”写法：退场动画因此播得完 */
+.tag-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-tag-dialog);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--scrim-bg);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) ease,
+    visibility 0s linear var(--dur-fast);
+}
+.tag-dialog.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition:
+    opacity var(--dur-move) var(--ease-decel),
+    visibility 0s;
+}
+.tag-dialog-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  width: min(420px, calc(100vw - 2 * var(--overlay-inset)));
+  padding: var(--sp-4);
+  background: var(--panel-bg, var(--bg));
+  border: 1px solid var(--editor-widget-border, var(--card-border));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-dialog);
+}
+.tag-dialog-card h2 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.tag-target {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+.tag-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+.tag-field input,
+.tag-field textarea {
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--sp-2);
+  font: inherit;
+  color: var(--input-fg, var(--text));
+  background: var(--input-bg, var(--bg));
+  border: 1px solid var(--input-border, var(--card-border));
+  border-radius: var(--radius-sm);
+}
+.tag-field textarea {
+  padding: var(--sp-2);
+  resize: vertical;
+}
+.tag-field input:focus,
+.tag-field textarea:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+}
+.tag-error {
+  margin: 0;
+  color: var(--status-error, var(--git-conflicting));
+  font-size: var(--fs-sm);
+}
+.tag-error[hidden] { display: none; }
+.tag-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
 }

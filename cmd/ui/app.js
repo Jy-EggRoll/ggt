@@ -105,6 +105,28 @@ const MSG = {
     fetching: 'Fetching…',
     themeFollow: 'Follow the system',
     graphEntry: 'History graph',
+    // 右键菜单与标签对话框的文案。菜单项按“对这条提交 / 这个仓库能做什么”命名，
+    // 与按钮文案分开，避免以后改按钮时误改菜单里的动作名
+    ctxCreateTag: 'Create tag…',
+    ctxCreateAndPushTag: 'Create and push tag…',
+    ctxCopyHash: 'Copy commit hash',
+    ctxCopySubject: 'Copy commit subject',
+    ctxSetCompareBase: 'Set as compare baseline',
+    ctxClearCompareBase: 'Clear compare baseline',
+    ctxCopyRepoPath: 'Copy repository path',
+    copied: 'Copied',
+    copyFailed: 'Copy failed: {{err}}',
+    tagDialogTitle: 'Create tag',
+    tagTargetLabel: 'Target commit',
+    tagName: 'Tag name',
+    tagNamePlaceholder: 'For example v1.2.0',
+    tagMessage: 'Tag message',
+    tagMessagePlaceholder: 'What is this tag for?',
+    tagCancel: 'Cancel',
+    tagCreate: 'Create',
+    tagCreateAndPush: 'Create and push',
+    tagCreating: 'Creating…',
+    tagCreated: 'Tag created',
     graphAllRefs: 'All branches and tags',
     graphCount: 'showing {{shown}} / {{total}}',
     graphLoading: 'Loading…',
@@ -221,6 +243,26 @@ const MSG = {
     fetching: '正在获取…',
     themeFollow: '跟随系统',
     graphEntry: '分支图',
+    ctxCreateTag: '创建标签…',
+    ctxCreateAndPushTag: '创建并推送…',
+    ctxCopyHash: '复制提交哈希',
+    ctxCopySubject: '复制提交信息',
+    ctxSetCompareBase: '设为比较基线',
+    ctxClearCompareBase: '清除比较基线',
+    ctxCopyRepoPath: '复制仓库路径',
+    copied: '已复制',
+    copyFailed: '复制失败：{{err}}',
+    tagDialogTitle: '创建标签',
+    tagTargetLabel: '目标提交',
+    tagName: '标签名',
+    tagNamePlaceholder: '例如 v1.2.0',
+    tagMessage: '标签说明',
+    tagMessagePlaceholder: '写一句这个标签的用途',
+    tagCancel: '取消',
+    tagCreate: '创建',
+    tagCreateAndPush: '创建并推送',
+    tagCreating: '正在创建…',
+    tagCreated: '标签已创建',
     graphAllRefs: '全部分支与 tag',
     graphCount: '已显示 {{shown}} / {{total}}',
     graphLoading: '加载中…',
@@ -2807,6 +2849,12 @@ commitMsgEl.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  // 标签对话框开在历史图之上，也是最后打开的一层：Esc 先收它，别让下面那张仓库卡片
+  // 跟着一起关掉——用户只是想把刚打开的对话框退掉
+  if (tagDialogOpen) {
+    closeTagDialog();
+    return;
+  }
   // 仓库信息浮层是卡片之上的一层，先收它——一层一层退，顺序与打开时相反
   if (infoOpen) {
     closeRepoInfo();
@@ -4240,6 +4288,325 @@ graphPushEl.addEventListener('click', () => cardWrite('/api/push', { repo: cardS
 // 用户能自己核对该仓库的地址（页面不复制一份“已切换”的说法）
 graphRemoteEl.addEventListener('click', () =>
   cardWrite('/api/remote', { repo: cardSpec.repo.path, protocol: 'toggle' }));
+
+// ——— 右键菜单与创建标签 ———
+//
+// 菜单节点只有一个，内容按打开它的那类目标重建。两处入口（提交行、仓库卡片标题行）的菜单项
+// 完全不同，但键盘、定位与关闭的行为必须一致；各建一个就会有两份迟早走样的实现。
+// 挂在 body 上而不是卡片里：菜单要能伸出卡片边界，也不能被浮层的 overflow 裁掉。
+
+const menuEl = document.createElement('div');
+menuEl.id = 'ctx-menu';
+menuEl.className = 'ctx-menu';
+menuEl.setAttribute('role', 'menu');
+menuEl.setAttribute('aria-hidden', 'true');
+menuEl.tabIndex = -1;
+menuEl.hidden = true;
+document.body.appendChild(menuEl);
+// 菜单自己身上再右键时不要再叠一层浏览器默认菜单：这里的每一项都是已定义好的动作，
+// 系统菜单里没有任何能作用于它的东西
+menuEl.addEventListener('contextmenu', (e) => e.preventDefault());
+
+let menuOpen = false;
+let menuOpener = null;
+
+function enabledMenuItems() {
+  return Array.from(menuEl.querySelectorAll('[role="menuitem"]:not([disabled])'));
+}
+
+function focusMenuItem(index) {
+  const items = enabledMenuItems();
+  if (items.length === 0) {
+    menuEl.focus();
+    return;
+  }
+  items[(index + items.length) % items.length].focus();
+}
+
+// closeMenu 只做收起，不碰触发菜单的业务状态。
+// 焦点是否交还由调用方决定：点菜单项后通常要打开对话框或卡片，焦点该跟着新界面走，
+// 这时再抢回来反而把用户刚打开的东西顶掉
+function closeMenu(restoreFocus) {
+  if (!menuOpen) return;
+  menuOpen = false;
+  menuEl.hidden = true;
+  menuEl.setAttribute('aria-hidden', 'true');
+  menuEl.replaceChildren();
+  const opener = menuOpener;
+  menuOpener = null;
+  if (restoreFocus && opener && typeof opener.focus === 'function') opener.focus();
+}
+
+function openMenu(x, y, items, opener) {
+  closeMenu(false);
+  menuEl.replaceChildren();
+  for (const item of items) {
+    if (item.separator) {
+      const sep = document.createElement('div');
+      sep.className = 'ctx-menu-sep';
+      sep.setAttribute('role', 'separator');
+      menuEl.appendChild(sep);
+      continue;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ctx-menu-item';
+    btn.setAttribute('role', 'menuitem');
+    btn.textContent = item.label;
+    if (item.disabled) {
+      btn.disabled = true;
+    } else {
+      btn.addEventListener('click', () => {
+        const run = item.action;
+        closeMenu(false);
+        run();
+      });
+    }
+    menuEl.appendChild(btn);
+  }
+  menuEl.hidden = false;
+  menuEl.setAttribute('aria-hidden', 'false');
+  menuOpen = true;
+  menuOpener = opener || null;
+
+  // 先摆在视口左上角量出尺寸，再按光标位置决定朝哪边展开。
+  // 靠近右/下边缘时向反方向翻，翻转后仍越界就夹回视口内——菜单被屏幕切掉一半时，
+  // 后面的菜单项就点不到了
+  menuEl.style.left = '0px';
+  menuEl.style.top = '0px';
+  const rect = menuEl.getBoundingClientRect();
+  const edge = 8;
+  let left = x;
+  let top = y;
+  if (left + rect.width > window.innerWidth - edge) left = x - rect.width;
+  if (top + rect.height > window.innerHeight - edge) top = y - rect.height;
+  left = Math.max(edge, Math.min(left, window.innerWidth - rect.width - edge));
+  top = Math.max(edge, Math.min(top, window.innerHeight - rect.height - edge));
+  menuEl.style.left = left + 'px';
+  menuEl.style.top = top + 'px';
+  focusMenuItem(0);
+}
+
+// 菜单的键盘处理放在捕获阶段：Esc 必须在下面那条“后开的先收”的链之前把菜单收掉，
+// 否则一次 Esc 会先被链里的卡片分支吃掉，菜单还留在屏幕上
+document.addEventListener(
+  'keydown',
+  (e) => {
+    if (!menuOpen) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMenu(true);
+      return;
+    }
+    if (!menuEl.contains(document.activeElement)) return;
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const items = enabledMenuItems();
+    if (items.length === 0) return;
+    const at = items.indexOf(document.activeElement);
+    if (e.key === 'Home') focusMenuItem(0);
+    else if (e.key === 'End') focusMenuItem(items.length - 1);
+    else focusMenuItem(at + (e.key === 'ArrowDown' ? 1 : -1));
+  },
+  true,
+);
+
+// 点击菜单外、滚动、改窗口尺寸、窗口失焦都收起菜单：这几种情况下菜单的位置或上下文
+// 已经不可信，留着它只会让人点到一条过期的动作
+document.addEventListener(
+  'pointerdown',
+  (e) => {
+    if (menuOpen && !menuEl.contains(e.target)) closeMenu(false);
+  },
+  true,
+);
+window.addEventListener('scroll', () => closeMenu(false), true);
+window.addEventListener('resize', () => closeMenu(false));
+window.addEventListener('blur', () => closeMenu(false));
+
+// copyText 是两处“复制”菜单项的唯一实现。剪贴板权限可能被浏览器拒绝（非安全上下文、
+// 用户没给权限），失败要明确说出来，否则菜单收起来后什么都没发生
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    notify(t('copied'), 'info');
+  } catch (err) {
+    notify(t('copyFailed', { err: err.message }), 'error');
+  }
+}
+
+// commitMenuItems 按当前基线状态决定最后一项显示哪一句。
+// “设为基线”不走 clickCompare：它已经有另一个基线时会直接打开两点差异，
+// 与菜单上写的“设为基线”不是一回事；清除才复用 clickCompare 的取消逻辑
+function commitMenuItems(commit) {
+  const isBase = !!compareBase && compareBase.hash === commit.hash;
+  return [
+    { label: t('ctxCreateTag'), action: () => openTagDialog(commit) },
+    { label: t('ctxCreateAndPushTag'), action: () => openTagDialog(commit, true) },
+    { separator: true },
+    { label: t('ctxCopyHash'), action: () => copyText(commit.hash) },
+    { label: t('ctxCopySubject'), action: () => copyText(commit.subject || t('graphNoSubject')) },
+    { separator: true },
+    {
+      label: isBase ? t('ctxClearCompareBase') : t('ctxSetCompareBase'),
+      action: () => {
+        if (isBase) {
+          clickCompare(commit);
+          return;
+        }
+        compareBase = { hash: commit.hash, subject: commit.subject };
+        markCompareBase();
+      },
+    },
+  ];
+}
+
+// 仓库卡片的菜单复用顶栏按钮的动作与文案键。写操作在飞时禁用：
+// 与顶栏按钮同一时刻置灰，用户不会在两条路径上得到不同的可用性
+function repoMenuItems(spec) {
+  const repo = spec.repo.path;
+  const write = (path, label) => ({
+    label,
+    disabled: writeBusy,
+    action: () => cardWrite(path, { repo }),
+  });
+  return [
+    { label: t('graphEntry'), action: () => openRepoCard(spec) },
+    { separator: true },
+    write('/api/fetch', t('fetchRepo')),
+    write('/api/pull', t('pullRepo')),
+    write('/api/sync', t('pullPush')),
+    write('/api/push', t('push')),
+    { separator: true },
+    { label: t('ctxCopyRepoPath'), action: () => copyText(repo) },
+  ];
+}
+
+// 只有提交行接管右键：文件子行与行内按钮（比较、展开）保留浏览器默认菜单，
+// 它们上面没有这里提供的这些动作
+graphListEl.addEventListener('contextmenu', (e) => {
+  const row = e.target.closest('.g-row');
+  if (!row) return;
+  if (e.target.closest('button, .g-expander, .g-file-row')) return;
+  const vm = graphItems.find((v) => v.item.hash === row.dataset.hash);
+  if (!vm) return;
+  e.preventDefault();
+  openMenu(e.clientX, e.clientY, commitMenuItems(vm.item), document.activeElement);
+});
+
+// 看板上只有仓库标题行（kind === 'head'）接管右键；分组行与文件行不接管
+board.addEventListener('contextmenu', (e) => {
+  const row = e.target.closest('.row');
+  if (!row || !row.__spec || row.__spec.kind !== 'head') return;
+  e.preventDefault();
+  openMenu(e.clientX, e.clientY, repoMenuItems(row.__spec), document.activeElement);
+});
+
+// 标签对话框：结构在 index.html，文案与显隐在这里。
+// 它比历史图浮层更晚打开、层级更高（--z-tag-dialog），因此在 Esc 链里排在最前
+const tagDialogEl = document.getElementById('tag-dialog');
+const tagTargetEl = document.getElementById('tag-target');
+const tagNameEl = document.getElementById('tag-name');
+const tagMessageEl = document.getElementById('tag-message');
+const tagErrorEl = document.getElementById('tag-error');
+const tagCancelEl = document.getElementById('tag-cancel');
+const tagCreateEl = document.getElementById('tag-create');
+
+let tagDialogOpen = false;
+let tagSubmitting = false;
+let tagCommit = null;
+// tagPush 记下这次是从哪个菜单项打开的：两个入口共用一张对话框，
+// 创建与“创建并推送”的区别只在主按钮文案和请求体里的 push，打开时定下就不再变
+let tagPush = false;
+
+// syncTagForm 把“按钮能不能按”收在一处：标签名与说明都非空才能提交，
+// 提交在飞时整张表单一起锁住，避免连点发出两条 CreateTag 请求
+function syncTagForm() {
+  const filled = tagNameEl.value.trim() !== '' && tagMessageEl.value.trim() !== '';
+  tagCreateEl.disabled = tagSubmitting || !filled;
+  tagNameEl.disabled = tagSubmitting;
+  tagMessageEl.disabled = tagSubmitting;
+  tagCancelEl.disabled = tagSubmitting;
+  tagCreateEl.textContent = tagSubmitting ? t('tagCreating') : tagPush ? t('tagCreateAndPush') : t('tagCreate');
+}
+
+function openTagDialog(commit, pushMode) {
+  if (!cardSpec || !commit) return;
+  tagCommit = commit;
+  tagPush = pushMode === true;
+  tagDialogOpen = true;
+  tagSubmitting = false;
+  // 文案只在打开时填一次：语言在页面加载时就定了，不会在使用中切换；
+  // 结构留在 HTML 里是为了让对话框的骨架一眼能读出来
+  document.getElementById('tag-dialog-title').textContent = t('tagDialogTitle');
+  document.getElementById('tag-target-label').textContent = t('tagTargetLabel');
+  document.getElementById('tag-name-label').textContent = t('tagName');
+  document.getElementById('tag-message-label').textContent = t('tagMessage');
+  tagNameEl.placeholder = t('tagNamePlaceholder');
+  tagMessageEl.placeholder = t('tagMessagePlaceholder');
+  tagCancelEl.textContent = t('tagCancel');
+  tagErrorEl.hidden = true;
+  tagErrorEl.textContent = '';
+  tagNameEl.value = '';
+  tagMessageEl.value = '';
+  tagTargetEl.textContent = shortHash(commit.hash) + ' · ' + (commit.subject || t('graphNoSubject'));
+  tagDialogEl.classList.add('open');
+  tagDialogEl.setAttribute('aria-hidden', 'false');
+  syncTagForm();
+  tagNameEl.focus();
+}
+
+function closeTagDialog() {
+  if (!tagDialogOpen) return;
+  tagDialogOpen = false;
+  tagSubmitting = false;
+  tagCommit = null;
+  tagDialogEl.classList.remove('open');
+  tagDialogEl.setAttribute('aria-hidden', 'true');
+  graphListEl.focus();
+}
+
+// submitTag 走 runWrite：错误文案由服务端本地化，原样显示在对话框里且不关闭，
+// 用户可以改完再交；成功后的心跳会刷新历史图，标签因此立刻出现在图上
+async function submitTag() {
+  if (!tagDialogOpen || tagSubmitting || !tagCommit || !cardSpec) return;
+  const name = tagNameEl.value.trim();
+  const message = tagMessageEl.value.trim();
+  if (name === '' || message === '') return;
+  const repo = cardSpec.repo.path;
+  const hash = tagCommit.hash;
+  tagSubmitting = true;
+  tagErrorEl.hidden = true;
+  tagErrorEl.textContent = '';
+  syncTagForm();
+  const out = await runWrite('/api/tag', { repo, hash, name, message, push: tagPush }, (text, isError) => {
+    if (!isError) return;
+    tagErrorEl.textContent = text;
+    tagErrorEl.hidden = false;
+  });
+  tagSubmitting = false;
+  if (out && !out.error) {
+    closeTagDialog();
+    // 成功也优先用服务端原话：只有它区分得开“只创建”与“创建并推送”，
+    // 页面自拟一句“标签已创建”会让用户看不出标签到底推没推走
+    notify(out.output || t('tagCreated'), 'info');
+    return;
+  }
+  syncTagForm();
+}
+
+tagCancelEl.addEventListener('click', closeTagDialog);
+tagCreateEl.addEventListener('click', submitTag);
+tagNameEl.addEventListener('input', syncTagForm);
+tagMessageEl.addEventListener('input', syncTagForm);
+// 在输入框里按回车直接提交；说明是多行框，回车留给换行，只用 Ctrl/Cmd+Enter 提交
+tagNameEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitTag();
+});
+tagMessageEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitTag();
+});
 
 // checkUpgrade 触发一次版本检查并把结论通知出来。
 //

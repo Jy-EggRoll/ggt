@@ -339,6 +339,28 @@ var settings = []Setting{
 		ApplyAt: ApplyReload,
 	},
 	{
+		// 推送时附带标签。默认开：打好的附注标签本来就是要发出去的版本标记，
+		// 推了代码却漏推标签，远端就少一个能对齐的点
+		Key:      "push_tags",
+		Title:    l10n.T("Push tags", nil),
+		Kind:     KindBool,
+		Default:  true,
+		Expected: l10n.T("true or false", nil),
+		Parse:    parseBool,
+	},
+	{
+		// fetch / pull / sync 时修剪远程跟踪分支。默认开：远端删掉的分支若一直留在本地，
+		// 分支列表会越来越长，界面上的领先/落后判断也拿它当依据。
+		// 刻意的边界：这一项只管分支。对应的 git 选项因此是 --prune 而不是 --prune-tags，
+		// 本地标签一律不自动修剪（标签是发布记录，被远程一次性带走属于事故）
+		Key:      "prune_branches",
+		Title:    l10n.T("Prune branches", nil),
+		Kind:     KindBool,
+		Default:  true,
+		Expected: l10n.T("true or false", nil),
+		Parse:    parseBool,
+	},
+	{
 		Key:       "repo_paths",
 		Title:     l10n.T("Repositories", nil),
 		Kind:      KindPaths,
