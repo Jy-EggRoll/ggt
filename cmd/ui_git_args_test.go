@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -144,6 +145,148 @@ func newTagTestRepo(t *testing.T) string {
 		}
 	}
 	return dir
+}
+
+// newBareRemote 建一个裸仓库充当远端，返回它的路径。
+// 用本地路径而不是网络地址：推送逻辑要验证的是“推给了哪个远端、带没带选项”，
+// 不该被凭据与网络状态干扰
+func newBareRemote(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	bare := filepath.Join(dir, "remote.git")
+	gitOut(t, dir, "init", "-q", "--bare", bare)
+	return bare
+}
+
+// TestTagPushRemote 覆盖远端解析的四条分支。
+// 有上游时的结果必须来自上游而不是远端数量：仓库同时配了多个远端时，
+// 上游是唯一能说明“这一次该推给谁”的依据
+func TestTagPushRemote(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("有上游时取上游的第一段", func(t *testing.T) {
+		repo := newTagTestRepo(t)
+		gitOut(t, repo, "remote", "add", "upstream", newBareRemote(t))
+		gitOut(t, repo, "remote", "add", "other", newBareRemote(t))
+		branch := gitOut(t, repo, "rev-parse", "--abbrev-ref", "HEAD")
+		gitOut(t, repo, "push", "-q", "-u", "upstream", branch)
+
+		got, err := tagPushRemote(ctx, repo)
+		if err != nil {
+			t.Fatalf("不应报错：%v", err)
+		}
+		if got != "upstream" {
+			t.Fatalf("远端 = %q，期望 upstream", got)
+		}
+	})
+
+	t.Run("无上游但只有一个远端", func(t *testing.T) {
+		repo := newTagTestRepo(t)
+		gitOut(t, repo, "remote", "add", "origin", newBareRemote(t))
+
+		got, err := tagPushRemote(ctx, repo)
+		if err != nil {
+			t.Fatalf("不应报错：%v", err)
+		}
+		if got != "origin" {
+			t.Fatalf("远端 = %q，期望 origin", got)
+		}
+	})
+
+	for _, c := range []struct {
+		name    string
+		remotes int
+	}{
+		{"多个远端且无上游", 2},
+		{"没有远端", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			repo := newTagTestRepo(t)
+			for i := 0; i < c.remotes; i++ {
+				gitOut(t, repo, "remote", "add", fmt.Sprintf("r%d", i), newBareRemote(t))
+			}
+
+			_, err := tagPushRemote(ctx, repo)
+			if err == nil {
+				t.Fatal("期望报错，实际取到了远端")
+			}
+			if status := statusOf(err, http.StatusInternalServerError); status != http.StatusConflict {
+				t.Fatalf("状态 = %d，期望 %d", status, http.StatusConflict)
+			}
+			if !strings.Contains(err.Error(), "upstream") {
+				t.Fatalf("错误文案应说明需要先设置上游：%q", err.Error())
+			}
+		})
+	}
+}
+
+// TestTagPushArgs 断言推送单个标签的参数形状。
+// 完整引用名与 --no-follow-tags 都不能少：前者决定推的是标签而不是同名分支，
+// 后者决定会不会把本机其它附注标签一起带走
+func TestTagPushArgs(t *testing.T) {
+	got := strings.Join(tagPushArgs("origin", "v1.0.0"), " ")
+	want := "push origin refs/tags/v1.0.0 --no-follow-tags"
+	if got != want {
+		t.Fatalf("参数 = %q，期望 %q", got, want)
+	}
+}
+
+// TestHandleTagPush 验证端点上的“创建后推送”：成功后远端真的拿到标签，
+// 推送失败时本地标签保留并在响应里说明这一点。
+// 这两条正是“不回滚”这一决定的可观察结果，只测 tagPushArgs 看不到
+func TestHandleTagPush(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cache := &uiCache{ctx: context.Background()}
+	post := func(t *testing.T, cache *uiCache, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		cache.handleTag(rec, httptest.NewRequest(http.MethodPost, "/api/tag", strings.NewReader(body)))
+		return rec
+	}
+
+	t.Run("推送成功", func(t *testing.T) {
+		repo := newTagTestRepo(t)
+		bare := newBareRemote(t)
+		gitOut(t, repo, "remote", "add", "origin", bare)
+		branch := gitOut(t, repo, "rev-parse", "--abbrev-ref", "HEAD")
+		gitOut(t, repo, "push", "-q", "-u", "origin", branch)
+		withConfig(t, &config.Config{RepoPaths: []string{repo}, PushTags: true, PruneBranches: true})
+		hash := gitOut(t, repo, "rev-parse", "HEAD")
+
+		rec := post(t, cache, fmt.Sprintf(`{"repo":%q,"hash":%q,"name":"v1.0.0","message":"说明","push":true}`, repo, hash))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("状态 = %d，期望 200，响应体 %s", rec.Code, rec.Body.String())
+		}
+		if tags := gitOut(t, bare, "tag", "-l"); !strings.Contains(tags, "v1.0.0") {
+			t.Fatalf("远端没有收到标签，实得 %q", tags)
+		}
+		if body := rec.Body.String(); !strings.Contains(body, "v1.0.0") || !strings.Contains(body, "origin") {
+			t.Fatalf("成功文案应说明标签名与远端，实得 %s", body)
+		}
+	})
+
+	t.Run("推送失败不回滚本地标签", func(t *testing.T) {
+		repo := newTagTestRepo(t)
+		// 指向不存在的路径：远端名能解析出来，但推送一定失败
+		gitOut(t, repo, "remote", "add", "origin", filepath.Join(t.TempDir(), "missing.git"))
+		withConfig(t, &config.Config{RepoPaths: []string{repo}, PushTags: true, PruneBranches: true})
+		hash := gitOut(t, repo, "rev-parse", "HEAD")
+
+		rec := post(t, cache, fmt.Sprintf(`{"repo":%q,"hash":%q,"name":"v2.0.0","message":"说明","push":true}`, repo, hash))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("状态 = %d，期望 409，响应体 %s", rec.Code, rec.Body.String())
+		}
+		if got := gitOut(t, repo, "tag", "-l", "v2.0.0"); got != "v2.0.0" {
+			t.Fatalf("推送失败后本地标签应保留，实得 %q", got)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "created locally") || !strings.Contains(body, "origin") {
+			t.Fatalf("失败文案应说明本地已创建与远端名，实得 %s", body)
+		}
+		if !strings.Contains(body, "missing.git") && !strings.Contains(body, "does not appear") {
+			t.Fatalf("失败文案应附上 git 的原始说明，实得 %s", body)
+		}
+	})
 }
 
 // TestHandleTagEndpoint 走一遍真实端点：合法请求建出附注标签并带上说明，

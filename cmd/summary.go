@@ -125,8 +125,9 @@ Examples:
 					}
 				}
 
-				// git push：推送到远程，使用 RunCombinedContext 确保捕获 stderr 错误信息
-				if out, err := git.RunCombinedContext(ctx, d.path, "push"); err != nil {
+				// git push：推送到远程，使用 RunCombinedContext 确保捕获 stderr 错误信息。
+				// 参数与看板的推送按钮共用 pushArgs，push_tags 的取舍才不会两处各写一份
+				if out, err := git.RunCombinedContext(ctx, d.path, pushArgs(GetConfig().PushTags)...); err != nil {
 					ErrorDetail(l10n.T("push failed:", nil), out)
 				} else {
 					SuccessMsg(l10n.T("Push complete!", nil))
