@@ -115,6 +115,8 @@ ggt config validate            # 体检配置文件
 | `font_ui` | string | 空 | 看板界面文字的字体，取值是一串候选字体（写法与 CSS 的 `font-family` 相同，用逗号分隔）；留空则由浏览器自行决定。只作用于网页看板，改完需刷新页面生效 |
 | `font_mono` | string | 空 | 看板等宽文字的字体（diff 正文、提交号、设置面板里的配置键名）；留空则由浏览器挑一个等宽字体。同样只作用于网页看板，改完需刷新页面生效 |
 | `notify_timeout` | int | `0` | 网页通知自动消失的秒数，`0` 表示不自动关闭。错误档通知不受这一项影响，鼠标停在通知上时暂停计时 |
+| `push_tags` | bool | `true` | 看板推送时是否附带 `--follow-tags`，也就是把当前分支上的附注标签一起推上去。设为 `false` 则只推分支。`--follow-tags` 只推附注标签，不会把本地轻量标签一起推走（含义见 [git push 文档](https://git-scm.com/docs/git-push)） |
+| `prune_branches` | bool | `true` | 拉取类操作（看板的获取、拉取、同步，以及 `ggt sync`）是否附带 `--prune`，也就是把远端已删除的远程跟踪分支从本地清掉。它只处理分支，本地标签一律不自动修剪 |
 
 示例配置：
 
