@@ -4031,6 +4031,21 @@ function pinCommitCard(vm, row) {
   showCommitCard(vm, box.right - 40, box.bottom - 4, true);
 }
 
+// unpinCommitCard 把已经固定的卡片放回悬浮态。卡片不收起，只是重新跟着指针走：
+// 用户此刻的意图是“别再占着屏幕”，顺带也想继续看这条提交，直接藏掉反而要多点一次。
+//
+// 锚点取点击坐标而不是行尾，是因为这次是原地松手：卡片正停在指针旁边，若改按行尾（pinCommitCard
+// 在窄屏下还得夹回视口内）重新定位，卡片会当着用户的面跳一下，看起来像又弹出了另一张卡。
+// 摘掉 selected 与 cardSelected 要同时做：前者是屏幕上的高亮，后者是键盘上下键的起点，
+// 只清一处，下一次按方向键就会从一条已经不再固定的提交接着走。
+function unpinCommitCard(vm, x, y) {
+  cardSelected = '';
+  for (const r of graphListEl.children) {
+    if (r.classList) r.classList.remove('selected');
+  }
+  showCommitCard(vm, x, y, false);
+}
+
 // renderCommitCard 画详情卡。files 为 null 时只画元信息与提交信息（文件清单随后补）
 //
 // pinned 为真时在顶部画一个关闭按钮：固定之后卡片不再随鼠标移开而消失，若没有可见的出口，
@@ -4206,6 +4221,14 @@ graphListEl.addEventListener('click', (e) => {
   cancelGraphPin();
   graphPinTimer = setTimeout(() => {
     graphPinTimer = null;
+    // 在同一行上再点一次就撤销固定，卡片转为悬浮态，随后鼠标移开照常收起。
+    // 判断放在定时器里而不是点击当场，是为了让单击与双击共用同一条延时：双击到达时上面已经
+    // 清掉这次定时器，展开文件不会顺手把卡片解固定，因此 dblclick 那条路径不必再改。
+    // 记的是 clientX/clientY 而非行尾坐标，理由见 unpinCommitCard
+    if (cardPinned && cardSelected === vm.item.hash) {
+      unpinCommitCard(vm, e.clientX, e.clientY);
+      return;
+    }
     pinCommitCard(vm, row);
   }, GRAPH_PIN_DELAY_MS);
 });
