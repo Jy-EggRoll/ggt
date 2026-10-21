@@ -210,6 +210,31 @@
   </div>
 </div>
 <!--
+  标签对话框：历史图提交行的右键菜单打开。它是压在这张历史图之上的一张小卡片，
+  不是又一个整页浮层，因此不复用 .overlay；层叠由 style.css 的 --z-tag-dialog 单独负责。
+  结构写死在这里、行为在 app.js：目标提交与两个输入框都是固定字段，没有需要按数据生成的部分
+-->
+<div id="tag-dialog" class="tag-dialog" role="dialog" aria-modal="true" aria-labelledby="tag-dialog-title" aria-hidden="true">
+  <div class="tag-dialog-card">
+    <h2 id="tag-dialog-title"></h2>
+    <p class="tag-target"><span id="tag-target-label"></span> <span id="tag-target"></span></p>
+    <label class="tag-field">
+      <span id="tag-name-label"></span>
+      <input id="tag-name" type="text" autocomplete="off" spellcheck="false">
+    </label>
+    <label class="tag-field">
+      <span id="tag-message-label"></span>
+      <textarea id="tag-message" rows="3" spellcheck="false"></textarea>
+    </label>
+    <!-- 服务端的错误文案原样放在对话框里：关掉再弹通知的话，用户改完名字回来就看不到原因了 -->
+    <p id="tag-error" class="tag-error" role="alert" hidden></p>
+    <div class="tag-actions">
+      <button id="tag-cancel" class="btn btn--secondary" type="button"></button>
+      <button id="tag-create" class="btn btn--primary" type="button" disabled></button>
+    </div>
+  </div>
+</div>
+<!--
   仓库只读信息浮层：卡片顶栏的“大小”“文件”按钮打开，展示同一个仓库的磁盘占用/包大小
   或全库文件清单。形态与设置面板一致（同用 .overlay），因此不必为它另写一套样式；
   排在这里是为了盖住仓库卡片——入口就在卡片顶栏上，开出来的面板必须压得住它
