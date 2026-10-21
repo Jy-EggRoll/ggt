@@ -4588,7 +4588,9 @@ async function submitTag() {
   tagSubmitting = false;
   if (out && !out.error) {
     closeTagDialog();
-    notify(t('tagCreated'), 'info');
+    // 成功也优先用服务端原话：只有它区分得开“只创建”与“创建并推送”，
+    // 页面自拟一句“标签已创建”会让用户看不出标签到底推没推走
+    notify(out.output || t('tagCreated'), 'info');
     return;
   }
   syncTagForm();
