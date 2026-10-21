@@ -338,3 +338,56 @@ func TestValidFontFamily(t *testing.T) {
 		})
 	}
 }
+
+// TestPushTagsAndPruneBranchesDefault 覆盖两个默认值为 true 的开关。
+//
+// 它们与其余配置项的区别在于 bool 的零值是 false：只要有一条读路径退回“零值结构体 +
+// applyConfigDefaults”，缺键的配置文件上就会得到 false，而设置面板仍显示 true——
+// 表现为“明明开着，推送却不带标签”。因此三条读路径（空配置、结构体默认值、面板视图）
+// 必须一起断言
+func TestPushTagsAndPruneBranchesDefault(t *testing.T) {
+	t.Run("空配置时两项为 true", func(t *testing.T) {
+		cfg, err := LoadConfigAt(filepath.Join(t.TempDir(), "absent.json"))
+		if err != nil {
+			t.Fatalf("文件不存在不应报错: %v", err)
+		}
+		if !cfg.PushTags || !cfg.PruneBranches {
+			t.Fatalf("空配置应两项都为 true，实得 push_tags=%v prune_branches=%v", cfg.PushTags, cfg.PruneBranches)
+		}
+	})
+
+	t.Run("结构体默认值与空配置一致", func(t *testing.T) {
+		cfg := defaultConfig()
+		if !cfg.PushTags || !cfg.PruneBranches {
+			t.Fatalf("defaultConfig 应两项都为 true，实得 push_tags=%v prune_branches=%v", cfg.PushTags, cfg.PruneBranches)
+		}
+	})
+
+	t.Run("文件里显式写 false 时保留 false", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "c.json")
+		writeFile(t, path, `{"push_tags": false, "prune_branches": false}`)
+
+		cfg, err := LoadConfigAt(path)
+		if err != nil {
+			t.Fatalf("读取失败: %v", err)
+		}
+		if cfg.PushTags || cfg.PruneBranches {
+			t.Fatalf("显式 false 不应被默认值覆盖，实得 push_tags=%v prune_branches=%v", cfg.PushTags, cfg.PruneBranches)
+		}
+	})
+
+	t.Run("设置面板视图与默认值一致", func(t *testing.T) {
+		// 视图是设置面板的唯一数据来源，它若与 LoadConfigAt 给出不同答案，
+		// 用户看到的就是“面板上开着、实际没生效”
+		dir := t.TempDir()
+		path := filepath.Join(dir, "absent.json")
+		for _, v := range SettingsViewAt(path) {
+			if v.Key != "push_tags" && v.Key != "prune_branches" {
+				continue
+			}
+			if v.Value != "true" || v.Default != "true" {
+				t.Errorf("%s 的视图值应为 true，实得 value=%q default=%q", v.Key, v.Value, v.Default)
+			}
+		}
+	})
+}
