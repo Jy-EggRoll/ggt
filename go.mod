@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/go-viper/mapstructure/v2 v2.4.0
-	github.com/jy-eggroll/eggokit v0.4.3
+	github.com/jy-eggroll/eggokit v0.5.0
 	github.com/pterm/pterm v0.12.83
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -26,5 +26,3 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
-
-replace github.com/jy-eggroll/eggokit => /home/eggroll/GitRepo/eggokit
