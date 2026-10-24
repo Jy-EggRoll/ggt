@@ -21,6 +21,7 @@ import (
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
 	"github.com/jy-eggroll/eggokit/updater"
+	"github.com/jy-eggroll/eggokit/upgradecli"
 )
 
 // uiUpgradeChecker 是版本检查的注入点。
@@ -75,7 +76,7 @@ func handleUpgradeCheck(check uiUpgradeChecker) http.HandlerFunc {
 			Current:  effectiveVersion(),
 			Build:    BuildTime,
 			Channel:  l10n.T("stable", nil),
-			Platform: platformLabel(),
+			Platform: upgradecli.PlatformLabel(),
 		}
 
 		// 限时与取消都靠这个带缓冲的通道：缓冲为 1 保证检查 goroutine 即使在超时之后
@@ -133,14 +134,14 @@ func handleUpgradeCheck(check uiUpgradeChecker) http.HandlerFunc {
 func uiUpgradeCheckerFromEnv() uiUpgradeChecker {
 	return func(ctx context.Context, channel updater.Channel) (*updater.UpdateInfo, error) {
 		u, err := updater.New(updater.Config{
-			Owner:     upstreamOwner,
-			Repo:      upstreamRepo,
-			AssetName: ggtAssetName,
+			Owner:     ggtTarget.Owner,
+			Repo:      ggtTarget.Repo,
+			AssetName: ggtTarget.AssetName,
 			// 静默报告器：这条路径只把结论回给网页。用终端报告器会把过程输出混进
 			// `ggt ui` 的服务日志，而用户正看着页面，看不到那个终端
 			Reporter:      updater.DiscardReporter(),
 			TokenProvider: updater.EnvTokenProvider(""),
-			ProxyPrefix:   downloadProxyPrefix,
+			ProxyPrefix:   ggtTarget.ProxyPrefix,
 			UserAgent:     "ggt-updater",
 		})
 		if err != nil {

@@ -19,9 +19,6 @@ import (
 
 // ptermReporter 是升级器与 ggt 用户界面之间的唯一适配层
 type ptermReporter struct {
-	// assumeYes 对应命令的 --yes：为真时所有确认直接同意且不读取终端
-	assumeYes bool
-
 	// paused 在交互确认期间置位，使仍在下载 goroutine 中运行的进度刷新停止绘制，
 	// 否则问题文本会被进度行的回车覆盖。读写分别发生在下载 goroutine 与命令主 goroutine 上，
 	// 必须用原子类型而不是普通布尔
@@ -49,13 +46,11 @@ func (r *ptermReporter) Success(format string, args ...any) {
 
 // Confirm 提出一个问题并等待用户决定，返回 false 表示用户拒绝。
 //
-// --yes 模式下直接同意，无需触碰终端；非交互环境下 pterm 的确认会读到 EOF 或直接挂住，
-// 因此先用 stdinIsTerminal（与 config reset --all 同一判定）拒绝并向上升级器返回错误，
-// 让升级器走“用户未能确认”的保守分支，而不是把命令永久挂起在等待输入上
+// --yes 的处理在共享实现里：AssumeYes 为真时它根本不会调用 Confirm，因此这里不再
+// 判断该开关。非交互环境下 pterm 的确认会读到 EOF 或直接挂住，因此先用 stdinIsTerminal
+// （与 config reset --all 同一判定）拒绝并向上升级器返回错误，让升级器走“用户未能确认”
+// 的保守分支，而不是把命令永久挂起在等待输入上
 func (r *ptermReporter) Confirm(question string) (bool, error) {
-	if r.assumeYes {
-		return true, nil
-	}
 	if !stdinIsTerminal() {
 		return false, errors.New(l10n.T("Cannot ask for confirmation in a non-interactive environment; re-run with --yes", nil))
 	}
