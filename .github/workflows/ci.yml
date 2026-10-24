@@ -24,9 +24,31 @@ jobs:
             mode: verify-only
             app: ggt
 
-    # 推送时验证并构建全部平台，产物保留下来，使任意分支都能直接下载二进制做实测
+    # 主分支推送走滚动预发布：每次推送都覆盖同一个固定标签的 Release，供 ggt upgrade --alpha 使用。
+    # 这里不再另外上传一份普通产物，因为滚动预发布本身就是主分支最新的可下载构建，
+    # 同时保留两份只会让“哪个才是主分支最新”变得难以判断，也多占一份存储。
+    alpha:
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+        # 权限写在本任务而非文件顶部：上传 Release 需要写权限，而被复用的工作流拿到的令牌
+        # 权限以调用方为上限，若沿用顶部只读权限，创建或覆盖预发布会在上传阶段被拒绝。
+        # 放到任务级可以只给这一个任务放权，verify 与分支构建仍然只读
+        permissions:
+            contents: write
+        uses: Jy-EggRoll/eggokit/.github/workflows/go-release.yml@main
+        with:
+            mode: prerelease
+            app: ggt
+            # 固定标签使所有主分支构建落在同一份 Release 上，命令行据此按提交号判断新旧
+            release_tag: alpha
+            # 滚动预发布没有可比较的版本号，版本标识改用提交号
+            version_source: commit
+            artifact_prefix: ggt-
+            # 保留期与分支产物一致：滚动预发布随时会被下一次推送覆盖，留久了没有意义
+            retention_days: 3
+
+    # 非默认分支推送时验证并构建全部平台，产物保留下来，使任意分支都能直接下载二进制做实测
     build:
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref_name != github.event.repository.default_branch
         uses: Jy-EggRoll/eggokit/.github/workflows/go-release.yml@main
         with:
             mode: artifact

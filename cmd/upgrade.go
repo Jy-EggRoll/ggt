@@ -3,6 +3,10 @@
 // 升级器的通用能力（查 Release、比版本、下载、校验 SHA-256、原子替换可执行文件）全部来自
 // eggokit/updater，本文件只负责 ggt 专属的三件事：仓库坐标与资产命名（见 upgrade_target.go）、
 // 命令行的 flag 语义、以及把升级器的输出接到 ggt 的统一输出（见 upgrade_reporter.go）。
+//
+// alpha 通道与另外两个通道不同：它指向一个固定标签的滚动预发布，主分支每次推送都会覆盖同一份
+// Release，因此没有版本号可供比较，只能靠发布说明首行里的提交号判断新旧。这也是 alpha 通道
+// 不复用“最新版本”这类措辞的原因——那里不存在版本号，把它说成版本号会误导用户。
 package cmd
 
 import (
@@ -31,6 +35,11 @@ func newUpgradeCmd() *cobra.Command {
 	c.Flags().Bool("check", false, l10n.T("Only check the version, do not upgrade", nil))
 	c.Flags().Bool("force", false, l10n.T("Force upgrade", nil))
 	c.Flags().Bool("dev", false, l10n.T("Check for development versions", nil))
+	// --alpha 与 --dev 都表示“抢先验证尚未正式发布的构建”，同时指定时无法判断用户想要哪一个
+	// 通道，静默择一执行只会让人以为命令没按预期工作，因此声明互斥交给 cobra 拦下
+	c.Flags().Bool("alpha", false, l10n.T("Check for builds from the rolling alpha prerelease", nil))
+	c.MarkFlagsMutuallyExclusive("dev", "alpha")
+
 	// --yes 是本命令的局部 flag（ggt 没有全局的非交互总开关）：
 	// 非交互环境（CI、管道、stdin 接 /dev/null）下确认无法进行，必须靠它显式放行，
 	// 与 config reset --all 的处理方式保持一致
@@ -71,15 +80,25 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", l10n.T("Failed to read the --dev argument", nil), err)
 	}
+	checkAlpha, err := cmd.Flags().GetBool("alpha")
+	if err != nil {
+		return fmt.Errorf("%s: %w", l10n.T("Failed to read the --alpha argument", nil), err)
+	}
 	assumeYes, err := cmd.Flags().GetBool("yes")
 	if err != nil {
 		return fmt.Errorf("%s: %w", l10n.T("Failed to read the --yes argument", nil), err)
 	}
 
-	// 通道决定候选版本的取舍：正式版用户永远不会被投递开发版，开发版通道供希望提前验证的用户主动选择
+	// 通道决定候选版本的取舍：正式版用户永远不会被投递开发版，开发版与 alpha 通道供希望
+	// 提前验证的用户主动选择。两个通道已在 flag 层声明互斥，因此这里的分支先后不影响结果，
+	// 保留默认走 stable 的分支形态是为了让新增通道时改动只落在一处
 	channel := updater.ChannelStable
 	channelLabel := l10n.T("stable", nil)
-	if checkDev {
+	switch {
+	case checkAlpha:
+		channel = updater.ChannelAlpha
+		channelLabel = l10n.T("alpha", nil)
+	case checkDev:
 		channel = updater.ChannelDev
 		channelLabel = l10n.T("dev", nil)
 	}
@@ -120,14 +139,28 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%s: %w", l10n.T("Failed to check for updates", nil), err)
 	}
 	if info == nil {
+		// alpha 通道没有版本号，不能沿用“已是最新版本”，否则用户会以为存在一个叫“最新版本”的东西
+		if checkAlpha {
+			reporter.Success("%s", l10n.T("Already on the latest alpha build", nil))
+			return nil
+		}
 		reporter.Success("%s", l10n.T("Already on the latest version", nil))
 		return nil
 	}
 
 	reporter.Info("%s", l10n.T("Current version: {{.Version}} (build: {{.Build}})", map[string]any{"Version": info.CurrentVersion, "Build": info.CurrentBuildTime}))
-	if info.CurrentComparable {
+	switch {
+	case checkAlpha:
+		// 滚动预发布只能按提交号与构建时间描述候选构建。标记缺失或格式不符时升级器拿不到构建时间，
+		// 这里如实说明时间不可得，而不是留空或补一个看起来正常的日期
+		if info.LatestBuildTime == "" {
+			reporter.Info("%s", l10n.T("Latest alpha build: {{.Commit}} (build time unavailable)", map[string]any{"Commit": info.LatestVersion}))
+		} else {
+			reporter.Info("%s", l10n.T("Latest alpha build: {{.Commit}} (built at {{.Time}})", map[string]any{"Commit": info.LatestVersion, "Time": info.LatestBuildTime}))
+		}
+	case info.CurrentComparable:
 		reporter.Info("%s", l10n.T("Latest version: {{.Version}}", map[string]any{"Version": info.LatestVersion}))
-	} else {
+	default:
 		// 本地版本无法比较时不能宣称“最新”：这里给出的只是通道内的最高版本，
 		// 是否比本地构建新需要用户自行判断
 		reporter.Info("%s", l10n.T("Highest version in the {{.Channel}} channel: {{.Version}}", map[string]any{"Channel": channelLabel, "Version": info.LatestVersion}))
