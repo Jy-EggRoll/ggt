@@ -404,7 +404,7 @@ alpha 通道对应主分支的滚动预发布：主分支每次推送都会覆�
 
 ### version / config
 
-- `ggt version`：打印版本信息
+- `ggt version`：打印版本、构建时间与平台，可简写为 `ggt ver`
 - `ggt config`：查看与编辑配置，详见上文“配置”一节
 
 ## 子模块处理

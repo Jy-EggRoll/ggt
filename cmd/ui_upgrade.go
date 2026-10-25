@@ -73,7 +73,7 @@ func handleUpgradeCheck(check uiUpgradeChecker) http.HandlerFunc {
 
 		channel := updater.ChannelStable
 		result := uiUpgradeResult{
-			Current:  effectiveVersion(),
+			Current:  versionOptions().EffectiveVersion(),
 			Build:    BuildTime,
 			Channel:  l10n.T("stable", nil),
 			Platform: upgradecli.PlatformLabel(),
@@ -149,7 +149,7 @@ func uiUpgradeCheckerFromEnv() uiUpgradeChecker {
 		}
 		// 只调用 Check：它只查 Release 并比版本，不下载、不触碰可执行文件。
 		// Apply 在这条路径上刻意不提供调用点
-		return u.Check(effectiveVersion(), BuildTime, channel)
+		return u.Check(versionOptions().EffectiveVersion(), BuildTime, channel)
 	}
 }
 

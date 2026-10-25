@@ -31,7 +31,7 @@ func newUpgradeCmd() *cobra.Command {
 	c := upgradecli.NewCommand(upgradecli.Options{
 		Program:   "ggt",
 		Target:    ggtTarget,
-		Version:   effectiveVersion,
+		Version:   func() string { return versionOptions().EffectiveVersion() },
 		BuildTime: func() string { return BuildTime },
 		// 升级过程的界面来自 eggokit/ui，写入目标是命令的 stderr。
 		//

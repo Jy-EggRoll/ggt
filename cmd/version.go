@@ -1,54 +1,43 @@
-// version.go 实现 "ggt version" 命令，显示版本信息。
-// Version 和 BuildTime 由发布构建通过 ldflags -X 注入；
-// 本地开发构建保留默认值。
+// version.go 汇总 ggt 的版本取值，并装配 "ggt version" 命令。
+//
+// 命令本身（文案、别名、三行输出格式）已迁到 eggokit/ui，本文件只回答“版本号与构建时间从哪里取”。
+// Version 与 BuildTime 必须留在这个包：发布构建用 ldflags -X 注入
+// github.com/jy-eggroll/ggt/cmd.Version 与 cmd.BuildTime（见 Taskfile.yml 的 LDFLAGS 与
+// release.json），换包或改名都会让注入静默失效，二进制只会自报开发版本。
 package cmd
 
 import (
-	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/eggokit/ui"
 	"github.com/spf13/cobra"
 )
 
-// Version 由发布构建通过链接参数注入；本地开发构建保留“开发版本”。
+// Version 由发布构建通过链接参数注入；本地开发构建为空串，由共享实现显示为开发版本。
 // 格式：x.y.z（正式版）或 x.y.z.dev.n（开发版）
 var Version string
 
-// BuildTime 由发布构建通过链接参数注入；本地开发构建保留"unknown"。
+// BuildTime 由发布构建通过链接参数注入；本地开发构建为空串，由共享实现显示为 unknown。
 // 格式：YYYY-MM-DDTHH:MM:SSZ（UTC 时间）
 var BuildTime string
 
-// effectiveVersion 返回本二进制对外使用的版本号：发布构建是被 ldflags 注入的 x.y.z
-// （或 x.y.z.dev.n），本地开发构建没有注入值，统一用“development build”这一可读占位。
+// versionOptions 返回 ggt 的版本取值，version 命令、upgrade 命令与看板的版本检查共用。
 //
-// 必须让展示与升级共用同一个映射：version 命令要显示它，upgrade 要拿它去与发布版本比对。
-// 若只在 version 命令里做映射，升级检查就会打印出“当前版本  不是受支持的版本号”——
-// 版本号位置为空的句子，用户看不出到底缺了什么（实际遇到过）。
-// 占位串不是合法版本号，升级器会据此跳过版本比较，退化为“列出目标通道中的最高版本”
-func effectiveVersion() string {
-	if Version == "" {
-		return l10n.T("development build", nil)
+// 每次调用现构造，不用包级变量：字段只是对注入变量的闭包，构造没有开销，也就不必再定
+// “什么时候初始化它”这条规则。
+//
+// 空版本回退为开发版本这一步交给共享实现的 EffectiveVersion，这里不要再写一份：
+// 展示与升级比对必须共用同一个映射，若只在某处补占位，升级检查会打印出“当前版本  不是受支持的版本号”
+// 这种版本位置为空的句子（实际遇到过）。占位串不是合法版本号，升级器据此跳过版本比较。
+func versionOptions() ui.VersionOptions {
+	return ui.VersionOptions{
+		Program:   "ggt",
+		Version:   func() string { return Version },
+		BuildTime: func() string { return BuildTime },
 	}
-	return Version
 }
 
-// versionCmd 实现 "ggt version"。
+// newVersionCmd 实现 "ggt version"，别名为 ver，由共享包提供。
 func newVersionCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "version",
-		Short: l10n.T("Show version information", nil),
-		Long: l10n.T(`Show the build version information of ggt.
-
-Examples:
-  ggt version         Show version information`, nil),
-		Run: func(cmd *cobra.Command, args []string) {
-			// Header 的实参是程序名，不属于文案
-			Header("ggt")
-			InfoMsg(l10n.T("Version: {{.Version}}", map[string]any{"Version": effectiveVersion()}))
-			if BuildTime != "" && BuildTime != "unknown" {
-				InfoMsg(l10n.T("Build time: {{.Time}}", map[string]any{"Time": BuildTime}))
-			}
-		},
-	}
-	return c
+	return ui.NewVersionCommand(versionOptions())
 }
 
 func init() {

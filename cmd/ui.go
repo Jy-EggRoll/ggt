@@ -1425,7 +1425,7 @@ func renderIndexHTML(indexHTML []byte, lang string) []byte {
 	out = bytes.ReplaceAll(out, []byte("__GGT_SETTINGS_JSON__"), uiSettingsJSON(config.GetDefaultConfigPath()))
 	// 版本号是进程级常量，随首页一次带过来：为它开一个接口等于让页面只为一行字多发一次请求。
 	// 与语言那两个占位符同理，每次请求现渲染——将来若把版本做成可切换的，页面刷新即可跟上
-	out = bytes.ReplaceAll(out, []byte("__GGT_VERSION__"), []byte(effectiveVersion()))
+	out = bytes.ReplaceAll(out, []byte("__GGT_VERSION__"), []byte(versionOptions().EffectiveVersion()))
 	out = bytes.ReplaceAll(out, []byte("__GGT_THEME_CSS__"), []byte(resolveTheme()))
 	return bytes.ReplaceAll(out, []byte("__GGT_FONT_CSS__"), []byte(fontBlock()))
 }
