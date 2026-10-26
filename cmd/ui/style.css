@@ -976,17 +976,89 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* 底栏左侧的一行元信息：数据多旧、这次采集花了多久、以及出错原因。
-   做成底栏里的一项而不是浮在右下角，理由见 #tools 的说明 */
-#status {
-  /* margin-right: auto 把它留在左端、把后面的控件推到右端 */
+/* 底栏左侧信息区：“更新于…”与仓库过滤。整组靠左，右侧的结果行与按钮被推到右端。
+   自动边距只写在这里一处——flex 容器里出现两个 margin-right: auto 时，剩余空间会被平分，
+   表现就是“更新于”与搜索框之间凭空多出一条大空隙。这条曾经发生过：当时 #status 与
+   #filter 各写了一个自动边距，桌面宽屏下左侧被撑开约半个屏幕 */
+#left {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
   margin: 0 auto 0 0;
+}
+
+/* 底栏左侧的一行元信息：数据多旧、这次采集花了多久、以及出错原因。
+   做成底栏里的一项而不是浮在右下角，理由见 #tools 的说明。
+   它自己不再写 margin-right: auto（原先有）：自动边距由 #left 那一处承担，
+   两处都写会让剩余空间被平分，把“更新于”与搜索框撑开一条大空隙 */
+#status {
   font-size: var(--fs-xs);
   color: var(--text-dim);
   pointer-events: none;
   transition: color var(--dur-fast) ease;
+  /* 出错时文案可能很长（一整段 git 原话），限宽加省略号，别把搜索框推出屏外 */
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 #status.error { color: var(--status-error, var(--git-conflicting)); }
+
+/* ——— 看板底栏的仓库过滤 ———
+ * 输入框、正则开关、命中计数、清除按钮、错误提示五件，结构见 index.html 的 #filter。
+ *
+ * 限宽是这里最关键的一条：底栏是单行 flex、不换行（见 #tools），输入框若按内容无限增长，
+ * 右侧的“获取全部”、设置、铃铛会被逐个挤出屏幕——而它们本身没有 overflow 处理，
+ * 挤出去就是看不见也点不到。因此输入框给一个上限，并允许它被压缩到比上限更小
+ * （min-width: 0，否则 flex 项目有默认的最小内容宽度，压不下去）。
+ * 计数与提示同样限宽加省略号：它们的内容长度随仓库数与正则错误信息变化，不可预测 */
+#filter {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  /* 这里不写 margin-right: auto：自动边距由 #left 那一个承担，见 #left 的注释 */
+}
+#filter-input {
+  width: min(22em, 34vw);
+  min-width: 0;
+  height: var(--control-h);
+}
+/* 正则开关：一个包着复选框的标签，宽度随内容（“正则”两个字），不参与压缩。
+   与 .setting-bool 同一套做法，但没有 cursor 那一行——这里不是为了整行可点，
+   而是让用户看清这个框管着什么 */
+#filter-regex {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+#filter-regex input { width: auto; min-height: 0; margin: 0; }
+#filter-count {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+#filter-error {
+  flex: none;
+  max-width: 20em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--status-error, var(--git-conflicting));
+}
+/* 没有错误时这个元素是空的，直接不占位——与 #op:empty 同一路数 */
+#filter-error:empty { display: none; }
+/* 清除按钮：输入为空时置灰。这里不用 hidden：置灰能让用户看见它存在，
+   只是此刻按下去没有效果；藏起来的话，用户会以为页面上从来没有这个功能 */
+#filter-clear { flex: none; }
+#filter-clear:disabled { opacity: 0.45; cursor: default; }
 
 /* ——— 看板底栏 ———
  * 整宽固定在底部，左侧“更新于…”，右侧是看板层面的动作（拉取全部、主题选择）与它们的结果。
@@ -1284,6 +1356,17 @@ body {
   width: 100%;
   max-width: 32em;
   min-height: var(--control-h);
+}
+/* 文本框的外观。三处使用（设置面板、卡片里的提交信息框、底栏的筛选框）本来各写了一份
+   完全相同的六行；第三处出现时把它们收在这里，以后改输入框外观只需改一处。
+   为什么不连 width/max-width/min-height 一起提：那三条各随容器而定（设置面板要铺满一行、
+   提交框要随 flex 伸缩、筛选框要限宽把位让给右侧按钮），提走反而要在每个使用点覆盖回来 */
+/* 文本框的外观（三处共用，见 .field-input 的注释）。这里把设置面板的控件也列进来，
+   而不是给每个生成的控件加一个类：控件由 app.js 按服务端元数据创建（见 renderSettings），
+   加类意味着每加一种控件都要回来补一处，漏了就不生效——而列在选择器里则只此一处 */
+.field-input,
+.setting-control input,
+.setting-control textarea {
   font: inherit;
   color: var(--input-fg, var(--text));
   background: var(--input-bg, var(--bg));
@@ -1291,6 +1374,9 @@ body {
   border-radius: var(--radius-sm);
   padding: 0 var(--sp-2);
 }
+/* 占位符要能读出来，它同样是“前景压在底色上”，因此也走对比度回退那一对 */
+.field-input::placeholder { color: var(--input-placeholder, var(--text-dim)); }
+.field-input:focus { outline: none; border-color: var(--focus-ring); }
 .setting-control textarea { padding: var(--sp-2); resize: vertical; }
 .setting-control select { cursor: pointer; }
 /* 数字框不需要跟文本输入一样宽：它只放一个整数，铺满整行看起来像一大块空白 */
@@ -1900,20 +1986,13 @@ pre.diff .meta { color: var(--text-dim); }
   padding: var(--sp-3) var(--sp-4);
   border-bottom: 1px solid var(--card-border);
 }
+/* 提交信息框：外观走 .field-input（底栏筛选框、设置面板同一份），这里只留它自己的几何——
+   它在 flex 行里要伸缩，因此 flex 与 min-width 不能提进公共类 */
 #graph-msg {
   flex: 1 1 auto;
   min-width: 0;
   height: var(--control-h);
-  font: inherit;
-  color: var(--input-fg, var(--text));
-  background: var(--input-bg, var(--bg));
-  border: 1px solid var(--input-border, var(--card-border));
-  border-radius: var(--radius-sm);
-  padding: 0 var(--sp-2);
 }
-/* 占位符要能读出来，它同样是“前景压在底色上”，因此也走对比度回退那一对 */
-#graph-msg::placeholder { color: var(--input-placeholder, var(--text-dim)); }
-#graph-msg:focus { outline: none; border-color: var(--focus-ring); }
 
 /* 取数失败或仓库操作的结果（git 的原话），角色与 #diff-op 相同 */
 #graph-op {
