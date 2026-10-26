@@ -176,6 +176,13 @@ const MSG = {
     applyRestart: 'Needs a ggt restart',
     settingsSavedReload: 'Saved · reloading the page to apply {{keys}}',
     settingsSavedRestart: 'Saved · restart ggt to apply {{keys}}',
+    filterPlaceholder: 'Filter repositories…',
+    filterRegex: 'Regex',
+    filterCount: '{{shown}} of {{total}} repositories',
+    filterCleared: 'Clear the filter',
+    filterError: 'Invalid regex — keeping the previous result',
+    filterTooLong: 'Regex is limited to {{max}} characters',
+    filterEmpty: 'No repository matches "{{query}}"',
   },
   'zh-CN': {
     noCommits: '尚无提交',
@@ -309,6 +316,13 @@ const MSG = {
     applyRestart: '需重启 ggt',
     settingsSavedReload: '已保存 · 页面即将刷新以应用 {{keys}}',
     settingsSavedRestart: '已保存 · 需重启 ggt 后生效 {{keys}}',
+    filterPlaceholder: '按仓库名或路径筛选…',
+    filterRegex: '正则',
+    filterCount: '{{shown}} / {{total}} 个仓库',
+    filterCleared: '清除筛选',
+    filterError: '正则无效 —— 保持上一次的结果',
+    filterTooLong: '正则长度上限为 {{max}} 个字符',
+    filterEmpty: '没有仓库匹配“{{query}}”',
   },
 };
 
@@ -359,6 +373,14 @@ const board = document.getElementById('board');
 const contLayer = document.getElementById('cont-layer');
 const emptyEl = document.getElementById('empty');
 const statusEl = document.getElementById('status');
+// 仓库过滤那四个元素（结构见 index.html 的 #filter）。过滤只读不改仓库，
+// 因此不套 runWrite 那层写操作外壳
+const filterInputEl = document.getElementById('filter-input');
+const filterRegexBoxEl = document.getElementById('filter-regex-box');
+const filterRegexLabelEl = document.getElementById('filter-regex-label');
+const filterCountEl = document.getElementById('filter-count');
+const filterClearEl = document.getElementById('filter-clear');
+const filterErrorEl = document.getElementById('filter-error');
 const diffEl = document.getElementById('diff');
 const diffBackEl = document.getElementById('diff-back');
 const diffTitleEl = document.getElementById('diff-title');
@@ -2877,6 +2899,12 @@ document.addEventListener('keydown', (e) => {
     commitMsgEl.blur();
     return;
   }
+  // 焦点在过滤输入框里时，Esc 先退出输入而不是走后面的“一层一层退”。理由与上面那条相同：
+  // 用户想退出输入框是高频动作，而“顺带关掉 diff”不是。再按一次才继续退浮层
+  if (document.activeElement === filterInputEl) {
+    filterInputEl.blur();
+    return;
+  }
   if (diffOpen) {
     closeDiff();
     return;
@@ -2894,6 +2922,234 @@ document.addEventListener('keydown', (e) => {
 // boardShown 记录看板是否已经画过第一份数据：只用来决定要不要做那一次首屏淡入（见 render）
 let boardShown = false;
 
+// ——— 仓库过滤 ———
+//
+// 用户诉求：仓库太多看不过来，要能按名字或路径筛掉一批，只留想看的。
+//
+// 为什么在 render 之前过滤 repos 数组，而不是在 buildSpecs 里跳过某些条目：
+// buildSpecs 之后每一步都假定“数组里相邻条目属于同一张卡片”。在那里动手，一张卡片会被切成
+// 互不相连的几段——首末行标记（top/foot）按相邻关系算，分组行与它的文件行之间也会插进
+// 别的仓库的行，而页面上没有任何表达手段把这两段重新联系起来。在数组层面整张卡片一起进出，
+// 后面三步一行都不用改，它们本来就能处理“少了几张卡片”的输入。
+//
+// 卡片身份用 cardOf（工作树归宿主）。这里不自己另算一套归属，是因为归属规则只有那一处实现：
+// 子模块在页面上本就是独立卡片（uiRepo 只有 WorktreeOf、没有子模块宿主字段，见 cmd/ui.go），
+// 过滤若把子模块并进宿主，看板上会凭空出现一种“筛了却还连着”的关系，与其它视图对不上。
+//
+// 正则与子串分开两条路，而不是一律当正则：用户在搜索框里输的是名字片段，而名字里的 `.`、`-`、
+// `(` 在正则里全是元字符。一律按正则解释，会出现“明明输对了却搜不到”，且用户看不出原因。
+// 因此默认子串、由用户显式打开正则开关——开关本身就是“我知道我在写正则”的那一下确认。
+
+// FILTER_KEY 是过滤条件在 localStorage 里的键。与 SETTINGS_NOTE_KEY 同一套命名风格。
+// 存 { q, regex } 两个字段而不是把输入框的值原样存：正则开关必须跟着输入一起记，
+// 否则下次打开会出现“词还在、模式却变了”的错配
+const FILTER_KEY = 'ggt.boardFilter';
+
+// FILTER_MAX_LEN 是过滤输入的长度上限。
+//
+// 为什么需要它：正则的匹配耗时取决于模式本身，而不取决于待匹配字符串的长度。带嵌套量词的
+// 模式（例如 (a+)+$）在部分匹配时会让引擎进入指数级回溯，本机实测 (.*a){20}$ 对 29 个字符
+// 就要 36 秒。而搜索是逐字符触发的，用户每敲一个键就跑一遍 test——主线程被占住时
+// 5 秒心跳一并停摆，页面表现为整个卡死，且没有任何提示说明原因在哪里。
+// 长度上限挡不住所有这类模式，但能把可构造的模式空间压到很小；代价只是特别长的正则写不进去。
+// 更彻底的解法（给匹配加时间预算，或把匹配搬进 Worker）要改动整个取数链路，不在这次范围内
+const FILTER_MAX_LEN = 200;
+
+// filterState 是当前生效的过滤条件。
+// valid 记录上一次解析是否成功：写错时保留上一次有效的结果，看板突然清空比不筛更糟——
+// 用户会以为数据没了，而实际上只是他多打了一个 `[`
+// error 是当前要显示的那句错误文案，空字符串表示没有错误。单独一个字段而不是在
+// updateFilterUI 里现拼：两种失败原因（语法错、超长）要说不同的话，各写一处会漏
+const filterState = { q: '', regex: false, valid: true, error: '' };
+
+// readFilterState 从 localStorage 恢复上次的条件。
+// 包在 try 里：隐私模式、配额满、或者被浏览器策略禁用时 localStorage 的读写都会抛异常，
+// 而此时页面还在启动途中，让它在这里中断等于整个看板打不开。取不到就用默认值（显示全部）
+function readFilterState() {
+  try {
+    const raw = localStorage.getItem(FILTER_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (saved && typeof saved.q === 'string') {
+      filterState.q = saved.q;
+      filterState.regex = saved.regex === true;
+    }
+  } catch {
+    // 读不到就按默认值走，不留提示：这是用户自己的浏览器环境问题，不是这次操作失败
+  }
+}
+
+// writeFilterState 把当前条件写回 localStorage。失败同样静默——
+// 下次打开回到“显示全部”是可接受的降级，比每次输入都弹一次错误好
+function writeFilterState() {
+  try {
+    localStorage.setItem(FILTER_KEY, JSON.stringify({ q: filterState.q, regex: filterState.regex }));
+  } catch {
+    // 同上
+  }
+}
+
+// filterMatcher 按当前条件造一个“这个仓库是否命中”的判定函数。
+// 返回 null 表示当前输入不是有效正则——调用方据此保留上一次的结果并显示错误。
+//
+// 匹配 name 与 path 两个字段、任一命中即算：用户既可能记得仓库名，也可能只记得路径片段。
+// 子模块的 name 是相对路径（例如 vendor/lib）、工作树的 name 是分支名，只匹配 name 会让
+// 这类条目只能靠 path 命中，两个字段都查才与用户的记忆方式对得上
+function filterMatcher() {
+  const q = filterState.q.trim();
+  if (!q) return () => true;
+  if (filterState.regex) {
+    // 超长一律按无效处理：见 FILTER_MAX_LEN 的说明——灾难性回溯会让整个页面卡死，
+    // 而它没有任何可观测的提示，用户只会以为浏览器坏了
+    if (q.length > FILTER_MAX_LEN) {
+      filterState.valid = false;
+      filterState.error = t('filterTooLong', { max: FILTER_MAX_LEN });
+      return null;
+    }
+    let re;
+    try {
+      // 加 i 标志：与子串那一路保持一致的“不区分大小写”，否则同一个名字在两种模式下
+      // 一会儿能搜到一会儿不能，用户会以为是别的问题
+      re = new RegExp(q, 'i');
+    } catch (err) {
+      filterState.valid = false;
+      filterState.error = t('filterError', { err: '' });
+      return null;
+    }
+    filterState.error = '';
+    return (repo) => re.test(String(repo.name || '')) || re.test(String(repo.path || ''));
+  }
+  const needle = q.toLowerCase();
+  return (repo) =>
+    String(repo.name || '').toLowerCase().indexOf(needle) !== -1 ||
+    String(repo.path || '').toLowerCase().indexOf(needle) !== -1;
+}
+
+// applyFilter 按当前条件筛一遍仓库数组，返回留下哪些。
+//
+// 按 cardOf 分组而不是逐条判断：一张卡片的所有条目必须同进同出。逐条判断时，
+// 宿主不命中、它的工作树命中的话，看板上会只剩工作树那一段——首行标记会让它看起来
+// 像一张新卡片，而它本应属于已经消失的宿主
+function applyFilter(repos) {
+  const matcher = filterMatcher();
+  if (matcher === null) return null; // 正则无效：调用方保留上一次的结果
+  if (!filterState.q.trim()) return repos;
+  const keep = new Set();
+  for (const repo of repos) {
+    if (matcher(repo)) keep.add(repo.worktreeOf || repo.path);
+  }
+  return repos.filter((repo) => keep.has(repo.worktreeOf || repo.path));
+}
+
+// updateFilterUI 刷新底栏那三个附属元素：命中计数、错误提示、清除按钮的可用状态。
+// 与 applyFilter 分开是因为调用时机不同——applyFilter 只在数据或条件变化时跑，
+// 而这里每次输入都要跑（错误提示要跟着键盘走）
+function updateFilterUI(total, shown) {
+  const q = filterState.q.trim();
+  filterCountEl.textContent = q ? t('filterCount', { shown, total }) : '';
+  if (!filterState.valid) {
+    filterErrorEl.textContent = filterState.error;
+    filterErrorEl.classList.add('error');
+  } else {
+    filterErrorEl.textContent = '';
+    filterErrorEl.classList.remove('error');
+  }
+  // 输入为空时禁用清除按钮：它按下去没有任何效果，一个灰着的按钮比一个空响的按钮诚实
+  filterClearEl.disabled = !q;
+  filterClearEl.title = q ? t('filterCleared') : '';
+}
+
+// applyFilterAndRender 是“条件变了，重画一次”的唯一入口。
+//
+// applyFilterAndRender 是“条件变了，重画一次”的唯一入口。
+//
+// 为什么必须自己主动调 render：看板的心跳在 apply 之前先比对响应指纹（见下面 heartbeat），
+// 服务端数据没变时这一轮会整个跳过。而过滤只改本地条件、不改服务端数据，
+// 因此改条件不会让心跳重画——不在这里主动调一次，输入框那边敲得飞快、看板一动不动。
+// lastRepos 是心跳最近一次拿到的全量数据，过滤始终在全量数据上做，不会越筛越少。
+//
+// 心跳、主题切换、图标就绪三条路径也走这里（它们同样是“拿已有数据重画”），
+// 因此过滤条件只在这一个地方被应用。曾把过滤直接写在心跳的 apply 里，结果那三条路径
+// 不过滤，症状是“设了词之后切一下主题，筛掉的东西又回来了”
+function applyFilterAndRender() {
+  if (!lastRepos.length) {
+    updateFilterUI(0, 0);
+    return;
+  }
+  const filtered = applyFilter(lastRepos);
+  if (filtered === null) {
+    // 正则无效：保留上一次画出来的内容，只更新提示。这里不调 render——
+    // 此时 lastSpecs 仍是上一次有效结果的布局，重画反而会把内容换成别的
+    updateFilterUI(totalCards(lastRepos), cardCount(lastSpecs));
+    return;
+  }
+  // 走到这里说明这次解析成功了，把上一次的无效标记清掉：错误提示要随输入恢复，
+  // 不能因为曾经写错就一直挂着
+  filterState.valid = true;
+  filterState.error = '';
+  render(filtered);
+  updateFilterUI(totalCards(lastRepos), cardCount(lastSpecs));
+}
+
+// cardCount 数一遍行序列里有几张卡片（按卡片身份去重）。
+//
+// 显示的是卡片数而不是仓库条目数：看板上的一张卡片才是用户眼里的“一个仓库”——
+// 工作树归进宿主的卡片（见 cardOf），若按条目数算，带一棵工作树的仓库会被算成两个，
+// 全部命中时也会显示“筛出 1 / 共 2”，用户会以为漏掉了一个
+function cardCount(specs) {
+  const seen = new Set();
+  for (const s of specs) seen.add(cardOf(s));
+  return seen.size;
+}
+
+// totalCards 是全量数据一共几张卡片，与 cardCount 同一口径。
+// 单列一个函数而不是临时算：计数的两端必须是同一个口径，写在一处才不会一边改了另一边忘
+function totalCards(repos) {
+  return cardCount(buildSpecs(repos));
+}
+
+// 初始化：先恢复上次的条件填进控件，再接上事件。
+// 顺序很重要——填值必须在接事件之前，否则恢复过程会触发一次多余的渲染
+readFilterState();
+filterInputEl.value = filterState.q;
+filterRegexBoxEl.checked = filterState.regex;
+filterRegexLabelEl.textContent = t('filterRegex');
+filterInputEl.placeholder = t('filterPlaceholder');
+
+// 输入即筛：每敲一个键就重画一次。37 个仓库量级下 buildSpecs 加 layout 只有十几毫秒，
+// 不需要防抖；真到了卡的量级再谈
+filterInputEl.addEventListener('input', () => {
+  filterState.q = filterInputEl.value;
+  writeFilterState();
+  applyFilterAndRender();
+});
+
+filterRegexBoxEl.addEventListener('change', () => {
+  filterState.regex = filterRegexBoxEl.checked;
+  writeFilterState();
+  applyFilterAndRender();
+});
+
+filterClearEl.addEventListener('click', () => {
+  // 只清空搜索词，不动正则开关：开关代表“我用不用正则”这个习惯，与当前搜什么无关。
+  // 连它一起清，下次想写正则还要再勾一次
+  filterInputEl.value = '';
+  filterState.q = '';
+  writeFilterState();
+  applyFilterAndRender();
+  filterInputEl.focus();
+});
+
+// renderVisible 拿全量数据重画一次，并按当前过滤条件筛过再画。
+//
+// 凡是“不重新取数、只是想把已有数据再画一遍”的路径都走这里：心跳拿到新数据、
+// 主题切换要换图标、图标资源晚一步就位。它们原先都直接 render(lastRepos)，
+// 于是设了过滤词之后切一次主题，看板会突然显示全部仓库——用户刚筛掉的东西又回来了，
+// 而且看不出是什么触发的。收敛成一个入口之后，过滤条件只在这一个地方被应用
+function renderVisible() {
+  applyFilterAndRender();
+}
+
 // render 把一份仓库数据画到页面上。与取数分开，是为了图标主题晚一步就绪时
 // 可以拿同一份数据重画一次，而不必再打一次接口
 function render(repos) {
@@ -2905,7 +3161,9 @@ function render(repos) {
   board.setAttribute('aria-busy', 'false');
 
   if (repos.length === 0) {
-    emptyEl.textContent = t('noRepos');
+    // 空状态有两种来由，文案要分开：没配置仓库是“去添加”，过滤没命中是“改关键词”。
+    // 合成一句会让用户照着错误的建议行动（去 add 一个明明已经配了的仓库）
+    emptyEl.textContent = filterState.q.trim() ? t('filterEmpty', { query: filterState.q.trim() }) : t('noRepos');
     // 用类而不是 hidden 属性切换（样式表里配了淡入淡出）：空状态是一整块文字，硬切很突兀
     emptyEl.classList.add('show');
   } else {
@@ -2980,7 +3238,10 @@ registerSource({
   apply: (payload) => {
     const repos = Array.isArray(payload.repos) ? payload.repos : [];
     lastRepos = repos;
-    render(repos);
+    // 过滤走 renderVisible：那里是“拿全量数据重画”的唯一入口，心跳只是又一个调用方。
+    // 在这里单独写一遍过滤，就会出现第三条、第四条不过滤的路径（本次已经因此漏过两处：
+    // 主题切换与图标就绪），而它们的症状都是“筛掉的东西又回来了”
+    renderVisible();
     statusEl.classList.remove('error');
     // 时间走 clockTime：24 小时制，且不随系统语言变成 AM/PM。
     // 耗时不再显示——它本是给排障用的，对看板用户没有信息量，要查的时候看日志
@@ -3064,7 +3325,7 @@ window.addEventListener('resize', () => {
 // 缓存的清理由 fileicon 包自己接在同一个 media query 上，本文件不碰它的内部状态
 const prefersLight = window.matchMedia('(prefers-color-scheme: light)');
 prefersLight.addEventListener('change', () => {
-  if (lastRepos.length > 0) render(lastRepos);
+  renderVisible();
 });
 
 // 页面切到后台时停掉心跳：那时没有眼睛留在页面上，而每 5 秒要起 37 个 git 进程。
@@ -3083,7 +3344,7 @@ document.title = 'ggt';
 // 图标资源与首次取数并行：数据先到就先画（没有类型图标），图标到位后再用同一份数据重画一次。
 // 串行等待会让首屏白屏时间平白多出一次本地 fetch。ready 永不 reject，取不到就是空串图标
 fileicon.ready.then(() => {
-  if (lastRepos.length > 0) render(lastRepos);
+  renderVisible();
 });
 // startPolling 内部会先跑一轮心跳，不需要在它前面再取一次数
 startPolling();
