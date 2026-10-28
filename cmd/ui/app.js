@@ -2896,9 +2896,15 @@ document.addEventListener('keydown', (e) => {
     commitMsgEl.blur();
     return;
   }
-  // 焦点在过滤输入框里时，Esc 先退出输入而不是走后面的“一层一层退”。理由与上面那条相同：
-  // 用户想退出输入框是高频动作，而“顺带关掉 diff”不是。再按一次才继续退浮层
+  // 焦点在过滤输入框里时，Esc 先清空搜索词，再按一次才退出输入，然后才继续退浮层。
+  // 分两步而不是一步清空并退出：清空本身就会让看板回到全部仓库，用户往往还想接着输
+  // 下一个词；此时把焦点一起收走，等于逼人再点回输入框。输入框本来就空则没有可清的，
+  // 直接走后面的 blur，不占用一次按键
   if (document.activeElement === filterInputEl) {
+    if (filterInputEl.value !== '') {
+      clearFilterQuery();
+      return;
+    }
     filterInputEl.blur();
     return;
   }
@@ -3123,6 +3129,16 @@ filterRegexBoxEl.addEventListener('change', () => {
   writeFilterState();
   applyFilterAndRender();
 });
+
+// clearFilterQuery 只清空搜索词，不动正则开关：开关代表“我用不用正则”这个习惯，
+// 与当前搜什么无关。连它一起清，下次想写正则还要再勾一次。
+// 单列一个函数而不是写在事件里：Esc 链与（原先的）按钮两条路径共用同一段清空逻辑
+function clearFilterQuery() {
+  filterInputEl.value = '';
+  filterState.q = '';
+  writeFilterState();
+  applyFilterAndRender();
+}
 
 // renderVisible 拿全量数据重画一次，并按当前过滤条件筛过再画。
 //
