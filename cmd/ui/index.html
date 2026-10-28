@@ -91,7 +91,7 @@
       右半边是页面级动作。过滤作用于整块看板，归左半边；它要一直可见（用户随时可能改），
       因此不做成快捷键唤起的浮层。
 
-      四个元素分开而不是合成一个组件：输入框、正则开关、清除按钮各是一种控件，
+      三个元素分开而不是合成一个组件：输入框、正则开关、命中计数各是一种控件，
       合成一个容器会让“页面上有哪几个可聚焦元素”不再一眼看全（这是本项目刻意维持的性质，
       见 <head> 上方关于静态结构的注释）。
 
@@ -107,13 +107,6 @@
     <!-- 命中计数。用 role=status 而不是写进 title：过滤后屏上少了东西，
          读屏用户需要一个能被告知的来源，而 title 不会自动朗读 -->
     <span id="filter-count" role="status" aria-live="polite"></span>
-    <!-- 清除按钮。图标用内联 SVG（与设置按钮、铃铛同一套做法）：要跟着主题的前景色走，
-         emoji 是彩色的、上不了色，字形还会随系统字体变形 -->
-    <button id="filter-clear" class="btn btn--secondary" type="button">
-      <svg class="filter-clear-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
-        <path fill="currentColor" d="M3.4 2.5h3.2v1.4H3.4zM9.4 2.5h3.2v1.4H9.4zM3.4 5.3h2.5v1.4H3.4zM7.3 5.3h5.3v1.4H7.3zM3.4 8.1h4.6v1.4H3.4zM9.4 8.1h3.2v1.4H9.4zM3.4 10.9h1.2v1.4H3.4zM6.1 10.9h6.5v1.4H6.1z"/>
-      </svg>
-    </button>
     <!-- 正则写错时的说明。单独一个元素而不是写进 #filter-count：计数说的是“筛出几个”，
          两者同时出现时写在一处会互相覆盖，而用户需要同时知道“结果还是上一次的”和“错在哪” -->
     <span id="filter-error" role="alert"></span>

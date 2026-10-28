@@ -179,7 +179,6 @@ const MSG = {
     filterPlaceholder: 'Filter repositories…',
     filterRegex: 'Regex',
     filterCount: '{{shown}} of {{total}} repositories',
-    filterCleared: 'Clear the filter',
     filterError: 'Invalid regex — keeping the previous result',
     filterTooLong: 'Regex is limited to {{max}} characters',
     filterEmpty: 'No repository matches "{{query}}"',
@@ -319,7 +318,6 @@ const MSG = {
     filterPlaceholder: '按仓库名或路径筛选…',
     filterRegex: '正则',
     filterCount: '{{shown}} / {{total}} 个仓库',
-    filterCleared: '清除筛选',
     filterError: '正则无效 —— 保持上一次的结果',
     filterTooLong: '正则长度上限为 {{max}} 个字符',
     filterEmpty: '没有仓库匹配“{{query}}”',
@@ -373,13 +371,12 @@ const board = document.getElementById('board');
 const contLayer = document.getElementById('cont-layer');
 const emptyEl = document.getElementById('empty');
 const statusEl = document.getElementById('status');
-// 仓库过滤那四个元素（结构见 index.html 的 #filter）。过滤只读不改仓库，
+// 仓库过滤那几个元素（结构见 index.html 的 #filter）。过滤只读不改仓库，
 // 因此不套 runWrite 那层写操作外壳
 const filterInputEl = document.getElementById('filter-input');
 const filterRegexBoxEl = document.getElementById('filter-regex-box');
 const filterRegexLabelEl = document.getElementById('filter-regex-label');
 const filterCountEl = document.getElementById('filter-count');
-const filterClearEl = document.getElementById('filter-clear');
 const filterErrorEl = document.getElementById('filter-error');
 const diffEl = document.getElementById('diff');
 const diffBackEl = document.getElementById('diff-back');
@@ -3041,7 +3038,7 @@ function applyFilter(repos) {
   return repos.filter((repo) => keep.has(repo.worktreeOf || repo.path));
 }
 
-// updateFilterUI 刷新底栏那三个附属元素：命中计数、错误提示、清除按钮的可用状态。
+// updateFilterUI 刷新底栏那两个附属元素：命中计数、错误提示。
 // 与 applyFilter 分开是因为调用时机不同——applyFilter 只在数据或条件变化时跑，
 // 而这里每次输入都要跑（错误提示要跟着键盘走）
 function updateFilterUI(total, shown) {
@@ -3054,9 +3051,6 @@ function updateFilterUI(total, shown) {
     filterErrorEl.textContent = '';
     filterErrorEl.classList.remove('error');
   }
-  // 输入为空时禁用清除按钮：它按下去没有任何效果，一个灰着的按钮比一个空响的按钮诚实
-  filterClearEl.disabled = !q;
-  filterClearEl.title = q ? t('filterCleared') : '';
 }
 
 // applyFilterAndRender 是“条件变了，重画一次”的唯一入口。
@@ -3128,16 +3122,6 @@ filterRegexBoxEl.addEventListener('change', () => {
   filterState.regex = filterRegexBoxEl.checked;
   writeFilterState();
   applyFilterAndRender();
-});
-
-filterClearEl.addEventListener('click', () => {
-  // 只清空搜索词，不动正则开关：开关代表“我用不用正则”这个习惯，与当前搜什么无关。
-  // 连它一起清，下次想写正则还要再勾一次
-  filterInputEl.value = '';
-  filterState.q = '';
-  writeFilterState();
-  applyFilterAndRender();
-  filterInputEl.focus();
 });
 
 // renderVisible 拿全量数据重画一次，并按当前过滤条件筛过再画。

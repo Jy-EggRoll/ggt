@@ -1006,7 +1006,7 @@ body {
 #status.error { color: var(--status-error, var(--git-conflicting)); }
 
 /* ——— 看板底栏的仓库过滤 ———
- * 输入框、正则开关、命中计数、清除按钮、错误提示五件，结构见 index.html 的 #filter。
+ * 输入框、正则开关、命中计数、错误提示四件，结构见 index.html 的 #filter。
  *
  * 限宽是这里最关键的一条：底栏是单行 flex、不换行（见 #tools），输入框若按内容无限增长，
  * 右侧的“获取全部”、设置、铃铛会被逐个挤出屏幕——而它们本身没有 overflow 处理，
@@ -1055,10 +1055,6 @@ body {
 }
 /* 没有错误时这个元素是空的，直接不占位——与 #op:empty 同一路数 */
 #filter-error:empty { display: none; }
-/* 清除按钮：输入为空时置灰。这里不用 hidden：置灰能让用户看见它存在，
-   只是此刻按下去没有效果；藏起来的话，用户会以为页面上从来没有这个功能 */
-#filter-clear { flex: none; }
-#filter-clear:disabled { opacity: 0.45; cursor: default; }
 
 /* ——— 看板底栏 ———
  * 整宽固定在底部，左侧“更新于…”，右侧是看板层面的动作（拉取全部、主题选择）与它们的结果。
