@@ -15,7 +15,7 @@ import (
 // 所有仓库的 output 会先顺序打印，末尾按结果类别汇总数量，并分别列出已拉取成功的
 // 仓库与需要手动处理的仓库。
 type syncResult struct {
-	name       string      // 仓库展示名（已含 [子] 前缀）
+	name       string      // 仓库名原值（子模块形如 sub/a；[子] 前缀由 RepoLabel 在明细里临时拼，清单不含）
 	path       string      // 仓库绝对路径（用于清单展示）
 	output     string      // 完整的输出文本（保持原有打印行为）
 	outcome    syncOutcome // 最终状态，末尾的汇总按它计数
