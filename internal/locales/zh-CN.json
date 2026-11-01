@@ -152,7 +152,7 @@
   "Repository added: {{.Path}}": "已添加仓库: {{.Path}}",
   "Repository discovery": "仓库发现",
   "Repository removed: {{.Path}}": "已移除仓库: {{.Path}}",
-  "Repository {{.Path}}: command failed": "仓库 {{.Path}}: 执行失败",
+  "Repository {{.Path}}: command failed: {{.Err}}": "仓库 {{.Path}}: 执行失败 - {{.Err}}",
   "Repository {{.Path}}: failed to list files - {{.Err}}": "仓库 {{.Path}}: 获取文件列表失败 - {{.Err}}",
   "Repository {{.Path}}: git failed - {{.Err}}": "仓库 {{.Path}}: git 执行失败 - {{.Err}}",
   "Reset configuration.\n\nBy default the value is REMOVED from the file, so the setting falls back to its\nbuilt-in default. With --defaults the default value is written explicitly instead.\n\n--all applies the same choice to everything: it deletes the config file, or with\n--defaults writes a file containing only default values. Either way the registered\nrepositories are cleared — manage them one by one with \"ggt repo\" if that is not\nwhat you want.\n\nExamples:\n  ggt config reset concurrency              Remove the key from the file\n  ggt config reset concurrency --defaults   Write the default value instead\n  ggt config reset --all                    Delete the config file\n  ggt config reset --all --defaults         Write a defaults-only config file\n  ggt config reset --all --yes              Skip the confirmation prompt": "重置配置。\n\n默认会**删除**文件里的该值，使其回落到内置默认值；加 --defaults 则改为显式写入默认值。\n\n--all 对整份配置做同样的选择：删除配置文件，或加 --defaults 写入一份只含默认值的文件。\n两种方式都会清空已登记的仓库——若不想这样，请用 \"ggt repo\" 逐项管理。\n\n使用示例:\n  ggt config reset concurrency              从文件中删除该键\n  ggt config reset concurrency --defaults   改为写入默认值\n  ggt config reset --all                    删除配置文件\n  ggt config reset --all --defaults         写入只含默认值的配置文件\n  ggt config reset --all --yes              跳过确认",
