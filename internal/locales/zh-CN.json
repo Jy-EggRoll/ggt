@@ -197,6 +197,7 @@
   "The config file starts with a UTF-8 BOM, which breaks JSON parsing; re-save it as UTF-8 without BOM": "配置文件以 UTF-8 BOM 开头，会导致 JSON 解析失败；请另存为不带 BOM 的 UTF-8",
   "The current directory is not a git repository: {{.Path}}": "当前目录不是 git 仓库: {{.Path}}",
   "The following repositories need manual handling:": "以下仓库需要手动处理：",
+  "The following repositories were updated:": "以下仓库已更新：",
   "The new value takes effect on the next run": "新取值将在下次运行时生效",
   "The tag was created locally, but pushing it to {{.Remote}} failed: {{.Err}}": "标签已在本地创建，但推送到 {{.Remote}} 失败：{{.Err}}",
   "The version check timed out; GitHub may be unreachable from this machine": "版本检查超时，本机可能无法访问 GitHub",

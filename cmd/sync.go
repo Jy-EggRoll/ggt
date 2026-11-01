@@ -12,7 +12,8 @@ import (
 )
 
 // syncResult 保存单个仓库的同步结果，用于区分“自动完成”和“需手动处理”。
-// 所有仓库的 output 会先顺序打印，末尾按结果类别汇总数量，并列出需要手动处理的条目。
+// 所有仓库的 output 会先顺序打印，末尾按结果类别汇总数量，并分别列出已拉取成功的
+// 仓库与需要手动处理的仓库。
 type syncResult struct {
 	name       string      // 仓库展示名（已含 [子] 前缀）
 	path       string      // 仓库绝对路径（用于清单展示）
@@ -84,43 +85,97 @@ Examples:
 			results := worker.Map(context.Background(), repos, Concurrency(), syncRepo)
 			t.Done()
 
-			// 一次遍历同时做三件事：打印结果、按类别计数、收集需要手动处理的条目。
-			// 合并成一次而不是各遍历一遍，是为了保证“打印顺序”和“计数依据”必然来自同一份结果
-			var manualList []syncResult
-			var pulled, upToDate, manual, failed int
 			for _, r := range results {
 				PrintRaw(r.output)
-				switch r.outcome {
-				case outcomePulled:
-					pulled++
-				case outcomeUpToDate:
-					upToDate++
-				case outcomeManual:
-					manual++
-				case outcomeFailed:
-					failed++
-				}
-				if r.outcome.needsManual() {
-					manualList = append(manualList, r)
-				}
 			}
 
-			if len(manualList) > 0 {
-				WarnMsg(l10n.T("The following repositories need manual handling:", nil))
-				for _, r := range manualList {
-					pterm.Printf("  %s %s\n", RepoName(r.name), Muted(r.path))
-					pterm.Printf("    -> %s\n", r.manualHint)
-				}
-			}
+			// 计数、挑清单成员、打印清单各自由独立函数完成，这里因此不再合并成一次遍历。
+			// 逐仓库结果本来就要打印、计数、归入清单，分开遍历只多几次线性扫描，
+			// 换来的是计数口径与清单成员都能被单测直接断言，而不必靠读这段闭包去确认
+			counts := summarizeSyncResults(results)
+			// “已更新”只收真正被 pull 过的仓库。把已是最新的仓库也列进来，清单会长到
+			// 看不出哪几个仓库动了，与“需要手动处理”清单“只点出要动手的”用意相同
+			updatedList := pickSyncResults(results, func(o syncOutcome) bool { return o == outcomePulled })
+			manualList := pickSyncResults(results, syncOutcome.needsManual)
+
+			// 两张清单共用同一个打印函数，只差标题与标题样式。
+			// 顺序上先“已更新”后“需要手动处理”：收尾时最想先确认的是哪些仓库真的动了，
+			// 要动手处理的条目压在最后，读完清单就可以直接照着做
+			printSyncList(l10n.T("The following repositories were updated:", nil), updatedList, SuccessMsg)
+			printSyncList(l10n.T("The following repositories need manual handling:", nil), manualList, WarnMsg)
 
 			// 末尾只留这一行收尾，它同时覆盖“全部同步完成”和“有仓库需要处理”两种结局。
 			// 此前收尾另有一句“All repositories are in sync”，在存在待处理条目时与清单直接矛盾
 			pterm.Println()
 			InfoMsg(l10n.T("Finished: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed",
-				map[string]any{"Pulled": pulled, "UpToDate": upToDate, "Manual": manual, "Failed": failed}))
+				map[string]any{"Pulled": counts.pulled, "UpToDate": counts.upToDate, "Manual": counts.manual, "Failed": counts.failed}))
 		},
 	}
 	return c
+}
+
+// syncCounts 是收尾那一行汇总所需的四类数量。
+// 用结构体而不是四个返回值：字段名让调用点与测试断言自带含义，
+// 将来多出一类结局也不会在调用点再加一个位置参数
+type syncCounts struct {
+	pulled   int
+	upToDate int
+	manual   int
+	failed   int
+}
+
+// summarizeSyncResults 按最终状态统计各类结果的数量。
+// 纯函数：不打印、不接触 git，因此四类结局都能用表驱动测试覆盖
+func summarizeSyncResults(results []syncResult) syncCounts {
+	var counts syncCounts
+	for _, r := range results {
+		switch r.outcome {
+		case outcomePulled:
+			counts.pulled++
+		case outcomeUpToDate:
+			counts.upToDate++
+		case outcomeManual:
+			counts.manual++
+		case outcomeFailed:
+			counts.failed++
+		}
+	}
+	return counts
+}
+
+// pickSyncResults 挑出 keep 认可的结局，并保持 results 原有顺序。
+//
+// 收判定函数而不是固定的某个 outcome：末尾“需要手动处理”清单横跨 outcomeManual 与
+// outcomeFailed 两类（见 needsManual），清单成员与计数口径因此共用 needsManual 这一处定义，
+// 不会出现“counts.manual 与 counts.failed 分开统计、清单却漏了失败项”这种偏差
+func pickSyncResults(results []syncResult, keep func(syncOutcome) bool) []syncResult {
+	var picked []syncResult
+	for _, r := range results {
+		if keep(r.outcome) {
+			picked = append(picked, r)
+		}
+	}
+	return picked
+}
+
+// printSyncList 打印末尾的一张仓库清单：标题加每项“名称 路径”，
+// 结果里填了处理建议时再补一行建议。
+//
+// 两张清单只有标题与标题样式不同，共用一份实现，免得两份几乎相同的循环日后各自漂移。
+// 建议行由 manualHint 是否有值决定而不另加开关参数：只有需要用户动手的结局才填这个字段，
+// 判断依据来自数据本身，调用点就不可能把“要不要建议”传错。
+// 空清单整段静默（连标题都不打），否则会出现“以下仓库已更新：”后面空无一物
+func printSyncList(title string, results []syncResult, heading func(string)) {
+	if len(results) == 0 {
+		return
+	}
+	heading(title)
+	for _, r := range results {
+		pterm.Printf("  %s %s\n", RepoName(r.name), Muted(r.path))
+		if r.manualHint != "" {
+			pterm.Printf("    -> %s\n", r.manualHint)
+		}
+	}
 }
 
 // syncRepo 同步单个仓库（含子模块）：检查脏状态 → fetch → 分析 commit 关系 → 自动拉取或给出建议。
