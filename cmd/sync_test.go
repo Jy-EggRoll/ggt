@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/ggt/internal/locales"
 	"github.com/pterm/pterm"
 )
 
@@ -243,6 +245,12 @@ func TestPickSyncResultsManualKeepsFailures(t *testing.T) {
 func TestPrintSyncList(t *testing.T) {
 	defer pterm.SetDefaultOutput(os.Stdout)
 
+	// [sub] 前缀由 RepoLabel 经 l10n 拼出，译文随全局语言变化。显式初始化成英文，
+	// 免得同包其它测试切到中文后这里断言失败（那会变成顺序相关的偶发红灯）
+	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
+		t.Fatalf("初始化 l10n 失败: %v", err)
+	}
+
 	cases := []struct {
 		name         string
 		results      []syncResult
@@ -269,6 +277,17 @@ func TestPrintSyncList(t *testing.T) {
 			},
 			wantHeading:  true,
 			wantContains: []string{"[repo-b]", "/repos/b", "-> push manually"},
+		},
+		{
+			// 清单曾用 RepoName 而非 RepoLabel，子模块在明细里是 [sub] sub/a、在清单里
+			// 却退化成 [sub/a]，同一批仓库出现两种写法。这条用例把两处的一致性固定下来
+			name: "子模块：清单与逐仓库明细同样带 [sub] 前缀",
+			results: []syncResult{
+				{name: "sub/a", path: "/repos/a/sub/a", outcome: outcomePulled, isSubmodule: true},
+			},
+			wantHeading:  true,
+			wantContains: []string{"[sub] sub/a", "/repos/a/sub/a"},
+			wantAbsent:   []string{"[sub/a]"},
 		},
 	}
 
