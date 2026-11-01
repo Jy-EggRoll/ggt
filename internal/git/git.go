@@ -139,9 +139,10 @@ func runWithRecordLimit(ctx context.Context, repoPath string, extraEnv []string,
 	cmd := gitCmd(ctx, args)
 	cmd.Dir = repoPath
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), extraEnv...)
-	// 这里的 stdout 走管道流式读，stderr 单独收进缓冲：两者都接上才不会有
-	// 一端写满管道阻塞子进程，失败时也能把 git 的原因带出来
-	var stderr bytes.Buffer
+	// stdout 走管道流式读，stderr 收进有上限的缓冲：这个函数存在的目的就是给内存设限，
+	// 失败时仍要把 git 的原因带出来。cmd.Stderr 留空时子进程的 stderr 接的是空设备、
+	// 本来就不会阻塞，接上它纯粹是为了拿到文本。
+	stderr := cappedBuffer{limit: stderrLimit}
 	cmd.Stderr = &stderr
 
 	stdout, err := cmd.StdoutPipe()
