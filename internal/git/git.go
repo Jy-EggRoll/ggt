@@ -111,7 +111,8 @@ func runWithOutputEnv(ctx context.Context, repoPath string, extraEnv []string, a
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), extraEnv...)
 	output, err := cmd.Output()
 	if err != nil {
-		return "", err
+		// cmd.Stderr 保持为 nil，Output 才会把子进程的 stderr 收进 ExitError
+		return "", newCommandError(ctx, stderrOf(err), err)
 	}
 	return string(output), nil
 }
@@ -138,6 +139,10 @@ func runWithRecordLimit(ctx context.Context, repoPath string, extraEnv []string,
 	cmd := gitCmd(ctx, args)
 	cmd.Dir = repoPath
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), extraEnv...)
+	// 这里的 stdout 走管道流式读，stderr 单独收进缓冲：两者都接上才不会有
+	// 一端写满管道阻塞子进程，失败时也能把 git 的原因带出来
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -175,7 +180,7 @@ func runWithRecordLimit(ctx context.Context, repoPath string, extraEnv []string,
 		return string(trimNulRecords(buf, limit)), true, nil
 	}
 	if waitErr != nil {
-		return "", false, waitErr
+		return "", false, newCommandError(ctx, stderr.String(), waitErr)
 	}
 	return string(buf), false, nil
 }
