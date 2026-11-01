@@ -1,5 +1,5 @@
 // files.go 实现 "ggt files" 命令，列出所有已入库仓库的文件列表。
-// 使用 worker.Map 并发获取每个仓库的 git ls-files 输出，
+// 使用 gather 并发获取每个仓库的 git ls-files 输出，
 // 支持控制台输出（默认）或写入文件（-o 参数）。
 package cmd
 
@@ -12,7 +12,6 @@ import (
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/git"
-	"github.com/jy-eggroll/ggt/internal/worker"
 	"github.com/spf13/cobra"
 )
 
@@ -40,14 +39,13 @@ Examples:
   ggt fl                 Short form
   ggt files -o out.txt   Write the file list to out.txt`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
-			repos := AllRepos(context.Background())
+			ctx := context.Background()
+			repos := AllRepos(ctx)
 			// 用 InfoLn 而非 InfoMsg：Ln 系列结尾会多留一个空行（"%s\n" 的细节统一在 output.go 处理）
 			InfoLn(l10n.T("Repositories: {{.Count}} — gathering file lists...", map[string]any{"Count": len(repos)}))
 
-			// 使用 worker.Map 并发获取每个仓库的文件列表
-			t := NewDebugTimer(l10n.T("File lists (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
-			results := worker.Map(context.Background(), repos, Concurrency(), showRepoFiles)
-			t.Done()
+			// 并发获取每个仓库的文件列表
+			results := gather(ctx, l10n.T("File lists (repositories: {{.Count}})", map[string]any{"Count": len(repos)}), repos, showRepoFiles)
 
 			// 构建输出内容：每行为仓库完整路径与文件路径拼接的合法路径
 			var output strings.Builder

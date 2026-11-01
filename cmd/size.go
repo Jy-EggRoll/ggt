@@ -8,7 +8,6 @@ import (
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/git"
-	"github.com/jy-eggroll/ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -39,7 +38,7 @@ var (
 //   - 磁盘占用（size）：git 对象的总磁盘占用量
 //   - 包文件大小（size-pack）：打包后的大小
 //
-// 输出安全：worker.Map 并发收集 → 主 goroutine 顺序打印，无交错。
+// 输出安全：gather 并发收集 → 主 goroutine 顺序打印，无交错。
 func newSizeCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use: "size",
@@ -61,17 +60,16 @@ Examples:
   ggt sz            Short form
   ggt size --low 200 --high 600 --unit binary  Custom thresholds and unit`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
-			repos := AllRepos(context.Background())
+			ctx := context.Background()
+			repos := AllRepos(ctx)
 			// 用 InfoLn 而非 InfoMsg：Ln 系列会在结尾多留一个空行，与后续明细隔开；
 			// "%s\n" 的格式串细节已统一在 output.go 处理，调用点不再自带格式串
 			InfoLn(l10n.T("Repositories: {{.Count}} — gathering sizes...", map[string]any{"Count": len(repos)}))
 
 			width := pterm.GetTerminalWidth()
-			t := NewDebugTimer(l10n.T("Size stats (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
-			results := worker.Map(context.Background(), repos, Concurrency(), func(ctx context.Context, e RepoEntry) repoSizeResult {
+			results := gather(ctx, l10n.T("Size stats (repositories: {{.Count}})", map[string]any{"Count": len(repos)}), repos, func(ctx context.Context, e RepoEntry) repoSizeResult {
 				return showRepoSize(ctx, e, width)
 			})
-			t.Done()
 
 			// 顺序打印各仓库的大小信息
 			for _, r := range results {

@@ -10,7 +10,6 @@ import (
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/git"
-	"github.com/jy-eggroll/ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -54,9 +53,9 @@ func newRemoteHttpsCmd() *cobra.Command {
 		Short: l10n.T("Switch the remote origin to HTTPS", nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			if remoteAll {
-				switchAllRepos("https")
+				switchAllRepos(context.Background(), "https")
 			} else {
-				switchCurrentRepo("https")
+				switchCurrentRepo(context.Background(), "https")
 			}
 		},
 	}
@@ -69,9 +68,9 @@ func newRemoteSshCmd() *cobra.Command {
 		Short: l10n.T("Switch the remote origin to SSH", nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			if remoteAll {
-				switchAllRepos("ssh")
+				switchAllRepos(context.Background(), "ssh")
 			} else {
-				switchCurrentRepo("ssh")
+				switchCurrentRepo(context.Background(), "ssh")
 			}
 		},
 	}
@@ -93,7 +92,7 @@ It only affects the git repository in the current directory and does not support
 Examples:
   ggt remote toggle       Toggle the current repository between HTTPS and SSH`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
-			toggleCurrentRepo()
+			toggleCurrentRepo(context.Background())
 		},
 	}
 	return c
@@ -155,7 +154,7 @@ func detectProtocol(raw string) string {
 // switchCurrentRepo 切换当前目录下的 git 仓库（含其已初始化子模块）的远程协议。
 // 子模块在 ggt 中被视为一等仓库，这里通过 expand 把当前仓库及其子模块一并展开处理，
 // 使 toggle / https / ssh 都能辐射到子模块（与 --all 行为一致）。
-func switchCurrentRepo(target string) {
+func switchCurrentRepo(ctx context.Context, target string) {
 	wd, err := os.Getwd()
 	if err != nil {
 		ErrorMsg(l10n.T("Failed to get the current directory: {{.Err}}", map[string]any{"Err": err}))
@@ -167,13 +166,13 @@ func switchCurrentRepo(target string) {
 		return
 	}
 
-	entries := ExpandRepos(context.Background(), []string{wd})
-	processSwitchResults(entries, target)
+	entries := ExpandRepos(ctx, []string{wd})
+	processSwitchResults(ctx, entries, target)
 }
 
 // toggleCurrentRepo 在当前仓库（含子模块）的 HTTPS 与 SSH 协议之间取反切换。
 // 先读取当前仓库 origin 当前协议，再切换为相反协议；子模块复用同一目标协议。
-func toggleCurrentRepo() {
+func toggleCurrentRepo(ctx context.Context) {
 	wd, err := os.Getwd()
 	if err != nil {
 		ErrorMsg(l10n.T("Failed to get the current directory: {{.Err}}", map[string]any{"Err": err}))
@@ -185,14 +184,14 @@ func toggleCurrentRepo() {
 		return
 	}
 
-	target, err := resolveToggleTarget(context.Background(), wd)
+	target, err := resolveToggleTarget(ctx, wd)
 	if err != nil {
 		ErrorMsg(err.Error())
 		return
 	}
 
-	entries := ExpandRepos(context.Background(), []string{wd})
-	processSwitchResults(entries, target)
+	entries := ExpandRepos(ctx, []string{wd})
+	processSwitchResults(ctx, entries, target)
 }
 
 // resolveToggleTarget 读取指定仓库 origin 的当前协议，返回与之相反的目标协议（"https" 或 "ssh"）。
@@ -214,17 +213,17 @@ func resolveToggleTarget(ctx context.Context, repoPath string) (string, error) {
 }
 
 // switchAllRepos 切换所有配置仓库（含子模块，受 ignore_submodules 控制）的远程协议。
-// 使用 worker.Map 并发收集结果后顺序打印统计信息。
-func switchAllRepos(target string) {
-	entries := AllRepos(context.Background())
+// 使用 gather 并发收集结果后顺序打印统计信息。
+func switchAllRepos(ctx context.Context, target string) {
+	entries := AllRepos(ctx)
 	InfoLn(l10n.T("Repositories: {{.Count}} — switching protocol to {{.Proto}}...",
 		map[string]any{"Count": len(entries), "Proto": pterm.Cyan(strings.ToUpper(target))}))
-	processSwitchResults(entries, target)
+	processSwitchResults(ctx, entries, target)
 }
 
 // processSwitchResults 对一组仓库条目并发执行远程协议切换，统一打印结果并汇总。
 // 子模块作为独立条目参与，打印时经 RepoLabel 呈现 [子] 前缀，计数把子模块一并计入。
-func processSwitchResults(entries []RepoEntry, target string) {
+func processSwitchResults(ctx context.Context, entries []RepoEntry, target string) {
 	targetProto := detectProtocol(strings.ToUpper(target))
 	type switchOutcome struct {
 		name        string
@@ -232,14 +231,12 @@ func processSwitchResults(entries []RepoEntry, target string) {
 		res         switchRemoteResult
 	}
 
-	t := NewDebugTimer(l10n.T("Protocol switch (repositories: {{.Count}})", map[string]any{"Count": len(entries)}))
-	results := worker.Map(context.Background(), entries, Concurrency(), func(ctx context.Context, e RepoEntry) switchOutcome {
+	results := gather(ctx, l10n.T("Protocol switch (repositories: {{.Count}})", map[string]any{"Count": len(entries)}), entries, func(ctx context.Context, e RepoEntry) switchOutcome {
 		r := doSwitchRemote(ctx, e.Path, target)
 		r.name = e.Name
 		r.isSubmodule = e.IsSubmodule
 		return switchOutcome{e.Name, e.IsSubmodule, r}
 	})
-	t.Done()
 
 	var success, skipped, failed int
 	for _, r := range results {

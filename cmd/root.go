@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/jy-eggroll/eggokit/updater"
 	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/jy-eggroll/ggt/internal/locales"
+	"github.com/jy-eggroll/ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -208,4 +210,50 @@ func NewDebugTimer(label string) *DebugTimer {
 // 业务命令里，还要靠一个全局布尔决定要不要打
 func (t *DebugTimer) Done() {
 	logger.Debug(t.label, "duration", time.Since(t.start))
+}
+
+// gather 是遍历型命令共用的采集骨架，只做三件事：起计时、并发采集、收尾计时。
+// 抬头、逐项打印、末尾汇总、错误语义一律留在调用点——它们各命令差别很大，
+// 收进来就等于把七份互不相同的展示逻辑塞进一个函数，改一处会波及全部命令。
+//
+// label 必须由调用点用 l10n.T(...) 渲染后传入：l10n 提取器要求消息调用的首参是
+// 字符串字面量，若在这里代调 l10n.T，传进来的是变量，译文会静默失效。
+//
+// 计时走 defer，即使 fn panic（worker.Map 会 recover 并让该位置留零值）也一定会收尾。
+func gather[T any](ctx context.Context, label string, repos []RepoEntry, fn func(context.Context, RepoEntry) T) []T {
+	t := NewDebugTimer(label)
+	defer t.Done()
+
+	// worker.Map 按原始下标写回结果，但被 ctx 取消时它只保证“不再启动新任务”：
+	// 未启动的条目会留在零值上，而且“谁先启动”取决于各 goroutine 抢信号量的次序，
+	// 并不保证是前 k 个。若把整份结果交给打印，中断时就会把从没跑过的仓库
+	// 当成“干净/成功”打出来。因此这里记下真正进入过 fn 的下标，只在取消后按它过滤，
+	// 未取消时原样返回，正常路径不多一次分配也不改变任何输出。
+	type gatherTask struct {
+		idx  int
+		repo RepoEntry
+	}
+	started := make([]bool, len(repos))
+	tasks := make([]gatherTask, len(repos))
+	for i, e := range repos {
+		tasks[i] = gatherTask{idx: i, repo: e}
+	}
+
+	results := worker.Map(ctx, tasks, Concurrency(), func(ctx context.Context, task gatherTask) T {
+		// 各 goroutine 只写自己的下标，互不重叠，无需加锁
+		started[task.idx] = true
+		return fn(ctx, task.repo)
+	})
+
+	if ctx.Err() == nil {
+		return results
+	}
+
+	attempted := make([]T, 0, len(results))
+	for i, r := range results {
+		if started[i] {
+			attempted = append(attempted, r)
+		}
+	}
+	return attempted
 }

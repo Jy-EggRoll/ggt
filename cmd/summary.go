@@ -6,7 +6,6 @@ import (
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/git"
-	"github.com/jy-eggroll/ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -41,8 +40,7 @@ Examples:
 			InfoLn(l10n.T("Repositories: {{.Count}} — checking for changes...", map[string]any{"Count": len(repos)}))
 
 			// 第一阶段：并发检查所有仓库（含子模块）的 git 状态
-			t := NewDebugTimer(l10n.T("Status check (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
-			results := worker.Map(ctx, repos, Concurrency(), func(ctx context.Context, e RepoEntry) *dirtyRepo {
+			results := gather(ctx, l10n.T("Status check (repositories: {{.Count}})", map[string]any{"Count": len(repos)}), repos, func(ctx context.Context, e RepoEntry) *dirtyRepo {
 				// 是否值得处理，一律由机器可读的 porcelain v2 状态判定。
 				// 原实现是从给人看的 --short 文本里反推：统计非空行数判断“有没有文件变更”、
 				// 用 strings.Contains(output, "[ahead") 判断“有没有待推送提交”。两处都依赖
@@ -75,7 +73,6 @@ Examples:
 					hasUncommitted: len(st.Files) > 0,
 				}
 			})
-			t.Done()
 
 			// 第二阶段：顺序处理每个有变更的仓库（交互+提交需等待用户输入）
 			for _, d := range results {
