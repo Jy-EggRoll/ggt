@@ -14,11 +14,12 @@ import (
 // 所有仓库的 output 会先顺序打印，末尾按结果类别汇总数量，并分别列出已拉取成功的
 // 仓库与需要手动处理的仓库。
 type syncResult struct {
-	name       string      // 仓库名原值（子模块形如 sub/a；[子] 前缀由 RepoLabel 在明细里临时拼，清单不含）
-	path       string      // 仓库绝对路径（用于清单展示）
-	output     string      // 完整的输出文本（保持原有打印行为）
-	outcome    syncOutcome // 最终状态，末尾的汇总按它计数
-	manualHint string      // 处理建议（仅需要手动处理的条目有值）
+	name        string      // 仓库名原值（子模块形如 sub/a；[子] 前缀由 RepoLabel 在打印时临时拼）
+	isSubmodule bool        // 该条目是否来自子模块：末尾两张清单与逐仓库明细都经 RepoLabel，标识才能一致
+	path        string      // 仓库绝对路径（用于清单展示）
+	output      string      // 完整的输出文本（保持原有打印行为）
+	outcome     syncOutcome // 最终状态，末尾的汇总按它计数
+	manualHint  string      // 处理建议（仅需要手动处理的条目有值）
 }
 
 // syncOutcome 是单个仓库同步走完之后的最终状态，末尾的分类汇总按它计数。
@@ -169,6 +170,8 @@ func pickSyncResults(results []syncResult, keep func(syncOutcome) bool) []syncRe
 // 结果里填了处理建议时再补一行建议。
 //
 // 两张清单只有标题与标题样式不同，共用一份实现，免得两份几乎相同的循环日后各自漂移。
+// 名称统一经 RepoLabel 而非 RepoName：清单与逐仓库明细展示的是同一批仓库，子模块的
+// [子] 标识必须两处一致，否则用户会把明细里的 [子] a 与清单里的 [a] 当成两个仓库。
 // 建议行由 manualHint 是否有值决定而不另加开关参数：只有需要用户动手的结局才填这个字段，
 // 判断依据来自数据本身，调用点就不可能把“要不要建议”传错。
 // 空清单整段静默（连标题都不打），否则会出现“以下仓库已更新：”后面空无一物
@@ -178,7 +181,7 @@ func printSyncList(title string, results []syncResult, heading func(string)) {
 	}
 	heading(title)
 	for _, r := range results {
-		pterm.Printf("  %s %s\n", RepoName(r.name), Muted(r.path))
+		pterm.Printf("  %s %s\n", RepoLabel(r.name, r.isSubmodule), Muted(r.path))
 		if r.manualHint != "" {
 			pterm.Printf("    -> %s\n", r.manualHint)
 		}
@@ -190,7 +193,7 @@ func printSyncList(title string, results []syncResult, heading func(string)) {
 // 接收上层 ctx 以便任务被整体取消时立即中断 git 调用。
 func syncRepo(ctx context.Context, e RepoEntry) syncResult {
 	label := RepoLabel(e.Name, e.IsSubmodule)
-	result := syncResult{name: e.Name, path: e.Path}
+	result := syncResult{name: e.Name, isSubmodule: e.IsSubmodule, path: e.Path}
 
 	// 辅助函数：统一构建 syncResult。
 	// warn 收的是“需要用户动手”的两类结局（需人工决策或某一步失败），
