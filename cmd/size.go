@@ -142,8 +142,11 @@ func showRepoSize(ctx context.Context, e RepoEntry, width int) repoSizeResult {
 		return repoSizeResult{
 			name:        e.Name,
 			isSubmodule: e.IsSubmodule,
+			// 失败原因必须带出来：路径配错、没有权限、仓库损坏，在用户眼里都是同一句
+			// "command failed"，而真正的原因只存在于 err 里。这里原样透传它的文本，
+			// 由 internal/git 决定其中包含多少细节，本命令不解读也不翻译 git 的输出。
 			// 入参以 \n 结尾：pterm 会把结尾换行折叠为单个换行，于是这行就是普通的单行告警
-			output: WarnStrLn(l10n.T("Repository {{.Path}}: command failed", map[string]any{"Path": e.Path})),
+			output: WarnStrLn(l10n.T("Repository {{.Path}}: command failed: {{.Err}}", map[string]any{"Path": e.Path, "Err": err})),
 			size:   0,
 			ok:     false,
 		}
