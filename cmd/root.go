@@ -255,14 +255,25 @@ func (t *DebugTimer) Done() {
 	logger.Debug(t.label, "duration", time.Since(t.start))
 }
 
-// gather 是遍历型命令共用的采集骨架，只做三件事：起计时、并发采集、收尾计时。
-// 抬头、逐项打印、末尾汇总、错误语义一律留在调用点——它们各命令差别很大，
+// gather 是遍历型命令共用的采集骨架：起计时、按原序并发采集、取消后剔除没跑过的条目、
+// 收尾计时。抬头、逐项打印、末尾汇总、错误语义一律留在调用点——它们各命令差别很大，
 // 收进来就等于把七份互不相同的展示逻辑塞进一个函数，改一处会波及全部命令。
+//
+// 拦截与过滤这两件事只能待在这里，因为调用点拿不到它们依赖的信息，二者都源于
+// worker.Map 的取消行为：
+//   - Map 只在派生下一个任务之前看 ctx，已经派生、正排在信号量上等位的 goroutine
+//     在取消后仍会执行 fn，因此“取消后不再启动新任务”只能在 fn 入口拦一道；
+//   - Map 按原始下标写回结果、未启动的位置留零值，而“谁先启动”取决于各 goroutine
+//     抢信号量的次序、并不保证是前 k 个，所以调用点拿到的那份切片既分不清哪条没跑过，
+//     也无法靠截断长度来猜，只能在这里记下真正进入过 fn 的下标再过滤。
 //
 // label 必须由调用点用 l10n.T(...) 渲染后传入：l10n 提取器要求消息调用的首参是
 // 字符串字面量，若在这里代调 l10n.T，传进来的是变量，译文会静默失效。
 //
 // 计时走 defer，即使 fn panic（worker.Map 会 recover 并让该位置留零值）也一定会收尾。
+//
+// 代价是每次调用固定多分配两个与仓库数同阶的切片（tasks 与 started），取消路径还要
+// 再分配一次过滤结果；正常路径只是多这两次分配，返回值与未引入取消过滤时完全一致。
 func gather[T any](ctx context.Context, label string, repos []RepoEntry, fn func(context.Context, RepoEntry) T) []T {
 	t := NewDebugTimer(label)
 	defer t.Done()
@@ -270,8 +281,8 @@ func gather[T any](ctx context.Context, label string, repos []RepoEntry, fn func
 	// worker.Map 按原始下标写回结果，但被 ctx 取消时它只保证“不再启动新任务”：
 	// 未启动的条目会留在零值上，而且“谁先启动”取决于各 goroutine 抢信号量的次序，
 	// 并不保证是前 k 个。若把整份结果交给打印，中断时就会把从没跑过的仓库
-	// 当成“干净/成功”打出来。因此这里记下真正进入过 fn 的下标，只在取消后按它过滤，
-	// 未取消时原样返回，正常路径不多一次分配也不改变任何输出。
+	// 当成“干净/成功”打出来。因此这里记下真正进入过 fn 的下标，只在取消后按它过滤；
+	// 未取消时原样返回，分配的那点开销换的是取消路径上的正确性。
 	type gatherTask struct {
 		idx  int
 		repo RepoEntry
