@@ -19,7 +19,8 @@ import (
 )
 
 // repoCmd 实现 "ggt repo" 及其子命令，管理仓库路径配置。
-// 配置存储在 ~/.config/go-git-ggt/ggt-config.json 中。
+// 配置文件位置以 config.GetDefaultConfigPath 为准，这里不再复述路径字面量：
+// 同一个字面量抄在多处时，改默认位置的一方必然漏改其余几处，读者会照着过期路径排查。
 func newRepoCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "repo",
