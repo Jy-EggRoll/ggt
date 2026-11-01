@@ -1,6 +1,13 @@
 package cmd
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/pterm/pterm"
+)
 
 // TestDecideSyncAction 用表驱动覆盖 sync 命令的全部决策分支。
 //
@@ -223,5 +230,73 @@ func TestPickSyncResultsManualKeepsFailures(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("手动清单 = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestPrintSyncList 覆盖清单打印的两条用户可见规则：空清单整段静默，
+// 处理建议只跟随有建议的条目。
+//
+// printSyncList 直接写 pterm，要断言就得接管 pterm 的全局输出。本包其余测试都不碰
+// 这个全局值，因此换到缓冲区、结束后恢复成 os.Stdout 即为还原默认状态。
+// 标题由调用方传入的消息函数打印（决定黄/绿），测试用记录调用次数的替身即可判断
+// “空清单连标题都不打”，不必断言标题的着色
+func TestPrintSyncList(t *testing.T) {
+	defer pterm.SetDefaultOutput(os.Stdout)
+
+	cases := []struct {
+		name         string
+		results      []syncResult
+		wantHeading  bool
+		wantContains []string
+		wantAbsent   []string
+	}{
+		{
+			name:        "空清单：连标题都不打，也不留空行",
+			results:     nil,
+			wantHeading: false,
+		},
+		{
+			name:         "已拉取成功：只有名称与路径",
+			results:      []syncResult{{name: "repo-a", path: "/repos/a", outcome: outcomePulled}},
+			wantHeading:  true,
+			wantContains: []string{"[repo-a]", "/repos/a"},
+			wantAbsent:   []string{"->"},
+		},
+		{
+			name: "需要手动处理：建议另起一行跟在条目之后",
+			results: []syncResult{
+				{name: "repo-b", path: "/repos/b", outcome: outcomeManual, manualHint: "push manually"},
+			},
+			wantHeading:  true,
+			wantContains: []string{"[repo-b]", "/repos/b", "-> push manually"},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			pterm.SetDefaultOutput(&buf)
+
+			headingCalls := 0
+			printSyncList("TITLE", c.results, func(string) { headingCalls++ })
+
+			if got := headingCalls > 0; got != c.wantHeading {
+				t.Errorf("是否打印标题 = %v, want %v", got, c.wantHeading)
+			}
+			out := buf.String()
+			if !c.wantHeading && out != "" {
+				t.Errorf("空清单不应产生任何输出，实际输出：%q", out)
+			}
+			for _, want := range c.wantContains {
+				if !strings.Contains(out, want) {
+					t.Errorf("输出缺少 %q，实际输出：%q", want, out)
+				}
+			}
+			for _, absent := range c.wantAbsent {
+				if strings.Contains(out, absent) {
+					t.Errorf("输出不应包含 %q，实际输出：%q", absent, out)
+				}
+			}
+		})
 	}
 }
