@@ -33,9 +33,10 @@ Examples:
   ggt sum              Short form`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			// 统一 ctx：第一阶段并发检查与第二阶段交互式操作（diff/count-objects/add/commit/push）
-			// 都复用同一 ctx，一旦它被取消，worker.Map 与正在执行的 git 调用会一起中断；
+			// 都复用命令自身的 ctx（取自 Execute 建立的信号根 ctx），Ctrl-C 时 worker.Map
+			// 与正在执行的 git 调用会一起中断；
 			// 这些调用一律走 git.RunContext / RunCombinedContext，未设截止时间时由 git 包叠加默认超时
-			ctx := context.Background()
+			ctx := cmd.Context()
 			repos := AllRepos(ctx)
 			InfoLn(l10n.T("Repositories: {{.Count}} — checking for changes...", map[string]any{"Count": len(repos)}))
 
@@ -74,7 +75,12 @@ Examples:
 				}
 			})
 
-			// 第二阶段：顺序处理每个有变更的仓库（交互+提交需等待用户输入）
+			// 第二阶段：顺序处理每个有变更的仓库（交互+提交需等待用户输入）。
+			// 被 Ctrl-C 打断后不再进入这一段：交互提示一旦出现在中断之后，用户会以为
+			// 还得继续处理，实际本进程马上就要以 130 退出
+			if ctx.Err() != nil {
+				return
+			}
 			for _, d := range results {
 				if d == nil {
 					continue

@@ -66,7 +66,8 @@ func (o syncOutcome) isUpdated() bool {
 //   - 远程 == 共同祖先 → 本地领先，提示手动推送
 //   - 其他 → 分叉，提示手动干预
 //
-// 输出安全：并发收集 → 顺序打印，末尾按结果类别汇总。
+// 输出安全：gather 并发收集 → 顺序打印，末尾按结果类别汇总；被 Ctrl-C 打断时
+// 只打印已经尝试过的仓库，汇总与两张清单同样只覆盖它们，随后由 Execute 以 130 退出。
 func newSyncCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "sync",
@@ -84,7 +85,7 @@ func newSyncCmd() *cobra.Command {
 Examples:
   ggt sync          Sync all repositories automatically`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
-			ctx := context.Background()
+			ctx := cmd.Context()
 			repos := AllRepos(ctx)
 			// 这里刻意用 InfoMsg（不带空行），而其余遍历型命令用的是 InfoLn（带空行）。
 			// 原因是 sync 的输出直接就是逐仓库明细、之间没有分隔线，加空行反而把首个

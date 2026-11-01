@@ -13,7 +13,8 @@ import (
 // 并发检查所有配置仓库的 git 状态（未跟踪文件、修改、分支信息）。
 //
 // 输出安全：gather 并发收集结果 → 主 goroutine 顺序打印，
-// 避免多个仓库的输出行互相插入。
+// 避免多个仓库的输出行互相插入；被 Ctrl-C 打断时只打印已经尝试过的仓库，
+// 随后由 Execute 以 130 退出。
 func newStatusCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "status",
@@ -24,7 +25,7 @@ Examples:
   ggt status          Show the status of all repositories
   ggt st              Short form`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
-			ctx := context.Background()
+			ctx := cmd.Context()
 			repos := AllRepos(ctx)
 			// 用 InfoLn 而非 InfoMsg：Ln 系列结尾会多留一个空行，把抬头行与后续仓库输出隔开（"%s\n" 的细节统一在 output.go 处理）
 			InfoLn(l10n.T("Repositories: {{.Count}} — checking status...", map[string]any{"Count": len(repos)}))

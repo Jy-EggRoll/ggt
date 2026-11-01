@@ -38,7 +38,8 @@ var (
 //   - 磁盘占用（size）：git 对象的总磁盘占用量
 //   - 包文件大小（size-pack）：打包后的大小
 //
-// 输出安全：gather 并发收集 → 主 goroutine 顺序打印，无交错。
+// 输出安全：gather 并发收集 → 主 goroutine 顺序打印，无交错；
+// 被 Ctrl-C 打断时汇总只统计已经尝试过的仓库（未启动的不参与分桶）。
 func newSizeCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use: "size",
@@ -60,7 +61,7 @@ Examples:
   ggt sz            Short form
   ggt size --low 200 --high 600 --unit binary  Custom thresholds and unit`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
-			ctx := context.Background()
+			ctx := cmd.Context()
 			repos := AllRepos(ctx)
 			// 用 InfoLn 而非 InfoMsg：Ln 系列会在结尾多留一个空行，与后续明细隔开；
 			// "%s\n" 的格式串细节已统一在 output.go 处理，调用点不再自带格式串

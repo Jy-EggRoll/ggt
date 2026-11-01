@@ -53,9 +53,9 @@ func newRemoteHttpsCmd() *cobra.Command {
 		Short: l10n.T("Switch the remote origin to HTTPS", nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			if remoteAll {
-				switchAllRepos(context.Background(), "https")
+				switchAllRepos(cmd.Context(), "https")
 			} else {
-				switchCurrentRepo(context.Background(), "https")
+				switchCurrentRepo(cmd.Context(), "https")
 			}
 		},
 	}
@@ -68,9 +68,9 @@ func newRemoteSshCmd() *cobra.Command {
 		Short: l10n.T("Switch the remote origin to SSH", nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			if remoteAll {
-				switchAllRepos(context.Background(), "ssh")
+				switchAllRepos(cmd.Context(), "ssh")
 			} else {
-				switchCurrentRepo(context.Background(), "ssh")
+				switchCurrentRepo(cmd.Context(), "ssh")
 			}
 		},
 	}
@@ -92,7 +92,7 @@ It only affects the git repository in the current directory and does not support
 Examples:
   ggt remote toggle       Toggle the current repository between HTTPS and SSH`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
-			toggleCurrentRepo(context.Background())
+			toggleCurrentRepo(cmd.Context())
 		},
 	}
 	return c

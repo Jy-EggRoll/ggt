@@ -40,8 +40,8 @@ const cliHelperEnv = "GGT_CLI_HELPER_PROCESS"
 
 // TestCLIHelperProcess 在独立测试进程中执行真实 Cobra 命令树
 //
-// 关键差异（相对 flk）：ggt 的 cmd.Execute 不返回退出码，而是在出错时自行 os.Exit(1)，
-// 因此这里调用完 Execute 后只需补一个 os.Exit(0)——正常返回即代表成功
+// 关键差异（相对 flk）：ggt 的 cmd.Execute 不返回退出码，而是自行 os.Exit：
+// 出错 1、被 Ctrl-C 打断 130，因此这里调用完 Execute 后只需补一个 os.Exit(0)——正常返回即代表成功
 //
 // 为什么用 "--" 作分隔：`go test` 会把测试二进制自身的 flag（如 -test.run）先解析掉，
 // 我们约定的命令参数一律放在 "--" 之后，避免与测试框架的 flag 混淆

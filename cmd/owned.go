@@ -44,7 +44,7 @@ Examples:
 				WarnMsg(l10n.T("ggt owned is only supported on Windows", nil))
 				return
 			}
-			ctx := context.Background()
+			ctx := cmd.Context()
 			repos := AllRepos(ctx)
 			// 用 InfoLn 而非 InfoMsg：Ln 系列结尾会多留一个空行（"%s\n" 的细节统一在 output.go 处理）
 			InfoLn(l10n.T("Repositories: {{.Count}} — taking ownership...", map[string]any{"Count": len(repos)}))
