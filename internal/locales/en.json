@@ -197,6 +197,7 @@
   "The config file starts with a UTF-8 BOM, which breaks JSON parsing; re-save it as UTF-8 without BOM": "The config file starts with a UTF-8 BOM, which breaks JSON parsing; re-save it as UTF-8 without BOM",
   "The current directory is not a git repository: {{.Path}}": "The current directory is not a git repository: {{.Path}}",
   "The following repositories need manual handling:": "The following repositories need manual handling:",
+  "The following repositories were updated:": "The following repositories were updated:",
   "The new value takes effect on the next run": "The new value takes effect on the next run",
   "The tag was created locally, but pushing it to {{.Remote}} failed: {{.Err}}": "The tag was created locally, but pushing it to {{.Remote}} failed: {{.Err}}",
   "The version check timed out; GitHub may be unreachable from this machine": "The version check timed out; GitHub may be unreachable from this machine",

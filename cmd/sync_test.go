@@ -1,6 +1,13 @@
 package cmd
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/pterm/pterm"
+)
 
 // TestDecideSyncAction 用表驱动覆盖 sync 命令的全部决策分支。
 //
@@ -92,5 +99,204 @@ func TestDecideSyncActionNeverAutoMerges(t *testing.T) {
 		if got := decideSyncAction(tc[0], tc[1], tc[2]); got == syncFastForward {
 			t.Errorf("decideSyncAction(%q, %q, %q) 误判为可快进", tc[0], tc[1], tc[2])
 		}
+	}
+}
+
+// TestSummarizeSyncResults 用表驱动覆盖四类结局的计数。
+//
+// 收尾那行汇总的数字全从这里出，属于用户直接看到的结果：一旦某类被漏计，
+// 屏幕上就会出现“3 个仓库需要手动处理、汇总却写 2”这种自相矛盾的收尾。
+func TestSummarizeSyncResults(t *testing.T) {
+	cases := []struct {
+		name    string
+		results []syncResult
+		want    syncCounts
+	}{
+		{
+			name:    "无仓库：全部为零",
+			results: nil,
+			want:    syncCounts{},
+		},
+		{
+			name: "四类各一个",
+			results: []syncResult{
+				{name: "a", outcome: outcomePulled},
+				{name: "b", outcome: outcomeUpToDate},
+				{name: "c", outcome: outcomeManual},
+				{name: "d", outcome: outcomeFailed},
+			},
+			want: syncCounts{pulled: 1, upToDate: 1, manual: 1, failed: 1},
+		},
+		{
+			name: "同类多仓库分别累计",
+			results: []syncResult{
+				{name: "a", outcome: outcomePulled},
+				{name: "b", outcome: outcomePulled},
+				{name: "c", outcome: outcomeUpToDate},
+				{name: "d", outcome: outcomeFailed},
+				{name: "e", outcome: outcomeFailed},
+			},
+			want: syncCounts{pulled: 2, upToDate: 1, manual: 0, failed: 2},
+		},
+		{
+			name: "顺序不影响计数",
+			results: []syncResult{
+				{name: "a", outcome: outcomeFailed},
+				{name: "b", outcome: outcomeUpToDate},
+				{name: "c", outcome: outcomePulled},
+			},
+			want: syncCounts{pulled: 1, upToDate: 1, manual: 0, failed: 1},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := summarizeSyncResults(c.results); got != c.want {
+				t.Errorf("summarizeSyncResults() = %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+// syncResultsFixture 返回一份四类结局齐全的结果，供清单子集的测试共用。
+// 顺序刻意打乱：清单必须跟随 results 的顺序，而不是按结局重新分组
+func syncResultsFixture() []syncResult {
+	return []syncResult{
+		{name: "pulled-a", path: "/repos/a", outcome: outcomePulled},
+		{name: "up-to-date", path: "/repos/b", outcome: outcomeUpToDate},
+		{name: "manual", path: "/repos/c", outcome: outcomeManual, manualHint: "push manually"},
+		{name: "failed", path: "/repos/d", outcome: outcomeFailed, manualHint: "check the network"},
+		{name: "pulled-b", path: "/repos/e", outcome: outcomePulled},
+	}
+}
+
+// TestIsUpdatedOnlyPulled 表驱动确认“已更新”判定只认 outcomePulled。
+//
+// 判定本身抽成具名方法后，它与调用点引用同一个符号：谁把方法放宽，这里立刻红；
+// 而 TestPickSyncResultsUpdatedOnlyPulled 只负责锁“挑选时确实用了这个判定”
+func TestIsUpdatedOnlyPulled(t *testing.T) {
+	for _, c := range []struct {
+		outcome syncOutcome
+		want    bool
+	}{
+		{outcomePulled, true},
+		{outcomeUpToDate, false},
+		{outcomeManual, false},
+		{outcomeFailed, false},
+	} {
+		if got := c.outcome.isUpdated(); got != c.want {
+			t.Errorf("路径 %d 的 isUpdated() = %v, want %v", c.outcome, got, c.want)
+		}
+	}
+}
+
+// TestPickSyncResultsUpdatedOnlyPulled 锁住“已更新清单只收 outcomePulled”这条规则。
+//
+// 这条规则决定清单能不能一眼回答“哪些仓库真的动了”：混进 outcomeUpToDate 会让清单
+// 退化成“所有仓库的名字”，混进 manual / failed 则会与紧随其后的手动清单重复。
+func TestPickSyncResultsUpdatedOnlyPulled(t *testing.T) {
+	updated := pickSyncResults(syncResultsFixture(), syncOutcome.isUpdated)
+
+	for _, r := range updated {
+		if !r.outcome.isUpdated() {
+			t.Errorf("已更新清单里混进了 %d 的仓库 %q", r.outcome, r.name)
+		}
+	}
+	if len(updated) != 2 {
+		t.Fatalf("已更新清单长度 = %d, want 2（只有两个 outcomePulled）", len(updated))
+	}
+	if updated[0].name != "pulled-a" || updated[1].name != "pulled-b" {
+		t.Errorf("已更新清单顺序 = [%q %q], want [pulled-a pulled-b]", updated[0].name, updated[1].name)
+	}
+}
+
+// TestPickSyncResultsManualKeepsFailures 确保手动清单仍然同时收“需人工决策”与“某步失败”。
+//
+// 失败也要求用户停下手上的事去查网络或权限，两条清单的成员规则就此分家过一次：
+// 若把这里收窄成只认 outcomeManual，失败仓库既不在成功清单也不在手动清单里，
+// 用户只能回上面翻逐仓明细，而收尾行却还报着“有失败”
+func TestPickSyncResultsManualKeepsFailures(t *testing.T) {
+	manual := pickSyncResults(syncResultsFixture(), syncOutcome.needsManual)
+
+	got := make([]string, 0, len(manual))
+	for _, r := range manual {
+		got = append(got, r.name)
+	}
+	want := []string{"manual", "failed"}
+	if len(got) != len(want) {
+		t.Fatalf("手动清单 = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("手动清单 = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestPrintSyncList 覆盖清单打印的两条用户可见规则：空清单整段静默，
+// 处理建议只跟随有建议的条目。
+//
+// printSyncList 直接写 pterm，要断言就得接管 pterm 的全局输出。本包其余测试都不碰
+// 这个全局值，因此换到缓冲区、结束后恢复成 os.Stdout 即为还原默认状态。
+// 标题由调用方传入的消息函数打印（决定黄/绿），测试用记录调用次数的替身即可判断
+// “空清单连标题都不打”，不必断言标题的着色
+func TestPrintSyncList(t *testing.T) {
+	defer pterm.SetDefaultOutput(os.Stdout)
+
+	cases := []struct {
+		name         string
+		results      []syncResult
+		wantHeading  bool
+		wantContains []string
+		wantAbsent   []string
+	}{
+		{
+			name:        "空清单：连标题都不打，也不留空行",
+			results:     nil,
+			wantHeading: false,
+		},
+		{
+			name:         "已拉取成功：只有名称与路径",
+			results:      []syncResult{{name: "repo-a", path: "/repos/a", outcome: outcomePulled}},
+			wantHeading:  true,
+			wantContains: []string{"[repo-a]", "/repos/a"},
+			wantAbsent:   []string{"->"},
+		},
+		{
+			name: "需要手动处理：建议另起一行跟在条目之后",
+			results: []syncResult{
+				{name: "repo-b", path: "/repos/b", outcome: outcomeManual, manualHint: "push manually"},
+			},
+			wantHeading:  true,
+			wantContains: []string{"[repo-b]", "/repos/b", "-> push manually"},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			pterm.SetDefaultOutput(&buf)
+
+			headingCalls := 0
+			printSyncList("TITLE", c.results, func(string) { headingCalls++ })
+
+			if got := headingCalls > 0; got != c.wantHeading {
+				t.Errorf("是否打印标题 = %v, want %v", got, c.wantHeading)
+			}
+			out := buf.String()
+			if !c.wantHeading && out != "" {
+				t.Errorf("空清单不应产生任何输出，实际输出：%q", out)
+			}
+			for _, want := range c.wantContains {
+				if !strings.Contains(out, want) {
+					t.Errorf("输出缺少 %q，实际输出：%q", want, out)
+				}
+			}
+			for _, absent := range c.wantAbsent {
+				if strings.Contains(out, absent) {
+					t.Errorf("输出不应包含 %q，实际输出：%q", absent, out)
+				}
+			}
+		})
 	}
 }
