@@ -111,7 +111,8 @@ func runWithOutputEnv(ctx context.Context, repoPath string, extraEnv []string, a
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), extraEnv...)
 	output, err := cmd.Output()
 	if err != nil {
-		return "", err
+		// cmd.Stderr 保持为 nil，Output 才会把子进程的 stderr 收进 ExitError
+		return "", newCommandError(ctx, stderrOf(err), err)
 	}
 	return string(output), nil
 }
@@ -138,6 +139,11 @@ func runWithRecordLimit(ctx context.Context, repoPath string, extraEnv []string,
 	cmd := gitCmd(ctx, args)
 	cmd.Dir = repoPath
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), extraEnv...)
+	// stdout 走管道流式读，stderr 收进有上限的缓冲：这个函数存在的目的就是给内存设限，
+	// 失败时仍要把 git 的原因带出来。cmd.Stderr 留空时子进程的 stderr 接的是空设备、
+	// 本来就不会阻塞，接上它纯粹是为了拿到文本。
+	stderr := cappedBuffer{limit: stderrLimit}
+	cmd.Stderr = &stderr
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -175,7 +181,7 @@ func runWithRecordLimit(ctx context.Context, repoPath string, extraEnv []string,
 		return string(trimNulRecords(buf, limit)), true, nil
 	}
 	if waitErr != nil {
-		return "", false, waitErr
+		return "", false, newCommandError(ctx, stderr.String(), waitErr)
 	}
 	return string(buf), false, nil
 }
