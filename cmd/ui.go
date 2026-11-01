@@ -1540,6 +1540,21 @@ func runUI(cmd *cobra.Command, port int, host string, noOpen bool, allowHosts []
 	fmt.Fprintln(cmd.OutOrStdout(), srv.Summary())
 
 	// 拉起浏览器与阻塞都由 webui 负责；OpenBrowser 打开的是带 token 的完整地址
+	//
+	// Ctrl-C 的关闭路径必须显式挂上：Serve 进去之后阻塞在 http.Server.Serve 里，
+	// 它不理会任何 ctx，因此只取消 ctx 的话进程会一直停在服务循环上（首个 Ctrl-C 看起来“没反应”）。
+	// 收到取消时关掉服务、释放端口，Serve 内部拿到 ErrServerClosed 并返回 nil，
+	// runUI 于是正常返回，退出码由 Execute 统一给 130。
+	//
+	// 只加这一条路径，不改上面那个采集 ctx 的语义：它跨请求复用，不能换成 cmd.Context()，
+	// 否则每次请求结束都会牵连全局采集缓存；但真要退出时采集也该停，所以回调里一并 cancel()。
+	// stopShutdown 在 Serve 返回后撤销注册，正常退出时不会留下一次多余的关闭动作
+	stopShutdown := context.AfterFunc(cmd.Context(), func() {
+		cancel()
+		_ = srv.Close()
+	})
+	defer stopShutdown()
+
 	return srv.Serve()
 }
 
