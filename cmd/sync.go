@@ -46,6 +46,16 @@ func (o syncOutcome) needsManual() bool {
 	return o == outcomeManual || o == outcomeFailed
 }
 
+// isUpdated 判断该类结果是否要列进“已拉取成功”的清单。
+// 只有真正被 pull 过的仓库才算更新：已是最新的仓库没有任何改动，列进来会把清单
+// 稀释成“所有仓库”。
+//
+// 与 needsManual 一样做成具名判定，是为了让调用点与测试引用同一个符号：这条规则若
+// 在两边各写一份字面量，任何一边改了都测不出来
+func (o syncOutcome) isUpdated() bool {
+	return o == outcomePulled
+}
+
 // syncCmd 实现 "ggt sync"。
 // 自动同步所有配置仓库，决策流程：
 // 1. git fetch --all --prune 拉取远程最新数据
@@ -93,9 +103,7 @@ Examples:
 			// 逐仓库结果本来就要打印、计数、归入清单，分开遍历只多几次线性扫描，
 			// 换来的是计数口径与清单成员都能被单测直接断言，而不必靠读这段闭包去确认
 			counts := summarizeSyncResults(results)
-			// “已更新”只收真正被 pull 过的仓库。把已是最新的仓库也列进来，清单会长到
-			// 看不出哪几个仓库动了，与“需要手动处理”清单“只点出要动手的”用意相同
-			updatedList := pickSyncResults(results, func(o syncOutcome) bool { return o == outcomePulled })
+			updatedList := pickSyncResults(results, syncOutcome.isUpdated)
 			manualList := pickSyncResults(results, syncOutcome.needsManual)
 
 			// 两张清单共用同一个打印函数，只差标题与标题样式。

@@ -163,15 +163,35 @@ func syncResultsFixture() []syncResult {
 	}
 }
 
+// TestIsUpdatedOnlyPulled 表驱动确认“已更新”判定只认 outcomePulled。
+//
+// 判定本身抽成具名方法后，它与调用点引用同一个符号：谁把方法放宽，这里立刻红；
+// 而 TestPickSyncResultsUpdatedOnlyPulled 只负责锁“挑选时确实用了这个判定”
+func TestIsUpdatedOnlyPulled(t *testing.T) {
+	for _, c := range []struct {
+		outcome syncOutcome
+		want    bool
+	}{
+		{outcomePulled, true},
+		{outcomeUpToDate, false},
+		{outcomeManual, false},
+		{outcomeFailed, false},
+	} {
+		if got := c.outcome.isUpdated(); got != c.want {
+			t.Errorf("路径 %d 的 isUpdated() = %v, want %v", c.outcome, got, c.want)
+		}
+	}
+}
+
 // TestPickSyncResultsUpdatedOnlyPulled 锁住“已更新清单只收 outcomePulled”这条规则。
 //
 // 这条规则决定清单能不能一眼回答“哪些仓库真的动了”：混进 outcomeUpToDate 会让清单
 // 退化成“所有仓库的名字”，混进 manual / failed 则会与紧随其后的手动清单重复。
 func TestPickSyncResultsUpdatedOnlyPulled(t *testing.T) {
-	updated := pickSyncResults(syncResultsFixture(), func(o syncOutcome) bool { return o == outcomePulled })
+	updated := pickSyncResults(syncResultsFixture(), syncOutcome.isUpdated)
 
 	for _, r := range updated {
-		if r.outcome != outcomePulled {
+		if !r.outcome.isUpdated() {
 			t.Errorf("已更新清单里混进了 %d 的仓库 %q", r.outcome, r.name)
 		}
 	}
