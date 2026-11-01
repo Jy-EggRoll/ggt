@@ -6,7 +6,6 @@ import (
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/git"
-	"github.com/jy-eggroll/ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -34,15 +33,15 @@ Examples:
   ggt sum              Short form`, nil),
 		Run: func(cmd *cobra.Command, args []string) {
 			// 统一 ctx：第一阶段并发检查与第二阶段交互式操作（diff/count-objects/add/commit/push）
-			// 都复用同一 ctx，一旦它被取消，worker.Map 与正在执行的 git 调用会一起中断；
+			// 都复用命令自身的 ctx（取自 Execute 建立的信号根 ctx），Ctrl-C 时 worker.Map
+			// 与正在执行的 git 调用会一起中断；
 			// 这些调用一律走 git.RunContext / RunCombinedContext，未设截止时间时由 git 包叠加默认超时
-			ctx := context.Background()
+			ctx := cmd.Context()
 			repos := AllRepos(ctx)
 			InfoLn(l10n.T("Repositories: {{.Count}} — checking for changes...", map[string]any{"Count": len(repos)}))
 
 			// 第一阶段：并发检查所有仓库（含子模块）的 git 状态
-			t := NewDebugTimer(l10n.T("Status check (repositories: {{.Count}})", map[string]any{"Count": len(repos)}))
-			results := worker.Map(ctx, repos, Concurrency(), func(ctx context.Context, e RepoEntry) *dirtyRepo {
+			results := gather(ctx, l10n.T("Status check (repositories: {{.Count}})", map[string]any{"Count": len(repos)}), repos, func(ctx context.Context, e RepoEntry) *dirtyRepo {
 				// 是否值得处理，一律由机器可读的 porcelain v2 状态判定。
 				// 原实现是从给人看的 --short 文本里反推：统计非空行数判断“有没有文件变更”、
 				// 用 strings.Contains(output, "[ahead") 判断“有没有待推送提交”。两处都依赖
@@ -75,9 +74,13 @@ Examples:
 					hasUncommitted: len(st.Files) > 0,
 				}
 			})
-			t.Done()
 
-			// 第二阶段：顺序处理每个有变更的仓库（交互+提交需等待用户输入）
+			// 第二阶段：顺序处理每个有变更的仓库（交互+提交需等待用户输入）。
+			// 被 Ctrl-C 打断后不再进入这一段：交互提示一旦出现在中断之后，用户会以为
+			// 还得继续处理，实际本进程马上就要以 130 退出
+			if ctx.Err() != nil {
+				return
+			}
 			for _, d := range results {
 				if d == nil {
 					continue

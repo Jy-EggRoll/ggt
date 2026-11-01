@@ -3,10 +3,13 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/jy-eggroll/eggokit/l10n"
@@ -14,6 +17,7 @@ import (
 	"github.com/jy-eggroll/eggokit/updater"
 	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/jy-eggroll/ggt/internal/locales"
+	"github.com/jy-eggroll/ggt/internal/worker"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -84,6 +88,13 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 	return root
 }
 
+// exitCodeInterrupted 是“被 SIGINT 打断”的退出码。
+//
+// 依据是 shell 的通行约定：进程被信号 N 终止时退出码记为 128+N，SIGINT 的编号是 2，
+// 128+2 即 130（bash 对前台收到 Ctrl-C 的命令同样给出 130）。用它而不是笼统的 1，
+// 是为了让脚本能区分“被打断、结果不完整”与“命令真的失败了”。
+const exitCodeInterrupted = 130
+
 // Execute 是程序的入口，由 main.go 调用。
 //
 // 三步顺序是有意为之，不能调换：
@@ -91,6 +102,8 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 //     在构造时就要用到，所以语言解析必须走在最前面
 //  2. 再构造命令树。各命令的构造函数会调用 T()，此时语言已就绪
 //  3. 最后才交给 cobra 解析参数并执行
+//
+// 退出码分三档：正常返回 0；命令报错 1；被 Ctrl-C/SIGTERM 打断 130。
 func Execute() {
 	// 清理上一次升级留下的文件，放在最前面：它与语言、命令树都无关，也不该被后面的提前返回跳过。
 	// 为什么只能等到“下一次运行”才清：升级成功的那一刻，旧版本正是当前进程自己的映像，
@@ -116,7 +129,22 @@ func Execute() {
 		os.Exit(1)
 	}
 
+	// 信号根 ctx：Ctrl-C（os.Interrupt）与 SIGTERM 都取消它，各命令把 cmd.Context()
+	// 一路传给 worker.Map 与 git.RunContext，正在跑的 git 子进程因此会被 context 杀掉，
+	// 而不是只剩本进程被硬杀、留下满屏 git 子进程继续跑。
+	//
+	// 为什么把 SIGTERM 也登记进来：Unix 上 kill 与服务管理器走的是 SIGTERM，
+	// 与 Ctrl-C 归到同一条“收尾后退出”的路径，脚本行为才一致。
+	// Windows 上只有 os.Interrupt 会真正投递（Go 的 syscall 包虽定义了 SIGTERM 常量，
+	// 但 Windows 没有 POSIX 信号，os.Process.Signal 也只支持 Kill 与 Interrupt），
+	// 登记它等于空操作，不影响 Windows 上的 Ctrl-C。
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
 	root := buildRoot()
+	// 取消信号必须挂在 root 上：子命令的 cmd.Context() 继承它，这是七个遍历型命令
+	// 能感知 Ctrl-C 的唯一来源
+	root.SetContext(signalCtx)
 	// 错误一律走 stderr：脚本靠 stdout 取数据、靠退出码判断成败，把错误混进 stdout
 	// 会污染管道（pterm 默认写 stdout，这里显式改掉）
 	pterm.Error.Writer = os.Stderr
@@ -124,7 +152,24 @@ func Execute() {
 	// 和下面的分支（“ERROR 执行失败: ...”）各打印一次
 	root.SilenceErrors = true
 
-	if err := root.Execute(); err != nil {
+	// 第二次信号恢复默认处置：首个信号取消 ctx 后立刻注销处理器，用户再按一次 Ctrl-C
+	// 就按系统默认行为立即终止进程。需要一个兜底的原因是并非每一步都理会 ctx——
+	// 例如 Windows 上的 takeown 是独立进程，取消 ctx 并不会让它停下
+	go func() {
+		<-signalCtx.Done()
+		stopSignals()
+	}()
+
+	err := root.Execute()
+
+	// 被打断时以 130 退出：各命令已经把已尝试仓库的结果顺序打印完，这里只负责退出码。
+	// 判在错误分支之前，是因为“被打断”比“某个命令报错”更能解释这次运行的结局，
+	// 退出码也该优先反映它
+	if signalCtx.Err() != nil {
+		os.Exit(exitCodeInterrupted)
+	}
+
+	if err != nil {
 		// errSilent 表示命令自己已经把错误打印过了（如 config show 在报错后还给了修复提示），
 		// 再包一层 "Execution failed:" 只会重复
 		if !errors.Is(err, errSilent) {
@@ -208,4 +253,68 @@ func NewDebugTimer(label string) *DebugTimer {
 // 业务命令里，还要靠一个全局布尔决定要不要打
 func (t *DebugTimer) Done() {
 	logger.Debug(t.label, "duration", time.Since(t.start))
+}
+
+// gather 是遍历型命令共用的采集骨架：起计时、按原序并发采集、取消后剔除没跑过的条目、
+// 收尾计时。抬头、逐项打印、末尾汇总、错误语义一律留在调用点——它们各命令差别很大，
+// 收进来就等于把七份互不相同的展示逻辑塞进一个函数，改一处会波及全部命令。
+//
+// 拦截与过滤这两件事只能待在这里，因为调用点拿不到它们依赖的信息，二者都源于
+// worker.Map 的取消行为：
+//   - Map 只在派生下一个任务之前看 ctx，已经派生、正排在信号量上等位的 goroutine
+//     在取消后仍会执行 fn，因此“取消后不再启动新任务”只能在 fn 入口拦一道；
+//   - Map 按原始下标写回结果、未启动的位置留零值，而“谁先启动”取决于各 goroutine
+//     抢信号量的次序、并不保证是前 k 个，所以调用点拿到的那份切片既分不清哪条没跑过，
+//     也无法靠截断长度来猜，只能在这里记下真正进入过 fn 的下标再过滤。
+//
+// label 必须由调用点用 l10n.T(...) 渲染后传入：l10n 提取器要求消息调用的首参是
+// 字符串字面量，若在这里代调 l10n.T，传进来的是变量，译文会静默失效。
+//
+// 计时走 defer，即使 fn panic（worker.Map 会 recover 并让该位置留零值）也一定会收尾。
+//
+// 代价是每次调用固定多分配两个与仓库数同阶的切片（tasks 与 started），取消路径还要
+// 再分配一次过滤结果；正常路径只是多这两次分配，返回值与未引入取消过滤时完全一致。
+func gather[T any](ctx context.Context, label string, repos []RepoEntry, fn func(context.Context, RepoEntry) T) []T {
+	t := NewDebugTimer(label)
+	defer t.Done()
+
+	// worker.Map 按原始下标写回结果，但被 ctx 取消时它只保证“不再启动新任务”：
+	// 未启动的条目会留在零值上，而且“谁先启动”取决于各 goroutine 抢信号量的次序，
+	// 并不保证是前 k 个。若把整份结果交给打印，中断时就会把从没跑过的仓库
+	// 当成“干净/成功”打出来。因此这里记下真正进入过 fn 的下标，只在取消后按它过滤；
+	// 未取消时原样返回，分配的那点开销换的是取消路径上的正确性。
+	type gatherTask struct {
+		idx  int
+		repo RepoEntry
+	}
+	started := make([]bool, len(repos))
+	tasks := make([]gatherTask, len(repos))
+	for i, e := range repos {
+		tasks[i] = gatherTask{idx: i, repo: e}
+	}
+
+	results := worker.Map(ctx, tasks, Concurrency(), func(ctx context.Context, task gatherTask) T {
+		var zero T
+		// worker.Map 只在“派生下一个任务”之前看 ctx：已经派生、正排在信号量上等位的
+		// goroutine 在取消之后仍会执行 fn。这里再拦一道，取消后不再启动任何新任务——
+		// 否则 takeown 这类本就不理会 ctx 的步骤，会在 Ctrl-C 之后把整批任务继续跑完
+		if ctx.Err() != nil {
+			return zero
+		}
+		// 各 goroutine 只写自己的下标，互不重叠，无需加锁
+		started[task.idx] = true
+		return fn(ctx, task.repo)
+	})
+
+	if ctx.Err() == nil {
+		return results
+	}
+
+	attempted := make([]T, 0, len(results))
+	for i, r := range results {
+		if started[i] {
+			attempted = append(attempted, r)
+		}
+	}
+	return attempted
 }
