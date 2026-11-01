@@ -1,5 +1,6 @@
 // config 包管理 ggt 的 JSON 配置文件。
-// 默认路径：~/.config/go-git-ggt/ggt-config.json
+// 配置文件路径的唯一出处是 GetDefaultConfigPath，别处不要复述这个字面量，
+// 否则改默认位置时必然漏改其中几处，而漏掉的那处不会报错、只会让人对着旧路径排查。
 //
 // 配置项：
 //   - repo_paths: 直接添加的仓库路径列表

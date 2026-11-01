@@ -4,10 +4,13 @@ package cmd
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/config"
+	"github.com/jy-eggroll/ggt/internal/locales"
 )
 
 // TestBuildSeparator 验证分隔线由 width 个 "─" 组成（ANSI 转义不影响可见字符数）。
@@ -96,5 +99,36 @@ func TestGatherDropsNotStartedAfterCancel(t *testing.T) {
 	case extra := <-started:
 		t.Errorf("取消后又启动了 %q，应当不再启动新任务", extra)
 	default:
+	}
+}
+
+// TestHelpTextConfigPathMatchesDefaultPath 固定“帮助文本里印的配置路径”与
+// config.GetDefaultConfigPath() 的一致性。
+//
+// 这条路径在帮助文案里写了一次，而那段文案同时是 l10n 消息 id 的一部分（改它要连带改语言
+// 文件），真正的定义在 GetDefaultConfigPath，两处无法合成一处。只能靠这里比对：任一边先改，
+// 测试就红，帮助里才不会长期印着一条已经不存在的路径。
+//
+// home 取自临时目录，HOME 与 USERPROFILE 同时指向它（os.UserHomeDir 在 Unix 与 Windows
+// 上分别读这两个变量），因此既不读使用者真实的主目录，也不要求本机真的存在 ~/.config。
+func TestHelpTextConfigPathMatchesDefaultPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	// 帮助文本按英文渲染时为消息 id 原文；显式初始化，免得受同包其它测试切换语言的影响
+	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
+		t.Fatalf("初始化 l10n 失败: %v", err)
+	}
+
+	defaultPath := config.GetDefaultConfigPath()
+	rel, ok := strings.CutPrefix(defaultPath, home)
+	if !ok {
+		t.Fatalf("GetDefaultConfigPath() = %q，不以临时主目录 %q 开头", defaultPath, home)
+	}
+	want := "~" + filepath.ToSlash(rel)
+
+	if help := newRootCmd().Long; !strings.Contains(help, want) {
+		t.Errorf("根命令帮助文本未包含 %q，实际为:\n%s", want, help)
 	}
 }
