@@ -103,10 +103,50 @@ func buildSeparator(width int) string {
 	return pterm.FgLightYellow.Sprint(strings.Repeat("─", width))
 }
 
+// ——— 仓库标签 ———
+// 标签的文本构成只集中在下面几个 Text 函数里，着色函数在外面包一层青色。
+// 分成两层是为了让“要纯文本标签”的场合（拼进一句话、写进 JSON）不必自己再拼一遍，
+// 也不会把 ANSI 转义带到本不该有着色的地方。
+
+// repoSubTag 返回子模块标识及其后的分隔空格，顶层仓库返回空串。
+// 标识文本只在这里出现一次：命令行标题、句内引用、看板提示都经它拼出，
+// 换语言或改标识样式时不会漏掉其中某一个场景。
+func repoSubTag(isSubmodule bool) string {
+	if !isSubmodule {
+		return ""
+	}
+	return l10n.T("[sub]", nil) + " "
+}
+
+// RepoNameText 返回不含 ANSI 转义的仓库名 "[name]"。
+func RepoNameText(name string) string {
+	return "[" + name + "]"
+}
+
+// RepoLabelText 返回不含 ANSI 转义的仓库标签，文本与 RepoLabel 完全一致：
+//   - 顶层仓库：[name]
+//   - 子模块：[子] name
+func RepoLabelText(name string, isSubmodule bool) string {
+	if isSubmodule {
+		return repoSubTag(true) + name
+	}
+	return RepoNameText(name)
+}
+
+// RepoInlineText 返回“句子中提到某个仓库”时用的纯文本标签：顶层仓库是裸名，
+// 子模块补上 [子] 前缀。
+//
+// 它与 RepoLabelText 的差别只在顶层仓库要不要方括号。summary 的“Processing ...”与
+// 看板的失败提示都是嵌进一句话里的，那里原本就是裸名，套上方括号等于改了既有输出；
+// 而子模块身份恰恰是在句子中最容易丢掉的信息，所以这里只补标识、不动名字的写法。
+func RepoInlineText(name string, isSubmodule bool) string {
+	return repoSubTag(isSubmodule) + name
+}
+
 // RepoName 返回青色包裹的仓库名前缀 "[name]"，全仓统一仓库名着色。
 // 此前 status 用 FgYellow、size/summary/remote 用 FgCyan，同一语义三色并存，现已统一到这里。
 func RepoName(name string) string {
-	return pterm.FgCyan.Sprintf("[%s]", name)
+	return pterm.FgCyan.Sprint(RepoNameText(name))
 }
 
 // RepoLabel 返回带“是否子模块”语义的仓库标签：
@@ -116,10 +156,7 @@ func RepoName(name string) string {
 // 所有命令在打印仓库名时必须统一经此函数，消除此前各个命令对仓库名异色/无前缀的割裂处理，
 // 也让“子模块”这一身份在任意命令输出里都有一致的 [子] 标识。
 func RepoLabel(name string, isSubmodule bool) string {
-	if isSubmodule {
-		return pterm.FgCyan.Sprintf("%s %s", l10n.T("[sub]", nil), name)
-	}
-	return RepoName(name)
+	return pterm.FgCyan.Sprint(RepoLabelText(name, isSubmodule))
 }
 
 // RepoLine 打印一行“仓库标签 + 备注”，作为各命令的仓库标题行（不含分隔线）。

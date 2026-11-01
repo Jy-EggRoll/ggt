@@ -1298,10 +1298,13 @@ func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
 	var req uiWriteRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	// 只需要仓库名与错误文本，不需要更多字段；outcome 保持按仓库顺序返回（worker.Map 保序）
+	// 只需要仓库名、子模块身份与错误文本，不需要更多字段；outcome 保持按仓库顺序返回
+	// （worker.Map 保序）。子模块身份必须跟着走到汇总那一步：失败提示里只有裸名时，
+	// 与父仓库同名的子模块看起来就是父仓库自己错了
 	type outcome struct {
-		name string
-		err  string
+		name        string
+		isSubmodule bool
+		err         string
 	}
 	repos := c.repos().Repos
 	if strings.TrimSpace(req.Repo) != "" {
@@ -1319,9 +1322,9 @@ func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
 		// 用 RunCombinedContext：失败原因在 git 的 stderr 里，err 本身只是 "exit status N"
 		out, err := git.RunCombinedContext(ctx, repo.Path, args...)
 		if err != nil {
-			return outcome{name: repo.Name, err: strings.TrimSpace(out)}
+			return outcome{name: repo.Name, isSubmodule: repo.IsSubmodule, err: strings.TrimSpace(out)}
 		}
-		return outcome{name: repo.Name}
+		return outcome{name: repo.Name, isSubmodule: repo.IsSubmodule}
 	})
 
 	// fetch 会改变 ahead/behind，因此不论成败都让快照失效，让页面立刻看到新的领先/落后
@@ -1330,7 +1333,9 @@ func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
 	failures := make([]string, 0, len(outcomes))
 	for _, o := range outcomes {
 		if o.err != "" {
-			failures = append(failures, o.name+": "+o.err)
+			// 这段文本会原样进 JSON 交给页面，所以只能拼纯文本标签：
+			// 着色版 RepoLabel 会把 ANSI 转义写进字符串，页面上显示成一串乱码
+			failures = append(failures, RepoInlineText(o.name, o.isSubmodule)+": "+o.err)
 		}
 	}
 	if len(failures) > 0 {

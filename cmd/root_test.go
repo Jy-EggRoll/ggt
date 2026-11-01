@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -29,6 +30,78 @@ func TestRepoName(t *testing.T) {
 	got := RepoName("my-repo")
 	if !strings.Contains(got, "[my-repo]") {
 		t.Errorf("RepoName 应含 [my-repo], 实际 %q", got)
+	}
+}
+
+// TestRepoTextLabels 钉住三个纯文本标签函数的文本构成。
+//
+// 方括号与 [子] 前缀只在这几个函数里拼：凡是要“不带着色的标签”的地方都从这里取，
+// 免得各调用点自己拼一遍、慢慢拼出两种写法。顶层仓库在 RepoLabelText 里带方括号，
+// 在 RepoInlineText 里是裸名——后者供嵌进句子的场合使用，那些地方原本就没有方括号。
+func TestRepoTextLabels(t *testing.T) {
+	// [sub] 的译文随全局语言变化，显式初始化成英文，免得同包其它测试切到中文后断言失败
+	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
+		t.Fatalf("初始化 l10n 失败: %v", err)
+	}
+
+	cases := []struct {
+		name        string
+		isSubmodule bool
+		wantName    string
+		wantLabel   string
+		wantInline  string
+	}{
+		{name: "my-repo", wantName: "[my-repo]", wantLabel: "[my-repo]", wantInline: "my-repo"},
+		{name: "sub/a", isSubmodule: true, wantName: "[sub/a]", wantLabel: "[sub] sub/a", wantInline: "[sub] sub/a"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := RepoNameText(c.name); got != c.wantName {
+				t.Errorf("RepoNameText = %q, 期望 %q", got, c.wantName)
+			}
+			if got := RepoLabelText(c.name, c.isSubmodule); got != c.wantLabel {
+				t.Errorf("RepoLabelText = %q, 期望 %q", got, c.wantLabel)
+			}
+			if got := RepoInlineText(c.name, c.isSubmodule); got != c.wantInline {
+				t.Errorf("RepoInlineText = %q, 期望 %q", got, c.wantInline)
+			}
+
+			// 纯文本标签会进 JSON、进日志，一旦混入 ANSI 转义就是页面上的乱码
+			for _, s := range []string{RepoNameText(c.name), RepoLabelText(c.name, c.isSubmodule), RepoInlineText(c.name, c.isSubmodule)} {
+				if strings.Contains(s, "\x1b") {
+					t.Errorf("%q 里出现了 ANSI 转义，纯文本标签不该着色", s)
+				}
+			}
+		})
+	}
+}
+
+// TestRepoLabelColorWrapsText 验证着色函数只是在纯文本外面套一层颜色，不改动文本本身：
+// 去掉 ANSI 转义后必须与 Text 版本逐字节相同。
+//
+// 这里不断言具体色码，因为 pterm 底层的 gookit/color 在非 TTY 输出（go test 就是）
+// 下会自行剥掉色码，断言色码等于把测试绑在运行环境上。色码层面的“逐字节不变”
+// 由新旧二进制在同一伪终端下的输出比对来守，那是唯一能同时覆盖两者的场合。
+func TestRepoLabelColorWrapsText(t *testing.T) {
+	ansi := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	cases := []struct {
+		name        string
+		isSubmodule bool
+	}{
+		{name: "my-repo"},
+		{name: "sub/a", isSubmodule: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ansi.ReplaceAllString(RepoName(c.name), ""); got != RepoNameText(c.name) {
+				t.Errorf("RepoName 去掉转义后 = %q, 期望 %q", got, RepoNameText(c.name))
+			}
+			if got := ansi.ReplaceAllString(RepoLabel(c.name, c.isSubmodule), ""); got != RepoLabelText(c.name, c.isSubmodule) {
+				t.Errorf("RepoLabel 去掉转义后 = %q, 期望 %q", got, RepoLabelText(c.name, c.isSubmodule))
+			}
+		})
 	}
 }
 

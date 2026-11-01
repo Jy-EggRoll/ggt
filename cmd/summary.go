@@ -20,6 +20,16 @@ type dirtyRepo struct {
 	hasUncommitted bool
 }
 
+// summaryProcessingMsg 组装“正在处理哪个仓库”这一行。
+//
+// 名称用 RepoInlineText 而不是裸名：上面那行标题（RepoLine）本来就带 [子] 标识，
+// 到了这句却退化成裸名时，子模块与同名顶层仓库在终端里看起来一模一样，
+// 而两者提交后的落点（子模块自己的仓库 vs 父仓库）完全不同，事后排错容易看错对象。
+// 顶层仓库仍然只显示名字，输出与改动前一致。
+func summaryProcessingMsg(d *dirtyRepo) string {
+	return l10n.T("Processing {{.Name}} ...", map[string]any{"Name": RepoInlineText(d.name, d.isSubmodule)})
+}
+
 // summaryCmd 实现 "ggt summary"（简写 ggt sum）。
 // 先并发检查所有仓库的状态，再对有变更的仓库进行交互式提交流程。
 func newSummaryCmd() *cobra.Command {
@@ -109,7 +119,7 @@ Examples:
 					continue
 				}
 
-				InfoMsg(l10n.T("Processing {{.Name}} ...", map[string]any{"Name": d.name}))
+				InfoMsg(summaryProcessingMsg(d))
 
 				// 仅在存在未提交的文件变更时执行 add + commit
 				if d.hasUncommitted {

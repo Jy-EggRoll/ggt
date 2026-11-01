@@ -1,21 +1,27 @@
-// ui_git_args_test.go 覆盖推送 / 拉取 / 拉取的参数构造，以及看板上创建标签的校验与端点。
+// ui_git_args_test.go 覆盖推送 / 拉取 / 拉取的参数构造，看板上创建标签的校验与端点，
+// 以及批量 fetch 失败提示的文本构成。
 //
 // 三组参数函数是从 HTTP 处理函数里抽出来的纯函数，这里直接断言参数形状：靠起服务、
 // 建仓库、真的推一次来验证“有没有带 --follow-tags”代价大得多，而且失败原因常常被
-// 网络或凭据掩盖。标签端点则在真实临时仓库上跑一次，确认校验之后 git 真的建出了附注标签。
+// 网络或凭据掩盖。标签端点与 fetch 失败提示则在真实临时仓库上跑一次，确认前者建出了
+// 附注标签、后者把子模块身份带进了回给页面的那段文字。
 package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/config"
+	"github.com/jy-eggroll/ggt/internal/locales"
 )
 
 func TestPushArgs(t *testing.T) {
@@ -132,6 +138,18 @@ func TestTagArgs(t *testing.T) {
 func newTagTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	initRepoAt(t, dir)
+	return dir
+}
+
+// initRepoAt 在指定目录里建一个有一个提交的仓库。
+// 单独拆出来是为了子模块用例：子模块必须落在父仓库内部的固定相对路径上，
+// 不能像 newTagTestRepo 那样由 t.TempDir() 决定位置
+func initRepoAt(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("创建目录 %s 失败: %v", dir, err)
+	}
 	for _, args := range [][]string{
 		{"init", "-q"},
 		{"config", "user.name", "ggt test"},
@@ -144,7 +162,6 @@ func newTagTestRepo(t *testing.T) string {
 			t.Fatalf("git %s 失败: %v: %s", strings.Join(args, " "), err, out)
 		}
 	}
-	return dir
 }
 
 // newBareRemote 建一个裸仓库充当远端，返回它的路径。
@@ -348,6 +365,76 @@ func TestHandleTagEndpoint(t *testing.T) {
 		cache.handleTag(rec, httptest.NewRequest(http.MethodGet, "/api/tag", nil))
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("状态 = %d，期望 405", rec.Code)
+		}
+	})
+}
+
+// TestHandleFetchFailureLabelsSubmodule 验证看板批量 fetch 的失败提示：子模块那次失败带
+// [sub] 前缀，顶层仓库的失败仍是裸名，且整段文本不含 ANSI 转义。
+//
+// 为什么专门盯这条提示：它是全仓唯一把仓库名拼进 HTTP 响应字符串的地方。这段文本原样
+// 进 JSON 交给页面，顺手换成着色版 RepoLabel 的话 JSON 依然合法、状态码也不变，
+// 页面上只表现为一串乱码，很难想到是后端拼进去的转义码。
+func TestHandleFetchFailureLabelsSubmodule(t *testing.T) {
+	// [sub] 的译文随全局语言变化，显式初始化成英文，免得受同包其它测试切换语言的影响
+	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
+		t.Fatalf("初始化 l10n 失败: %v", err)
+	}
+
+	// 远端指向不存在的本地路径：fetch 一定失败，且失败原因与耗时都不受网络影响
+	brokenRemote := func(t *testing.T) string {
+		t.Helper()
+		return filepath.Join(t.TempDir(), "missing.git")
+	}
+	fetchError := func(t *testing.T) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		cache := &uiCache{ctx: context.Background()}
+		cache.handleFetch(rec, httptest.NewRequest(http.MethodPost, "/api/fetch", nil))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("状态 = %d，期望 %d（响应体 %s）", rec.Code, http.StatusConflict, rec.Body.String())
+		}
+		var out uiWriteResult
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("响应不是合法 JSON：%v（%s）", err, rec.Body.String())
+		}
+		if out.Error == "" {
+			t.Fatalf("失败响应应当带上原因：%s", rec.Body.String())
+		}
+		return out.Error
+	}
+
+	t.Run("子模块失败带 [sub] 且不含转义码", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		// 父仓库没有远端，fetch 会成功；只有子模块失败，失败文本才会是子模块那一行
+		parent := newTagTestRepo(t)
+		initRepoAt(t, filepath.Join(parent, "sub", "a"))
+		gitOut(t, filepath.Join(parent, "sub", "a"), "remote", "add", "origin", brokenRemote(t))
+		writeGitmodules(t, parent, "[submodule \"a\"]\n\tpath = sub/a\n\turl = ../missing.git\n")
+		withConfig(t, &config.Config{RepoPaths: []string{parent}})
+
+		msg := fetchError(t)
+		if !strings.Contains(msg, "[sub] sub/a: ") {
+			t.Errorf("失败提示里的子模块应带 [sub] 前缀，实际 %q", msg)
+		}
+		if strings.Contains(msg, "\x1b") {
+			t.Errorf("失败提示会原样进 JSON，不该含 ANSI 转义，实际 %q", msg)
+		}
+	})
+
+	t.Run("顶层仓库失败仍是裸名", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		repo := newTagTestRepo(t)
+		gitOut(t, repo, "remote", "add", "origin", brokenRemote(t))
+		withConfig(t, &config.Config{RepoPaths: []string{repo}})
+
+		msg := fetchError(t)
+		name := filepath.Base(repo)
+		if !strings.Contains(msg, "\n"+name+": ") {
+			t.Errorf("失败提示应以裸仓库名开头，实际 %q", msg)
+		}
+		if strings.Contains(msg, "["+name+"]") {
+			t.Errorf("顶层仓库不该被套上方括号，实际 %q", msg)
 		}
 	})
 }
