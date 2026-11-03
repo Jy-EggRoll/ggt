@@ -79,6 +79,7 @@
   "Ignoring an invalid log_level in the config file: {{.Err}}": "忽略配置文件中无效的 log_level: {{.Err}}",
   "Increase diagnostic verbosity: -v for info, -vv for debug (overrides the log_level setting)": "提高诊断日志详细度: -v 为 info，-vv 为 debug（覆盖 log_level 配置项）",
   "Interface font": "界面字体",
+  "Interrupted: nothing was written to {{.Path}}, and the file list gathered so far is incomplete": "已被中断: 未写出 {{.Path}}，已收集到的文件清单并不完整",
   "Invalid branch name": "分支名不合法",
   "Invalid commit hash": "提交哈希不合法",
   "Invalid file path": "文件路径非法",

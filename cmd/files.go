@@ -1,7 +1,8 @@
 // files.go 实现 "ggt files" 命令，列出所有已入库仓库的文件列表。
 // 使用 gather 并发获取每个仓库的 git ls-files 输出，
 // 支持控制台输出（默认）或写入文件（-o 参数）。
-// 被 Ctrl-C 打断时只输出已经尝试过的仓库，随后由 Execute 以 130 退出。
+// 被 Ctrl-C 打断时只输出已经尝试过的仓库，随后由 Execute 以 130 退出；
+// 指定了 -o 时中断不落盘，只在终端给出告警。
 package cmd
 
 import (
@@ -64,6 +65,16 @@ Examples:
 
 			// 根据 -o 参数决定输出到文件或控制台
 			if outputFile != "" {
+				// 被打断时不落盘。gather 交回来的只有真正跑过的仓库，这份清单缺了没来得及
+				// 列出的那些，可写出来的文件与一份完整清单长得没有区别。下游脚本一般只读
+				// 这个文件、不看退出码（130 未必被每个调用点检查），半份清单会被当成完整
+				// 输入继续用，错的地方要到很后面才显形。中断时宁可什么都不留，让脚本因为
+				// 文件不存在而当场失败；终端上则说清楚是中断导致没写、以及清单并不完整
+				if ctx.Err() != nil {
+					WarnLn(l10n.T("Interrupted: nothing was written to {{.Path}}, and the file list gathered so far is incomplete",
+						map[string]any{"Path": outputFile}))
+					return
+				}
 				if err := os.WriteFile(outputFile, []byte(output.String()), 0644); err != nil {
 					ErrorLn(l10n.T("Failed to write file: {{.Err}}", map[string]any{"Err": err}))
 					return
