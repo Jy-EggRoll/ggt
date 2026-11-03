@@ -52,6 +52,20 @@ func WarnMsg(msg string) {
 	pterm.Warning.Println(msg)
 }
 
+// SummaryMsg 打印遍历型命令的收尾汇总：正常结局用信息样式，被打断时用告警样式。
+//
+// 样式选择之所以收敛到这一处：sync / remote / owned 的收尾都要按“这次有没有被打断”
+// 决定黄还是蓝，各写一份分支迟早有一处漏改，于是同样没跑完，某个命令里是醒目的黄、
+// 另一个命令里还是平淡的蓝。文案不归它管——每个命令的统计口径不同，仍由各自的
+// 选词函数给出，这里只负责那句话以什么颜色出现
+func SummaryMsg(msg string, interrupted bool) {
+	if interrupted {
+		WarnMsg(msg)
+		return
+	}
+	InfoMsg(msg)
+}
+
 // Ln 系列与 Msg 系列的唯一区别，是在输出之后**多留一个空行**。
 //
 // 这个空行不是随手加的：pterm 的 Printfln 会在渲染结果后追加换行，而 Println 会把

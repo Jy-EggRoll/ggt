@@ -67,11 +67,23 @@ Examples:
 			}
 
 			pterm.Println()
-			InfoMsg(l10n.T("Finished: {{.Success}} succeeded, {{.Failed}} failed",
-				map[string]any{"Success": successCount, "Failed": failCount}))
+			interrupted := ctx.Err() != nil
+			SummaryMsg(ownedSummaryLine(interrupted, successCount, failCount), interrupted)
 		},
 	}
 	return c
+}
+
+// ownedSummaryLine 生成 owned 的收尾那一行，样式由 SummaryMsg 按同一次中断判断给出。
+//
+// takeown 自己不理会 ctx，被打断时已经启动的那几个仍会跑完，但 gather 之后交回来的
+// 结果只含尝试过的仓库，因此不能说“全部完成”
+func ownedSummaryLine(interrupted bool, success, failed int) string {
+	data := map[string]any{"Success": success, "Failed": failed}
+	if interrupted {
+		return l10n.T("Interrupted: {{.Success}} succeeded, {{.Failed}} failed (only the repositories already attempted are counted)", data)
+	}
+	return l10n.T("Finished: {{.Success}} succeeded, {{.Failed}} failed", data)
 }
 
 // takeownRepo 获取一个仓库（或子模块）目录及其 .git 的所有权。

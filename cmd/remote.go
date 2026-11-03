@@ -256,8 +256,20 @@ func processSwitchResults(ctx context.Context, entries []RepoEntry, target strin
 	}
 
 	pterm.Println()
-	InfoMsg(l10n.T("Finished: {{.Success}} switched, {{.Skipped}} skipped, {{.Failed}} failed",
-		map[string]any{"Success": success, "Skipped": skipped, "Failed": failed}))
+	interrupted := ctx.Err() != nil
+	SummaryMsg(remoteSummaryLine(interrupted, success, skipped, failed), interrupted)
+}
+
+// remoteSummaryLine 生成 remote 的收尾那一行，样式由 SummaryMsg 按同一次中断判断给出。
+//
+// 被打断时不能再说“处理完成”：gather 交回来的只有尝试过的仓库，三个数字全是这一批的，
+// 那句话会让用户以为剩下的仓库也已经切过协议了
+func remoteSummaryLine(interrupted bool, success, skipped, failed int) string {
+	data := map[string]any{"Success": success, "Skipped": skipped, "Failed": failed}
+	if interrupted {
+		return l10n.T("Interrupted: {{.Success}} switched, {{.Skipped}} skipped, {{.Failed}} failed (only the repositories already attempted are counted)", data)
+	}
+	return l10n.T("Finished: {{.Success}} switched, {{.Skipped}} skipped, {{.Failed}} failed", data)
 }
 
 // switchRemoteResult 保存单个仓库（含子模块）远程协议切换的结果。

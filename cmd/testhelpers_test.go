@@ -99,3 +99,17 @@ func findOutputLine(out, marker string) string {
 	}
 	return ""
 }
+
+// addGitRemote 给临时仓库加一个 origin，供需要远程地址的用例使用。
+//
+// 地址由调用方给出：协议切换这类被测逻辑只关心 URL 的形态，不需要真的能连上，
+// 因此测试全程离线
+func addGitRemote(t *testing.T, dir, url string) {
+	t.Helper()
+
+	c := exec.Command("git", "remote", "add", "origin", url)
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("添加 origin %s 失败：%v（%s）", url, err, out)
+	}
+}

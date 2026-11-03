@@ -312,21 +312,18 @@ func TestPrintSyncList(t *testing.T) {
 	}
 }
 
-// TestSyncSummaryLine 固定收尾那一行在中断与正常两种结局下的措辞与样式。
+// TestSyncSummaryLine 固定收尾那一行在中断与正常两种结局下的措辞。
 //
 // 这句话是用户判断“这批到底跑完没有”的主要依据：被 Ctrl-C 打断后它若仍写“处理完成”，
 // 剩下的仓库会被当成已经处理过。因此中断要用另一句话、并点明统计范围只覆盖尝试过的
-// 仓库；样式一并固定，因为中断属于要用户停下来看一眼的结局，不能与正常收尾同色
+// 仓库。样式由共用函数统一给出，那条路径在 TestSyncClosingLineFollowsInterruption 里固定
 func TestSyncSummaryLine(t *testing.T) {
 	counts := syncCounts{pulled: 3, upToDate: 2, manual: 1, failed: 1}
 
 	t.Run("未被打断：保留原来的收尾措辞", func(t *testing.T) {
 		initL10n(t, locales.Default)
 
-		text, warn := syncSummaryLine(false, counts)
-		if warn {
-			t.Error("正常收尾不应使用告警样式")
-		}
+		text := syncSummaryLine(false, counts)
 		for _, want := range []string{"Finished:", "3 pulled", "2 already up to date", "1 need manual handling", "1 failed"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("收尾文案缺少 %q，实际为：%q", want, text)
@@ -340,10 +337,7 @@ func TestSyncSummaryLine(t *testing.T) {
 	t.Run("被打断：改用中断措辞并点明只统计尝试过的仓库", func(t *testing.T) {
 		initL10n(t, locales.Default)
 
-		text, warn := syncSummaryLine(true, counts)
-		if !warn {
-			t.Error("被打断时应当用告警样式，让用户注意到这次没跑完")
-		}
+		text := syncSummaryLine(true, counts)
 		for _, want := range []string{"Interrupted", "3 pulled", "only the repositories already attempted"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("中断文案缺少 %q，实际为：%q", want, text)
@@ -358,8 +352,8 @@ func TestSyncSummaryLine(t *testing.T) {
 	t.Run("中文译文同样区分中断与完成", func(t *testing.T) {
 		initL10n(t, "zh-CN")
 
-		finished, _ := syncSummaryLine(false, counts)
-		interrupted, _ := syncSummaryLine(true, counts)
+		finished := syncSummaryLine(false, counts)
+		interrupted := syncSummaryLine(true, counts)
 		if !strings.Contains(finished, "处理完成") {
 			t.Errorf("中文正常收尾措辞不对，实际为：%q", finished)
 		}

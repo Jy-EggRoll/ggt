@@ -117,12 +117,8 @@ Examples:
 			// 此前收尾另有一句“All repositories are in sync”，在存在待处理条目时与清单直接矛盾。
 			// 被打断时换用中断措辞：这一行的数字来自 gather 过滤后的结果，只覆盖尝试过的仓库
 			pterm.Println()
-			line, asWarning := syncSummaryLine(ctx.Err() != nil, counts)
-			if asWarning {
-				WarnMsg(line)
-			} else {
-				InfoMsg(line)
-			}
+			interrupted := ctx.Err() != nil
+			SummaryMsg(syncSummaryLine(interrupted, counts), interrupted)
 		},
 	}
 	return c
@@ -157,13 +153,12 @@ func summarizeSyncResults(results []syncResult) syncCounts {
 	return counts
 }
 
-// syncSummaryLine 生成收尾那一行，并说明该用告警样式还是信息样式打印。
+// syncSummaryLine 生成收尾那一行的文案，样式由 SummaryMsg 按同一次中断判断给出。
 //
 // 被打断时不能再写“处理完成”：gather 交回来的结果已经过滤成只含尝试过的仓库，
 // 四个数字都只覆盖这批，那句话会让人以为整批都跑完了，剩下没轮到的仓库被无声吞掉。
-// 因此中断走另一句话，并在句末点明统计范围。样式与文字一起返回，是因为这两种结局
-// 需要用户关注的程度不同：正常收尾只是通报，中断则要让人停下来看一眼还差多少
-func syncSummaryLine(interrupted bool, counts syncCounts) (text string, warn bool) {
+// 因此中断走另一句话，并在句末点明统计范围
+func syncSummaryLine(interrupted bool, counts syncCounts) string {
 	data := map[string]any{
 		"Pulled":   counts.pulled,
 		"UpToDate": counts.upToDate,
@@ -171,9 +166,9 @@ func syncSummaryLine(interrupted bool, counts syncCounts) (text string, warn boo
 		"Failed":   counts.failed,
 	}
 	if interrupted {
-		return l10n.T("Interrupted: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed (only the repositories already attempted are counted)", data), true
+		return l10n.T("Interrupted: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed (only the repositories already attempted are counted)", data)
 	}
-	return l10n.T("Finished: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed", data), false
+	return l10n.T("Finished: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed", data)
 }
 
 // pickSyncResults 挑出 keep 认可的结局，并保持 results 原有顺序。
