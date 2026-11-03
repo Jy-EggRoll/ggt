@@ -98,10 +98,11 @@ func TestRemoteClosingLineFollowsInterruption(t *testing.T) {
 	}
 }
 
-// TestOwnedClosingLineFollowsInterruption 断言 owned 的收尾同样跟着中断状态换文案与样式。
+// TestOwnedClosingLineFollowsInterruption 断言 owned 的收尾跟着中断状态换文案与样式。
 //
-// 本机不是 Windows，命令会在开头就提示“仅支持 Windows”然后返回，走不到收尾，
-// 因此这里直接驱动选词函数与共用样式函数——两者合起来就是收尾的全部逻辑
+// 本机不是 Windows，命令入口会提示“仅支持 Windows”后提前返回，走不到收尾，
+// 因此直接驱动 ownedFinish——命令闭包调用的就是它，ctx 由这里给出，不用把调用点那段
+// 表达式再抄一遍。抄一遍的坏处是：中断判断写错、或干脆写死成 false，用例照样全绿
 func TestOwnedClosingLineFollowsInterruption(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -133,7 +134,14 @@ func TestOwnedClosingLineFollowsInterruption(t *testing.T) {
 			initL10n(t, locales.Default)
 			buf := capturePtermOutput(t)
 
-			SummaryMsg(ownedSummaryLine(c.interrupted, 5, 1), c.interrupted)
+			ctx := context.Background()
+			if c.interrupted {
+				// 与 Execute 里的 signal.NotifyContext 收到 Ctrl-C 等效：ctx 被取消
+				canceled, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = canceled
+			}
+			ownedFinish(ctx, 5, 1)
 
 			printed := buf.String()
 			for _, want := range c.wantContains {

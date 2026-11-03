@@ -67,11 +67,22 @@ Examples:
 			}
 
 			pterm.Println()
-			interrupted := ctx.Err() != nil
-			SummaryMsg(ownedSummaryLine(interrupted, successCount, failCount), interrupted)
+			ownedFinish(ctx, successCount, failCount)
 		},
 	}
 	return c
+}
+
+// ownedFinish 打印 owned 的收尾汇总：空行、文案、样式。
+//
+// 抽成独立函数是为了让“被打断时说什么、以什么颜色说”能被用例直接驱动：owned 只在
+// Windows 上执行，命令入口在其他平台会提前返回，收尾这段以前只能靠读代码确认，
+// 于是中断判断传错、或者干脆写死成 false，测试也发现不了。
+// 内容仍是原来那三步，没有为可测性改动行为
+func ownedFinish(ctx context.Context, success, failed int) {
+	pterm.Println()
+	interrupted := ctx.Err() != nil
+	SummaryMsg(ownedSummaryLine(interrupted, success, failed), interrupted)
 }
 
 // ownedSummaryLine 生成 owned 的收尾那一行，样式由 SummaryMsg 按同一次中断判断给出。
