@@ -68,7 +68,8 @@ func (o syncOutcome) isUpdated() bool {
 //   - 其他 → 分叉，提示手动干预
 //
 // 输出安全：gather 并发收集 → 顺序打印，末尾按结果类别汇总；被 Ctrl-C 打断时
-// 只打印已经尝试过的仓库，汇总与两张清单同样只覆盖它们，随后由 Execute 以 130 退出。
+// 只打印已经尝试过的仓库，汇总与两张清单同样只覆盖它们，收尾那句换成中断措辞，
+// 随后由 Execute 以 130 退出。
 func newSyncCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "sync",
@@ -113,10 +114,15 @@ Examples:
 			printSyncList(l10n.T("The following repositories need manual handling:", nil), manualList, WarnMsg)
 
 			// 末尾只留这一行收尾，它同时覆盖“全部同步完成”和“有仓库需要处理”两种结局。
-			// 此前收尾另有一句“All repositories are in sync”，在存在待处理条目时与清单直接矛盾
+			// 此前收尾另有一句“All repositories are in sync”，在存在待处理条目时与清单直接矛盾。
+			// 被打断时换用中断措辞：这一行的数字来自 gather 过滤后的结果，只覆盖尝试过的仓库
 			pterm.Println()
-			InfoMsg(l10n.T("Finished: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed",
-				map[string]any{"Pulled": counts.pulled, "UpToDate": counts.upToDate, "Manual": counts.manual, "Failed": counts.failed}))
+			line, asWarning := syncSummaryLine(ctx.Err() != nil, counts)
+			if asWarning {
+				WarnMsg(line)
+			} else {
+				InfoMsg(line)
+			}
 		},
 	}
 	return c
@@ -149,6 +155,25 @@ func summarizeSyncResults(results []syncResult) syncCounts {
 		}
 	}
 	return counts
+}
+
+// syncSummaryLine 生成收尾那一行，并说明该用告警样式还是信息样式打印。
+//
+// 被打断时不能再写“处理完成”：gather 交回来的结果已经过滤成只含尝试过的仓库，
+// 四个数字都只覆盖这批，那句话会让人以为整批都跑完了，剩下没轮到的仓库被无声吞掉。
+// 因此中断走另一句话，并在句末点明统计范围。样式与文字一起返回，是因为这两种结局
+// 需要用户关注的程度不同：正常收尾只是通报，中断则要让人停下来看一眼还差多少
+func syncSummaryLine(interrupted bool, counts syncCounts) (text string, warn bool) {
+	data := map[string]any{
+		"Pulled":   counts.pulled,
+		"UpToDate": counts.upToDate,
+		"Manual":   counts.manual,
+		"Failed":   counts.failed,
+	}
+	if interrupted {
+		return l10n.T("Interrupted: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed (only the repositories already attempted are counted)", data), true
+	}
+	return l10n.T("Finished: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed", data), false
 }
 
 // pickSyncResults 挑出 keep 认可的结局，并保持 results 原有顺序。

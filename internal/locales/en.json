@@ -80,6 +80,7 @@
   "Increase diagnostic verbosity: -v for info, -vv for debug (overrides the log_level setting)": "Increase diagnostic verbosity: -v for info, -vv for debug (overrides the log_level setting)",
   "Interface font": "Interface font",
   "Interrupted: nothing was written to {{.Path}}, and the file list gathered so far is incomplete": "Interrupted: nothing was written to {{.Path}}, and the file list gathered so far is incomplete",
+  "Interrupted: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed (only the repositories already attempted are counted)": "Interrupted: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed (only the repositories already attempted are counted)",
   "Invalid branch name": "Invalid branch name",
   "Invalid commit hash": "Invalid commit hash",
   "Invalid file path": "Invalid file path",

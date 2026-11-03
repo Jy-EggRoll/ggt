@@ -80,6 +80,7 @@
   "Increase diagnostic verbosity: -v for info, -vv for debug (overrides the log_level setting)": "提高诊断日志详细度: -v 为 info，-vv 为 debug（覆盖 log_level 配置项）",
   "Interface font": "界面字体",
   "Interrupted: nothing was written to {{.Path}}, and the file list gathered so far is incomplete": "已被中断: 未写出 {{.Path}}，已收集到的文件清单并不完整",
+  "Interrupted: {{.Pulled}} pulled, {{.UpToDate}} already up to date, {{.Manual}} need manual handling, {{.Failed}} failed (only the repositories already attempted are counted)": "已被中断: 已拉取 {{.Pulled}}, 已是最新 {{.UpToDate}}, 需手动处理 {{.Manual}}, 失败 {{.Failed}}（只统计已经尝试过的仓库）",
   "Invalid branch name": "分支名不合法",
   "Invalid commit hash": "提交哈希不合法",
   "Invalid file path": "文件路径非法",

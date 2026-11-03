@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/jy-eggroll/ggt/internal/locales"
 	"github.com/pterm/pterm"
 )
@@ -314,6 +316,130 @@ func TestPrintSyncList(t *testing.T) {
 			for _, absent := range c.wantAbsent {
 				if strings.Contains(out, absent) {
 					t.Errorf("输出不应包含 %q，实际输出：%q", absent, out)
+				}
+			}
+		})
+	}
+}
+
+// TestSyncSummaryLine 固定收尾那一行在中断与正常两种结局下的措辞与样式。
+//
+// 这句话是用户判断“这批到底跑完没有”的主要依据：被 Ctrl-C 打断后它若仍写“处理完成”，
+// 剩下的仓库会被当成已经处理过。因此中断要用另一句话、并点明统计范围只覆盖尝试过的
+// 仓库；样式一并固定，因为中断属于要用户停下来看一眼的结局，不能与正常收尾同色
+func TestSyncSummaryLine(t *testing.T) {
+	counts := syncCounts{pulled: 3, upToDate: 2, manual: 1, failed: 1}
+
+	t.Run("未被打断：保留原来的收尾措辞", func(t *testing.T) {
+		initEnglishL10n(t)
+
+		text, warn := syncSummaryLine(false, counts)
+		if warn {
+			t.Error("正常收尾不应使用告警样式")
+		}
+		for _, want := range []string{"Finished:", "3 pulled", "2 already up to date", "1 need manual handling", "1 failed"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("收尾文案缺少 %q，实际为：%q", want, text)
+			}
+		}
+		if strings.Contains(text, "Interrupted") {
+			t.Errorf("正常收尾不应出现中断字样，实际为：%q", text)
+		}
+	})
+
+	t.Run("被打断：改用中断措辞并点明只统计尝试过的仓库", func(t *testing.T) {
+		initEnglishL10n(t)
+
+		text, warn := syncSummaryLine(true, counts)
+		if !warn {
+			t.Error("被打断时应当用告警样式，让用户注意到这次没跑完")
+		}
+		for _, want := range []string{"Interrupted", "3 pulled", "only the repositories already attempted"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("中断文案缺少 %q，实际为：%q", want, text)
+			}
+		}
+		if strings.Contains(text, "Finished") {
+			t.Errorf("被打断时不应再说“处理完成”，实际为：%q", text)
+		}
+	})
+
+	// 中文同样要区分这两句话：只断言英文的话，译文缺失或照抄英文都能蒙混过关
+	t.Run("中文译文同样区分中断与完成", func(t *testing.T) {
+		if err := l10n.Init("zh-CN", locales.Options()); err != nil {
+			t.Fatalf("初始化 l10n 失败: %v", err)
+		}
+
+		finished, _ := syncSummaryLine(false, counts)
+		interrupted, _ := syncSummaryLine(true, counts)
+		if !strings.Contains(finished, "处理完成") {
+			t.Errorf("中文正常收尾措辞不对，实际为：%q", finished)
+		}
+		for _, want := range []string{"已被中断", "只统计已经尝试过的仓库"} {
+			if !strings.Contains(interrupted, want) {
+				t.Errorf("中文中断文案缺少 %q，实际为：%q", want, interrupted)
+			}
+		}
+	})
+}
+
+// TestSyncClosingLineFollowsInterruption 从命令入口验证收尾那一行真的跟着中断状态走。
+//
+// 上面那条用例只测了选词函数，把它接进命令的那两行仍然可能接错（比如恒传 false）。
+// 这里把两种 ctx 各跑一遍完整命令：被打断时 gather 不会启动任何 git 调用，
+// 未被打断时那个唯一的仓库没有上游跟踪分支，会照常走到“需要手动处理”
+func TestSyncClosingLineFollowsInterruption(t *testing.T) {
+	initEnglishL10n(t)
+
+	repo := initGitRepoWithFile(t, "alpha.txt")
+	withConfig(t, &config.Config{Concurrency: "2", RepoPaths: []string{repo}})
+
+	cases := []struct {
+		name         string
+		interrupt    bool
+		wantContains []string
+		wantAbsent   []string
+	}{
+		{
+			name:         "未被打断：结尾仍说处理完成",
+			wantContains: []string{"Finished:"},
+			wantAbsent:   []string{"Interrupted"},
+		},
+		{
+			name:         "被打断：结尾改用中断措辞，不再说处理完成",
+			interrupt:    true,
+			wantContains: []string{"Interrupted", "only the repositories already attempted"},
+			wantAbsent:   []string{"Finished:"},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if c.interrupt {
+				cancel()
+			}
+
+			var buf bytes.Buffer
+			pterm.SetDefaultOutput(&buf)
+			t.Cleanup(func() { pterm.SetDefaultOutput(os.Stdout) })
+
+			syncCmd := newSyncCmd()
+			syncCmd.SetContext(ctx)
+			if err := syncCmd.Execute(); err != nil {
+				t.Fatalf("执行 sync 失败：%v", err)
+			}
+
+			printed := buf.String()
+			for _, want := range c.wantContains {
+				if !strings.Contains(printed, want) {
+					t.Errorf("输出缺少 %q，实际输出：%q", want, printed)
+				}
+			}
+			for _, absent := range c.wantAbsent {
+				if strings.Contains(printed, absent) {
+					t.Errorf("输出不应包含 %q，实际输出：%q", absent, printed)
 				}
 			}
 		})
