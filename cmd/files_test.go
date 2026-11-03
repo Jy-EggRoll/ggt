@@ -7,18 +7,14 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/jy-eggroll/ggt/internal/locales"
-	"github.com/pterm/pterm"
 )
 
 // TestFilesOutputFileFollowsInterruption 断言中断与正常两条路径的文件落盘行为。
@@ -26,7 +22,7 @@ import (
 // files 与 sync 的中断行为共用 initGitRepoWithFile 造的真实仓库：两个命令的输入都来自
 // AllRepos，只有真的走仓库发现、子模块展开这些步骤，测试才和用户实际跑的那条路径一致。
 func TestFilesOutputFileFollowsInterruption(t *testing.T) {
-	initEnglishL10n(t)
+	initL10n(t, locales.Default)
 
 	// outputFile 是包级全局量、绑在命令的 -o 上，用例之间会互相污染，用完复位
 	t.Cleanup(func() { outputFile = "" })
@@ -42,16 +38,16 @@ func TestFilesOutputFileFollowsInterruption(t *testing.T) {
 		wantAbsent   []string
 	}{
 		{
-			name:         "未被打断：照常写出文件，提示文案与改动前一致",
+			name:         "未被打断：照常写出文件，提示文案与样式与改动前一致",
 			wantFile:     true,
-			wantContains: []string{"File list written to"},
-			wantAbsent:   []string{"Interrupted"},
+			wantContains: []string{"SUCCESS", "File list written to"},
+			wantAbsent:   []string{"Interrupted", "WARNING"},
 		},
 		{
-			name:         "被打断：不落盘，并说明没写文件与清单不完整",
+			name:         "被打断：不落盘，用告警说明没写文件与清单不完整",
 			interrupt:    true,
 			wantFile:     false,
-			wantContains: []string{"Interrupted", "incomplete"},
+			wantContains: []string{"WARNING", "Interrupted", "incomplete"},
 			wantAbsent:   []string{"File list written to"},
 		},
 	}
@@ -68,9 +64,7 @@ func TestFilesOutputFileFollowsInterruption(t *testing.T) {
 				cancel()
 			}
 
-			var buf bytes.Buffer
-			pterm.SetDefaultOutput(&buf)
-			t.Cleanup(func() { pterm.SetDefaultOutput(os.Stdout) })
+			buf := capturePtermOutput(t)
 
 			filesCmd := newFilesCmd()
 			filesCmd.SetArgs([]string{"-o", out})
@@ -109,54 +103,4 @@ func TestFilesOutputFileFollowsInterruption(t *testing.T) {
 			}
 		})
 	}
-}
-
-// initEnglishL10n 把全局语言固定成英文源串。
-//
-// 断言的是英文文案，而同包其它用例会切到中文；显式初始化一遍，免得测试结果取决于
-// 谁先跑。t.Cleanup 里再初始化一次是给后续用例留下英文这个已知状态
-func initEnglishL10n(t *testing.T) {
-	t.Helper()
-	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
-		t.Fatalf("初始化 l10n 失败: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := l10n.Init(locales.Default, locales.Options()); err != nil {
-			t.Fatalf("还原 l10n 失败: %v", err)
-		}
-	})
-}
-
-// initGitRepoWithFile 造一个只有一次提交的临时仓库，返回仓库路径。
-//
-// 用真实 git 而不是伪造目录：仓库发现、子模块展开与 git ls-files 都是被测路径的一部分，
-// 假目录会在第一步就被判成“不是仓库”而静默跳过。
-// 提交人的身份只在命令环境里给，不动使用者的 git 配置（TestMain 已把全局配置指向空文件）
-func initGitRepoWithFile(t *testing.T, name string) string {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("环境里没有 git，跳过")
-	}
-
-	dir := t.TempDir()
-	git := func(args ...string) {
-		t.Helper()
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		c.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=ggt", "GIT_AUTHOR_EMAIL=ggt@example.com",
-			"GIT_COMMITTER_NAME=ggt", "GIT_COMMITTER_EMAIL=ggt@example.com",
-		)
-		if out, err := c.CombinedOutput(); err != nil {
-			t.Fatalf("git %v 失败：%v（%s）", args, err, out)
-		}
-	}
-
-	git("init", "-q", "-b", "main")
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("hello\n"), 0o644); err != nil {
-		t.Fatalf("写入 %s 失败：%v", name, err)
-	}
-	git("add", "-A")
-	git("commit", "-qm", "init")
-	return dir
 }

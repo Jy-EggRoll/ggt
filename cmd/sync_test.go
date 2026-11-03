@@ -1,16 +1,12 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"os"
 	"strings"
 	"testing"
 
-	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/jy-eggroll/ggt/internal/locales"
-	"github.com/pterm/pterm"
 )
 
 // TestDecideSyncAction 用表驱动覆盖 sync 命令的全部决策分支。
@@ -240,18 +236,13 @@ func TestPickSyncResultsManualKeepsFailures(t *testing.T) {
 // TestPrintSyncList 覆盖清单打印的两条用户可见规则：空清单整段静默，
 // 处理建议只跟随有建议的条目。
 //
-// printSyncList 直接写 pterm，要断言就得接管 pterm 的全局输出。本包其余测试都不碰
-// 这个全局值，因此换到缓冲区、结束后恢复成 os.Stdout 即为还原默认状态。
+// printSyncList 直接写 pterm，要断言就得用 capturePtermOutput 接管全局输出。
 // 标题由调用方传入的消息函数打印（决定黄/绿），测试用记录调用次数的替身即可判断
 // “空清单连标题都不打”，不必断言标题的着色
 func TestPrintSyncList(t *testing.T) {
-	defer pterm.SetDefaultOutput(os.Stdout)
-
-	// [sub] 前缀由 RepoLabel 经 l10n 拼出，译文随全局语言变化。显式初始化成英文，
-	// 免得同包其它测试切到中文后这里断言失败（那会变成顺序相关的偶发红灯）
-	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
-		t.Fatalf("初始化 l10n 失败: %v", err)
-	}
+	// [sub] 前缀由 RepoLabel 经 l10n 拼出，译文随全局语言变化。显式切成英文源串，
+	// 用例结束时由 initL10n 还原，不依赖谁先跑
+	initL10n(t, locales.Default)
 
 	cases := []struct {
 		name         string
@@ -295,8 +286,7 @@ func TestPrintSyncList(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			pterm.SetDefaultOutput(&buf)
+			buf := capturePtermOutput(t)
 
 			headingCalls := 0
 			printSyncList("TITLE", c.results, func(string) { headingCalls++ })
@@ -331,7 +321,7 @@ func TestSyncSummaryLine(t *testing.T) {
 	counts := syncCounts{pulled: 3, upToDate: 2, manual: 1, failed: 1}
 
 	t.Run("未被打断：保留原来的收尾措辞", func(t *testing.T) {
-		initEnglishL10n(t)
+		initL10n(t, locales.Default)
 
 		text, warn := syncSummaryLine(false, counts)
 		if warn {
@@ -348,7 +338,7 @@ func TestSyncSummaryLine(t *testing.T) {
 	})
 
 	t.Run("被打断：改用中断措辞并点明只统计尝试过的仓库", func(t *testing.T) {
-		initEnglishL10n(t)
+		initL10n(t, locales.Default)
 
 		text, warn := syncSummaryLine(true, counts)
 		if !warn {
@@ -366,9 +356,7 @@ func TestSyncSummaryLine(t *testing.T) {
 
 	// 中文同样要区分这两句话：只断言英文的话，译文缺失或照抄英文都能蒙混过关
 	t.Run("中文译文同样区分中断与完成", func(t *testing.T) {
-		if err := l10n.Init("zh-CN", locales.Options()); err != nil {
-			t.Fatalf("初始化 l10n 失败: %v", err)
-		}
+		initL10n(t, "zh-CN")
 
 		finished, _ := syncSummaryLine(false, counts)
 		interrupted, _ := syncSummaryLine(true, counts)
@@ -383,13 +371,15 @@ func TestSyncSummaryLine(t *testing.T) {
 	})
 }
 
-// TestSyncClosingLineFollowsInterruption 从命令入口验证收尾那一行真的跟着中断状态走。
+// TestSyncClosingLineFollowsInterruption 从命令入口验证收尾那一行真的跟着中断状态走，
+// 文案与样式都要对。
 //
 // 上面那条用例只测了选词函数，把它接进命令的那两行仍然可能接错（比如恒传 false）。
 // 这里把两种 ctx 各跑一遍完整命令：被打断时 gather 不会启动任何 git 调用，
-// 未被打断时那个唯一的仓库没有上游跟踪分支，会照常走到“需要手动处理”
+// 未被打断时那个唯一的仓库没有上游跟踪分支，会照常走到“需要手动处理”。
+// 样式单独断言：把 WarnMsg 与 InfoMsg 互换时文案一个字都不变，只靠措辞断言看不出来
 func TestSyncClosingLineFollowsInterruption(t *testing.T) {
-	initEnglishL10n(t)
+	initL10n(t, locales.Default)
 
 	repo := initGitRepoWithFile(t, "alpha.txt")
 	withConfig(t, &config.Config{Concurrency: "2", RepoPaths: []string{repo}})
@@ -397,17 +387,23 @@ func TestSyncClosingLineFollowsInterruption(t *testing.T) {
 	cases := []struct {
 		name         string
 		interrupt    bool
+		marker       string
+		wantStyle    string
 		wantContains []string
 		wantAbsent   []string
 	}{
 		{
-			name:         "未被打断：结尾仍说处理完成",
+			name:         "未被打断：结尾仍说处理完成，且是信息样式",
+			marker:       "Finished:",
+			wantStyle:    "INFO",
 			wantContains: []string{"Finished:"},
 			wantAbsent:   []string{"Interrupted"},
 		},
 		{
-			name:         "被打断：结尾改用中断措辞，不再说处理完成",
+			name:         "被打断：结尾改用中断措辞，且是告警样式",
 			interrupt:    true,
+			marker:       "Interrupted",
+			wantStyle:    "WARNING",
 			wantContains: []string{"Interrupted", "only the repositories already attempted"},
 			wantAbsent:   []string{"Finished:"},
 		},
@@ -421,9 +417,7 @@ func TestSyncClosingLineFollowsInterruption(t *testing.T) {
 				cancel()
 			}
 
-			var buf bytes.Buffer
-			pterm.SetDefaultOutput(&buf)
-			t.Cleanup(func() { pterm.SetDefaultOutput(os.Stdout) })
+			buf := capturePtermOutput(t)
 
 			syncCmd := newSyncCmd()
 			syncCmd.SetContext(ctx)
@@ -441,6 +435,16 @@ func TestSyncClosingLineFollowsInterruption(t *testing.T) {
 				if strings.Contains(printed, absent) {
 					t.Errorf("输出不应包含 %q，实际输出：%q", absent, printed)
 				}
+			}
+
+			// 汇总只占一行，其余行也可能带 WARNING/INFO（例如某个仓库没有上游），
+			// 所以先按文案定位到那一行，再看它的前缀是哪一种
+			line := findOutputLine(printed, c.marker)
+			if line == "" {
+				t.Fatalf("找不到收尾那一行（marker %q），实际输出：%q", c.marker, printed)
+			}
+			if !strings.Contains(line, c.wantStyle) {
+				t.Errorf("收尾那一行应为 %s 样式，实际为：%q", c.wantStyle, line)
 			}
 		})
 	}
