@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/locales"
@@ -111,5 +112,38 @@ func addGitRemote(t *testing.T, dir, url string) {
 	c.Dir = dir
 	if out, err := c.CombinedOutput(); err != nil {
 		t.Fatalf("添加 origin %s 失败：%v（%s）", url, err, out)
+	}
+}
+
+// writeFakeGitScript 在临时目录里写入名为 git 的脚本并返回目录，供 PATH 注入使用。
+//
+// 与 internal/git 测试里的同名工具同一套做法：POSIX shell 脚本。调用方负责把返回的
+// 目录放到 PATH 最前面，并在用完时依赖 t.Setenv 自动还原
+func writeFakeGitScript(t *testing.T, script string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatalf("写入假 git 失败：%v", err)
+	}
+	return dir
+}
+
+// waitForPath 等到 path 出现为止，超时即判失败。
+//
+// 假 git 用“先落一个标记文件、再阻塞”的方式告诉用例自己已经进到哪一步，用例据此
+// 决定何时取消 ctx。这样不必靠 sleep 猜时序：取消只可能发生在标记出现之后
+func waitForPath(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("等待 %s 超时（%v）", path, timeout)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
