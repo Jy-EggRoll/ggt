@@ -1,11 +1,12 @@
 // worker_test 对并发工具 Map 进行单元测试，覆盖顺序保持、并发限制、panic 恢复、
-// ctx 取消、共享信号量，以及“未初始化/非法并发数”这两条守卫。
+// ctx 取消、共享信号量、“未初始化/非法并发数”这两条守卫，以及回调内再调 Map 的拒绝。
 package worker
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -299,5 +300,128 @@ func TestMap_SortedOutput(t *testing.T) {
 	sort.Ints(sorted)
 	if fmt.Sprint(sorted) == fmt.Sprint(got) {
 		t.Error("结果不应是已排序状态，应保留原始顺序")
+	}
+}
+
+// TestMapCallbackCtxIsMarked 验证 fn 收到的 ctx 带“已持有槽位”标记，
+// 而调用方自己的 ctx 没有——嵌套判定就是靠这一条成立的。
+func TestMapCallbackCtxIsMarked(t *testing.T) {
+	if err := Init(2); err != nil {
+		t.Fatalf("初始化失败: %v", err)
+	}
+
+	outer := context.Background()
+	if holdsSlot(outer) {
+		t.Fatal("调用方的 ctx 不该带槽位标记")
+	}
+
+	var marked, unmarked int64
+	Map(outer, []int{1, 2, 3}, func(ctx context.Context, _ int) int {
+		if holdsSlot(ctx) {
+			atomic.AddInt64(&marked, 1)
+		} else {
+			atomic.AddInt64(&unmarked, 1)
+		}
+		return 0
+	})
+
+	if got := atomic.LoadInt64(&marked); got != 3 {
+		t.Errorf("每个回调都应收到带标记的 ctx，实得 %d/3", got)
+	}
+	if got := atomic.LoadInt64(&unmarked); got != 0 {
+		t.Errorf("不该有回调收到不带标记的 ctx，实得 %d", got)
+	}
+	// 标记只写在派生出去的 ctx 上，不该反过来污染调用方的 ctx
+	if holdsSlot(outer) {
+		t.Error("Map 返回后调用方的 ctx 仍不该带标记")
+	}
+}
+
+// TestMapRejectsNestedCall 验证“回调里再调 Map”在入口就被拒绝，而不是等在信号量上。
+//
+// 这里直接用一个带标记的 ctx 模拟“正处于回调内”，因此能在本进程内 recover；
+// 真实嵌套（回调里真的再调一次 Map）会让 panic 发生在 Map 派生的 goroutine 上、
+// 无法在本进程内 recover，那条路径由 TestMapNestedCallFailsFast 以子进程方式覆盖。
+func TestMapRejectsNestedCall(t *testing.T) {
+	if err := Init(1); err != nil {
+		t.Fatalf("初始化失败: %v", err)
+	}
+
+	var called atomic.Bool
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("在回调内再调 Map 应当立刻 panic")
+			}
+			nerr, ok := r.(*nestedMapError)
+			if !ok {
+				t.Fatalf("panic 值应是 *nestedMapError，实得 %T", r)
+			}
+			if !strings.Contains(nerr.Error(), "inside a Map callback") {
+				t.Errorf("panic 说明应点明误用，实得 %q", nerr.Error())
+			}
+			if !strings.Contains(nerr.Error(), "items of the outer batch") {
+				t.Errorf("panic 说明应指出正确做法，实得 %q", nerr.Error())
+			}
+		}()
+		Map(markSlotHeld(context.Background()), []int{1, 2}, func(_ context.Context, n int) int {
+			called.Store(true)
+			return n
+		})
+	}()
+
+	if called.Load() {
+		t.Error("被拒绝的嵌套调用不应执行任何任务")
+	}
+}
+
+// nestedHelperEnv 是子进程助手的开关：只有它等于 "1" 时，
+// TestNestedMapHelperProcess 才执行真实的嵌套调用。
+const nestedHelperEnv = "GGT_WORKER_NESTED_HELPER"
+
+// TestNestedMapHelperProcess 在子进程里做一次真实的嵌套调用。
+// 它不单独代表任何契约，只被 TestMapNestedCallFailsFast 启动。
+func TestNestedMapHelperProcess(t *testing.T) {
+	if os.Getenv(nestedHelperEnv) != "1" {
+		t.Skip("仅作为 TestMapNestedCallFailsFast 的子进程助手运行")
+	}
+	if err := Init(2); err != nil {
+		t.Fatalf("初始化失败: %v", err)
+	}
+
+	Map(context.Background(), []int{1, 2}, func(ctx context.Context, n int) int {
+		// 故意在回调里再调一次 Map：这正是应当被立刻拒绝的误用
+		_ = Map(ctx, []int{n}, func(_ context.Context, m int) int { return m })
+		return n
+	})
+	t.Fatal("嵌套 Map 应当 panic，不应正常返回")
+}
+
+// TestMapNestedCallFailsFast 验证真实嵌套会让进程立刻失败，而不是永久挂住。
+//
+// 必须在子进程里跑：Map 的 recover 会把 nestedMapError 原样抛回去（否则误用会被
+// 当成“某个任务失败”、悄悄交出一份零值结果），panic 因此落在 Map 派生的 goroutine 上，
+// 本进程内无法 recover。断言两件事：子进程确实以非 0 退出，且输出里能读到原因。
+func TestMapNestedCallFailsFast(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestNestedMapHelperProcess$")
+	cmd.Env = append(os.Environ(), nestedHelperEnv+"=1")
+
+	started := time.Now()
+	out, err := cmd.CombinedOutput()
+	elapsed := time.Since(started)
+
+	// 超时被杀 = 这次改造要消除的行为又回来了
+	if ctx.Err() != nil {
+		t.Fatalf("嵌套 Map 在 %s 内没有返回，说明它又挂住了", elapsed.Round(time.Millisecond))
+	}
+	if err == nil {
+		t.Fatalf("嵌套 Map 应让子进程以非 0 退出，实际成功：%s", out)
+	}
+	if !strings.Contains(string(out), "inside a Map callback") {
+		t.Errorf("子进程输出应说明误用原因，实得：%s", out)
 	}
 }
