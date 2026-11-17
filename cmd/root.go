@@ -48,6 +48,21 @@ Help:
   ggt --help  Show detailed help
 
 Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
+		// 任何错误都只打印错误本身，不附整段用法。
+		//
+		// cobra 的默认行为是在 execute 返回错误后先打印该命令的 UsageString，再让调用方
+		// 打印错误——启动期错误（配置读不出来、-c 越界）与参数类错误（缺参数、未知 flag）
+		// 因此都会先甩一整页用法，把真正那行 ERROR 挤出视野，脚本里也难定位。
+		//
+		// 用法只在用户主动要求时才打印：--help / -h 与不带子命令的 ggt 都走 cobra 的
+		// HelpFunc，不经过这里；SilenceUsage 挂根命令上，ExecuteC 会一并套用到各子命令，
+		// 因此不需要每个命令各设一次。
+		//
+		// 未知子命令的报错来自 cobra 查找阶段的另一条路径，同样保持不打印整段用法：
+		// 报错里已经点名了写错的那个词，cobra 还会在近似拼写时附上“Did you mean this?”。
+		// 为一个拼写错误铺开整张命令表，与 --help 的职责重复，也不比那行提示更有用；
+		// 想看全表敲 ggt --help。
+		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			started := time.Now()
 			var err error

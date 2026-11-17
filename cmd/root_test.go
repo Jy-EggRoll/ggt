@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"regexp"
@@ -203,5 +204,76 @@ func TestHelpTextConfigPathMatchesDefaultPath(t *testing.T) {
 
 	if help := newRootCmd().Long; !strings.Contains(help, want) {
 		t.Errorf("根命令帮助文本未包含 %q，实际为:\n%s", want, help)
+	}
+}
+
+// TestRootErrorsDoNotPrintUsage 断言错误路径只留错误本身，不附整段用法。
+//
+// 这里直接跑命令树而不是起子进程：argv 解析、Args 校验与 flag 解析都发生在
+// cobra 内部，与本进程内调用完全同一条路径，能跑进 -race 那一轮。
+func TestRootErrorsDoNotPrintUsage(t *testing.T) {
+	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
+		t.Fatalf("初始化 l10n 失败: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"缺参数", []string{"config", "get"}, "accepts 1 arg(s)"},
+		{"未知 flag", []string{"--definitely-not-a-flag"}, "unknown flag"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := buildRoot()
+			var out, errOut bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errOut)
+			root.SetArgs(c.args)
+
+			if err := root.Execute(); err == nil {
+				t.Fatal("这次调用应以错误结束")
+			}
+			combined := out.String() + errOut.String()
+			if strings.Contains(combined, "Usage:") {
+				t.Errorf("错误输出不应附整段用法：%q", combined)
+			}
+			// 具体文案由 cobra 给（进程入口处会再统一加上 ERROR 前缀），
+			// 这里只确认错误本身还在，没有被“去掉用法”一起删掉
+			if !strings.Contains(combined, c.want) {
+				t.Errorf("错误输出应保留错误本身（含 %q）：%q", c.want, combined)
+			}
+		})
+	}
+}
+
+// TestRootHelpStillPrintsUsage 断言“不打印用法”只针对错误：主动求助时（--help）
+// 用法与命令表照常输出，根命令与子命令都一样。
+func TestRootHelpStillPrintsUsage(t *testing.T) {
+	if err := l10n.Init(locales.Default, locales.Options()); err != nil {
+		t.Fatalf("初始化 l10n 失败: %v", err)
+	}
+
+	cases := [][]string{
+		{"--help"},
+		{"size", "--help"},
+		{"config", "get", "--help"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			root := buildRoot()
+			var out, errOut bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errOut)
+			root.SetArgs(args)
+
+			if err := root.Execute(); err != nil {
+				t.Fatalf("--help 不应报错: %v", err)
+			}
+			if !strings.Contains(out.String(), "Usage:") {
+				t.Errorf("帮助输出应包含用法：%q", out.String())
+			}
+		})
 	}
 }

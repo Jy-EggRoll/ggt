@@ -66,13 +66,8 @@ Repository paths are managed by "ggt repo" instead of "ggt config set".`, nil),
 		newConfigValidateCmd(),
 	)
 
-	// 取值校验失败时不该顺带打印整段 usage：错误信息本身已经说清问题，
-	// 而 get / validate 的输出面向脚本，多余的 usage 会污染管道。
-	// 这里逐个设置而不是设到 root 上，避免影响其它命令的用法提示
-	c.SilenceUsage = true
-	for _, sub := range c.Commands() {
-		sub.SilenceUsage = true
-	}
+	// 报错时不打印整段用法：本子树的 get / validate 输出面向脚本，更不该混进 usage。
+	// 这条策略统一挂在根命令上（见 newRootCmd），子树不必再各设一次
 	return c
 }
 
