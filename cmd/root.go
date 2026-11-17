@@ -83,6 +83,13 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 	// os.Args 得到（语言必须早于 cobra 解析才能确定），所以这里刻意不绑定变量，
 	// 避免出现两个互相矛盾的取值来源。
 	root.PersistentFlags().StringP("lang", "l", "", l10n.T("Output language (e.g. en, zh-CN); defaults to the language config value", nil))
+	// --color 与 --lang 同理：注册它只是让 cobra 认可这个参数，并把非法取值报给用户；
+	// 真正生效的取值由 resolveColorMode 预扫描 os.Args 得到（着色必须早于 cobra 解析）。
+	// 因此这里刻意绑定一个新的 colorMode 实例，不引入第二个取值来源——预扫描已经
+	// 把结果落实到 pterm 上，这个实例解析完就没有用处
+	var parsedColor colorMode
+	root.PersistentFlags().Var(&parsedColor, "color",
+		l10n.T("Color output: auto colors only when stdout and stderr are terminals, always forces color, never disables it", nil))
 
 	return root
 }
@@ -110,7 +117,7 @@ func startCommand(cmd *cobra.Command, load configLoader) error {
 		// 修复提示附在同一个错误里：配置加载失败时，用户唯一能敲的就是那几条命令。
 		// 是否交互决定提示里那条 reset --all 带不带 --yes（非交互时缺 --yes 会被拒绝）
 		return config.WithRecoveryHint(
-			fmt.Errorf("%s: %w", l10n.T("Failed to load the configuration", nil), err), !stdinIsTerminal())
+			fmt.Errorf("%s: %w", l10n.T("Failed to load the configuration", nil), err), !isTerminal(os.Stdin))
 	}
 	cfg = loaded
 
@@ -201,7 +208,7 @@ func recoverConfig(scope config.HintScope) (*config.Config, []config.Problem, er
 		// 可言，只能手改文件或整份重置。提示在这里补上，调用方（含 config show）拿到的
 		// error 就是可直接照做的；WithRecoveryHint 幂等，startCommand 再调用一次也只会有一份。
 		// 非交互环境决定整份重置的命令带不带 --yes：那种环境下确认提示读不到，命令会直接报错
-		return nil, nil, config.WithRecoveryHintFor(err, !stdinIsTerminal(), scope)
+		return nil, nil, config.WithRecoveryHintFor(err, !isTerminal(os.Stdin), scope)
 	}
 	return lenient, problems, nil
 }
@@ -283,12 +290,10 @@ func Execute() {
 		updater.CleanupLeftovers(execPath)
 	}
 
-	// NO_COLOR 是跨工具约定（https://no-color.org）：该环境变量存在即关闭着色。
-	// pterm 自己不检测 TTY，不处理的话管道里会混进 ANSI 转义，
-	// 让 `ggt config show | jq` 这类用法直接失败
-	if _, ok := os.LookupEnv("NO_COLOR"); ok {
-		pterm.DisableColor()
-	}
+	// 着色开关必须落在最前面：它影响此后所有经 pterm 的输出，而启动期就有输出
+	// （语言回退提示、配置读不出来时的报错）。判定口径（终端判定、NO_COLOR 与
+	// --color 的优先级）统一收在 color.go，这里只负责落实
+	applyColorMode(resolveColorMode(os.Args[1:]))
 
 	// 语言文件是 //go:embed 进 locales 包的，加载失败属于构建期错误，必须显式暴露。
 	// 静默降级只会表现为“界面语言不对”，没有任何报错，极难排查

@@ -9,9 +9,10 @@
 //   - XxxStr    返回着色后的字符串，供先缓存再统一打印的场合
 //   - XxxStrLn  返回着色字符串，并在其后补一个换行（得不到空行，原因见下方 StrLn 系列的说明）
 //
-// 唯一例外是**面向脚本处理**的输出（ggt config get / validate / path）：pterm 不检测
-// TTY，会把 ANSI 转义写进管道，让 `ggt config show | jq` 这类用法失败。那些命令
-// 直接用 fmt 输出，不受本文件的样式调整影响。
+// 唯一例外是**面向脚本处理**的输出（ggt config show / get / validate / path）：pterm 会给
+// 每行加上前缀与样式，而脚本要的是原样取值，因此那些命令直接用 fmt 输出，不受本文件的
+// 样式调整影响。着色是否开启由 color.go 按终端判定，与本文件的约定是两件事：管道里不会
+// 有转义，但脚本化的输出形态也不该随终端而变。
 package cmd
 
 import (

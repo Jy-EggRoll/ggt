@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -101,8 +102,23 @@ func runCLIWithEnv(t *testing.T, childHome string, arguments ...string) cliResul
 // runCLIWithExtraEnv 与 runCLIWithEnv 一致，但允许追加额外的环境变量
 //
 // 需要它的场景：验证"某个环境变量对语言/日志级别没有效果"时必须把它放进子进程环境，
-// 而不能改本测试进程自己的 os.Environ()，否则会污染同进程的其它用例
+// 而不能改本测试进程自己的 os.Environ()，否则会污染同进程的其它用例。
+//
+// 这里固定注入 NO_COLOR=1，让“文案长什么样”的断言与颜色无关：子进程的两路输出都是本
+// 进程给的管道，产品本就不会上色，但断言不该依赖那条判定——判定一旦出错，成百条文案
+// 比对会一起失败，报错还难以看懂。颜色本身由 TestCLIColorFollowsOutputTarget 单独守
 func runCLIWithExtraEnv(t *testing.T, childHome string, extraEnv []string, arguments ...string) cliResult {
+	t.Helper()
+
+	return runCLIProcess(t, childHome, append([]string{"NO_COLOR=1"}, extraEnv...), arguments...)
+}
+
+// runCLIProcess 起真正执行 CLI 的子进程，NO_COLOR 设不设由调用方决定。
+//
+// 继承来的 NO_COLOR 在这里一律丢掉：本进程可能正是从一个设了 NO_COLOR 的 shell 里启动的，
+// 而这一层只服务于颜色用例，“设了”与“没设”两档必须由参数决定，不能听凭继承。
+// 其余用例请走 runCLI / runCLIWithEnv，那两个入口固定注入 NO_COLOR=1。
+func runCLIProcess(t *testing.T, childHome string, extraEnv []string, arguments ...string) cliResult {
 	t.Helper()
 
 	helperArguments := append([]string{"-test.run=^TestCLIHelperProcess$", "--"}, arguments...)
@@ -111,12 +127,15 @@ func runCLIWithExtraEnv(t *testing.T, childHome string, extraEnv []string, argum
 	// 两者都指向本用例专属的临时目录，避免平台差异导致隔离失效
 	//
 	// os/exec 对环境变量重复键的处理是“后者胜”（内建 dedupEnv 保留最后一次出现），
-	// 因此把我们的取值追加在 os.Environ() 之后即可稳定覆盖真实 HOME
+	// 因此把我们的取值追加在 os.Environ() 之后即可稳定覆盖真实 HOME。这也意味着
+	// extraEnv 必须是“要覆盖的几项”，不能把整份 os.Environ() 传进来——那样 HOME
+	// 会被真实取值重新盖回去
 	command.Env = append(os.Environ(),
 		cliHelperEnv+"=1",
 		"HOME="+childHome,
 		"USERPROFILE="+childHome,
 	)
+	command.Env = withoutEnv(command.Env, "NO_COLOR")
 	command.Env = append(command.Env, extraEnv...)
 
 	var stdout bytes.Buffer
@@ -154,6 +173,30 @@ func hasHanText(text string) bool {
 		}
 	}
 	return false
+}
+
+// ansiEscape 匹配终端控制序列（pterm 的着色都用这一种 CSI 形式）。
+var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
+
+// stripANSI 去掉着色转义，供“文案写了什么、提示给出了哪条命令”这类断言使用。
+//
+// 要不要着色由 TestCLIColorFollowsOutputTarget 单独守：其余用例关心的是文案与命令本身，
+// 不该因为终端与管道的差别各写一套期望值
+func stripANSI(text string) string { return ansiEscape.ReplaceAllString(text, "") }
+
+// withoutEnv 返回删掉 key 之后的环境变量，供验证“变量未设置时的行为”使用。
+//
+// 不能改成把值置成空串：产品代码用 os.LookupEnv 判断 NO_COLOR 在不在，`NO_COLOR=`
+// 仍然是“在”。只有真的从环境里删掉这一项，才等于未设置
+func withoutEnv(env []string, key string) []string {
+	kept := make([]string, 0, len(env))
+	for _, entry := range env {
+		if name, _, ok := strings.Cut(entry, "="); ok && name == key {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
 }
 
 // initGitRepo 在给定目录里初始化一个真实的 git 仓库
@@ -621,11 +664,14 @@ func TestCLIRepoAddRejectsControlCharPath(t *testing.T) {
 	}
 }
 
-// TestCLIRecoveryHintCommandIsCopyable 断言提示里的命令能整段照抄执行，且键名不会被展开。
+// TestCLIRecoveryHintCommandIsCopyable 断言提示里给出的命令能整段照抄执行，且键名不会被展开。
 //
 // 键名来自配置文件，可以包含 $() 与反引号。命令若被双引号包住，照抄会 not found（退出码
-// 127），而双引号里的命令替换仍会被 shell 执行——实测会生成探针文件。因此命令必须单独
-// 占一行、前面只有缩进，键名只落在单引号里。
+// 127），而双引号里的命令替换仍会被 shell 执行——实测会生成探针文件。
+//
+// 断言全部落在后果上：把命令交给 sh 执行要以 0 退出、探针文件不存在、目标键确实被删除、
+// 清掉之后命令恢复可用。命令长什么样（缩进、引号、有没有颜色）不参与断言，否则排版或
+// 着色的一处调整就会让这条契约的测试红掉，却没说明契约到底破没破
 func TestCLIRecoveryHintCommandIsCopyable(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("该用例用 POSIX shell 验证照抄行为")
@@ -651,12 +697,9 @@ func TestCLIRecoveryHintCommandIsCopyable(t *testing.T) {
 	if broken.exitCode == 0 {
 		t.Fatalf("未知键应让命令失败: stdout=%q", broken.stdout)
 	}
-	line := firstCommandLine(broken.stdout + broken.stderr)
-	if line == "" {
+	command := recoveryCommand(broken.stdout + broken.stderr)
+	if command == "" {
 		t.Fatalf("提示里应有一条可执行的命令: %q", broken.stdout+broken.stderr)
-	}
-	if strings.Contains(line, `"`) {
-		t.Fatalf("命令不得用双引号包裹（照抄会 not found 且会展开）: %q", line)
 	}
 
 	// 照抄执行：包装脚本让 ggt 出现在 PATH 上，子进程仍是本测试二进制的 helper 模式
@@ -667,7 +710,7 @@ func TestCLIRecoveryHintCommandIsCopyable(t *testing.T) {
 		t.Fatalf("写包装脚本失败: %v", err)
 	}
 
-	run := exec.Command("sh", "-c", line)
+	run := exec.Command("sh", "-c", command)
 	run.Env = append(os.Environ(),
 		cliHelperEnv+"=1",
 		"HOME="+home,
@@ -689,11 +732,15 @@ func TestCLIRecoveryHintCommandIsCopyable(t *testing.T) {
 	}
 }
 
-// firstCommandLine 取出输出里第一条可执行的修复命令（以 ggt config reset 开头的行）。
-func firstCommandLine(output string) string {
-	for _, line := range strings.Split(output, "\n") {
+// recoveryCommand 取出提示里给出的那条修复命令，取不到时返回空串。
+//
+// 取法刻意宽松：去掉着色转义后，挑一条以 ggt 开头、带 config reset 的行。命令的排版
+// （缩进、前缀、颜色）不参与任何断言——它能不能整段照抄执行，由把这条命令交给 shell
+// 真跑一遍来验证，这样排版调整不会让这条契约的测试失效
+func recoveryCommand(hint string) string {
+	for _, line := range strings.Split(stripANSI(hint), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "ggt config reset") {
+		if strings.HasPrefix(trimmed, "ggt ") && strings.Contains(trimmed, "config reset") {
 			return trimmed
 		}
 	}
@@ -1277,8 +1324,13 @@ func TestCLIBoolValueRejectedEverywhere(t *testing.T) {
 
 	// 三条读路径拿到的是 JSON 布尔，报同一条类型错误；config set 收到的是文本 "true"，
 	// 属于非法取值。先取出类型错误那一句，再单独检查 set 的文案
+	//
+	// 取的是“核心那一句”：四条路径各自会加一层前缀（运行期是 "Failed to load the
+	// configuration:"，get 与 validate 是 "Execution failed:" 或 "[error]"），前缀与
+	// 着色都随入口和终端而变，契约是核心说明逐字相同。因此比对前只做两件与文案无关的
+	// 归一化——去掉 ANSI 转义、从核心句起点截断，剩下的部分仍要求逐字一致
 	sentence := func(result cliResult) string {
-		for _, line := range strings.Split(result.stdout+result.stderr, "\n") {
+		for _, line := range strings.Split(stripANSI(result.stdout+result.stderr), "\n") {
 			if at := strings.Index(line, `Expected "auto" or an integer`); at >= 0 {
 				return strings.TrimSpace(line[at:])
 			}
@@ -1335,5 +1387,65 @@ func TestCLIBoolValueRejectedEverywhere(t *testing.T) {
 		if got := strings.TrimSpace(result.stdout); got != "8" {
 			t.Errorf("%s 的 get = %q，期望 8", content, got)
 		}
+	}
+}
+
+// TestCLIColorFollowsOutputTarget 守“管道里不带转义、终端里仍然有颜色”这条契约。
+//
+// 子进程的 stdout 与 stderr 都是本进程给的管道（os/exec 对非 *os.File 的 writer 会建
+// 管道），因此不设 NO_COLOR 也不该出现 ANSI 转义——CI 上原先挂掉的正是这个场景。
+//
+// 反向用例（--color=always）不能省：只断言“没有转义”的话，把着色整个关掉同样能通过，
+// 那等于把“终端里仍然有颜色”一起改坏了。
+//
+// 被试命令选 config show：一项取值坏掉时它同时写两路——stdout 是纯 JSON、stderr 是
+// 逐键问题，正好覆盖脚本依赖的数据流与给人看的提示流
+func TestCLIColorFollowsOutputTarget(t *testing.T) {
+	home := t.TempDir()
+	configPath := configFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("创建配置目录失败: %v", err)
+	}
+	// 取值非法的单项：严格加载失败，宽松加载仍能读出整份配置，于是 config show
+	// 既打印 JSON，又在 stderr 报一条“怎么修”
+	if err := os.WriteFile(configPath, []byte(`{"concurrency":"nope"}`), 0o644); err != nil {
+		t.Fatalf("写入非法并发数失败: %v", err)
+	}
+
+	// env 只写要额外覆盖的项：runCLIProcess 已经保证本进程继承来的 NO_COLOR 不会漏给子进程
+	cases := []struct {
+		name      string
+		env       []string
+		arguments []string
+		colored   bool
+	}{
+		{name: "管道且未设 NO_COLOR", arguments: []string{"config", "show"}},
+		{name: "管道且设了 NO_COLOR", env: []string{"NO_COLOR=1"}, arguments: []string{"config", "show"}},
+		{name: "管道但强制着色", arguments: []string{"--color=always", "config", "show"}, colored: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := runCLIProcess(t, home, testCase.env, testCase.arguments...)
+			if result.exitCode != 0 {
+				t.Fatalf("config show 应以 0 退出：stderr=%q", result.stderr)
+			}
+			if got := strings.Contains(result.stdout+result.stderr, "\x1b["); got != testCase.colored {
+				t.Fatalf("输出里带不带转义应等于 %v，实得 %v：stdout=%q stderr=%q",
+					testCase.colored, got, result.stdout, result.stderr)
+			}
+			if testCase.colored {
+				// 这一档的正当性来自提示流：config show 的 JSON 刻意走 fmt 输出纯文本
+				// （见 showConfig），着色与否只体现在 stderr 的逐键问题上
+				if !strings.Contains(result.stderr, "\x1b[") {
+					t.Errorf("强制着色时 stderr 的提示应带转义：%q", result.stderr)
+				}
+				return
+			}
+			// 管道里的数据必须能直接交给 jq 之类解析，这比“没有转义字符”更贴近真实用法
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(result.stdout), &parsed); err != nil {
+				t.Errorf("stdout 应是可直接解析的 JSON：%v（%q）", err, result.stdout)
+			}
+		})
 	}
 }

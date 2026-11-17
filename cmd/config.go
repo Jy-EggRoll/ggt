@@ -3,8 +3,9 @@
 // 本子树刻意遮蔽 root 的 PersistentPreRunE（见 newConfigCmd 的说明），因此这里
 // **一律不得调用 GetConfig()**（那个全局 cfg 是 nil），所有读写都直接落到配置文件。
 //
-// get 与 validate 的输出面向脚本处理，**全程不走 pterm**：pterm 不检测 TTY，
-// 会把 ANSI 转义写进管道，让 `ggt config show | jq` 之类的用法直接失败。
+// get 与 validate 的输出面向脚本处理，**全程不走 pterm**：pterm 给每行加上前缀与样式，
+// 而脚本要的是原样取值。着色虽然已由 color.go 按终端判定，这里仍不依赖那条开关——
+// 即便在终端里执行，输出形态也不该随终端与管道的差别而变。
 package cmd
 
 import (
@@ -17,7 +18,6 @@ import (
 	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 // newConfigCmd 实现 "ggt config" 及其子命令。
@@ -355,7 +355,7 @@ func confirmClearingBrokenList(s config.Setting, yes bool) (bool, error) {
 	if usable == 0 || yes {
 		return true, nil
 	}
-	if !stdinIsTerminal() {
+	if !isTerminal(os.Stdin) {
 		return false, errors.New(l10n.T("Refusing to clear {{.Key}} without confirmation: usable entries ({{.Usable}}) would be lost; re-run with --yes",
 			map[string]any{"Usable": usable, "Key": s.Key}))
 	}
@@ -392,7 +392,7 @@ func resetAllConfig(writeDefaults, yes bool) error {
 		}
 		if !yes {
 			// 非交互环境下 pterm 的确认会读到 EOF 或直接挂住，明确报错让用户加 --yes
-			if !stdinIsTerminal() {
+			if !isTerminal(os.Stdin) {
 				return errors.New(l10n.T("Refusing to delete {{.Path}} without confirmation; re-run with --yes",
 					map[string]any{"Path": path}))
 			}
@@ -546,16 +546,6 @@ func printConfigValue(v any) {
 	default:
 		fmt.Println(config.ValueText(v))
 	}
-}
-
-// stdinIsTerminal 判断标准输入是否为真正的终端。
-// 用于在非交互环境下拒绝需要确认的破坏性操作，而不是让 pterm 读到 EOF 或挂住。
-//
-// 必须用 x/term 的 ioctl 检测，不能用 `os.Stdin.Stat()` 的 ModeCharDevice：
-// **/dev/null 也是字符设备**，脚本里 `ggt config reset --all`（stdin 接 /dev/null）
-// 会被误判成交互环境，然后卡在确认提示上永远等不到输入。
-func stdinIsTerminal() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 func init() {
