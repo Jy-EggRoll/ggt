@@ -36,10 +36,14 @@ type uiSettings struct {
 type uiSettingsRequest struct {
 	Values map[string]string `json:"values"`
 	Unset  []string          `json:"unset"`
-	// Confirm 为真表示用户已经在页面上看过确认框并同意。
+	// Confirm 列出用户已经在页面上看过损失清单并同意清掉的键。
 	// 只有“清掉受管项里一个还有可用条目的坏列表”会用到它：那一步会连带丢掉几个本来还能用的
 	// 仓库，与命令行的 reset 一样必须先让损失可见（见 uiUnsetConfirm）
-	Confirm bool `json:"confirm"`
+	//
+	// 必须按项列出，不能是一个请求级布尔：同一批请求里可以同时有两个受管坏列表
+	// （repo_paths 与 parent_paths），布尔会让“看过其中一个的损失清单”变成“两个都获得同意”，
+	// 另一个就在从未展示的情况下被清掉。认不出来的键不授权任何操作，按“没确认”处理
+	Confirm []string `json:"confirm"`
 }
 
 // uiUnsetConfirm 说明“清掉这一项会丢掉什么”。
@@ -72,9 +76,10 @@ type uiSettingsResult struct {
 	// 为什么必须回传：一次保存只处理用户改过的那几项，文件里别的坏值会被原样留着，
 	// 下一次启动仍然失败。此前响应只说“已保存”，用户于是以为配置已经好了
 	Remaining map[string]string `json:"remaining,omitempty"`
-	// Confirm 非空表示这次请求没有执行完：其中有一项要先确认（见 uiUnsetConfirm）。
-	// 它不是错误——用户还没决定，页面拿到它只该弹确认框，不该报错
-	Confirm *uiUnsetConfirm `json:"confirm,omitempty"`
+	// Confirms 非空表示这次请求里还有键要先确认：每一项对应一个键的损失清单（见 uiUnsetConfirm）。
+	// 它不是错误——用户还没决定，页面拿到它只该弹确认框，不该报错。
+	// 用列表而不是单个：同一批可能有两个受管坏列表，只回一个会让另一个既不清掉、也不被提起
+	Confirms []uiUnsetConfirm `json:"confirms,omitempty"`
 	// Reload 为真表示这批改动里有页面已经烧进去的东西，需要刷新页面才看得到效果
 	Reload bool   `json:"reload,omitempty"`
 	Error  string `json:"error,omitempty"`
@@ -194,6 +199,15 @@ func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 		out.Reload = out.Reload || uiReloadsPage(s.Key)
 	}
 
+	// 已确认的键按注册表的规范键名收成集合：请求里的键名与取值一样忽略大小写与首尾空白，
+	// 与命令行、面板其它入口同一规则。认不出来的名字不授权任何操作（等价于没确认）
+	confirmed := make(map[string]bool, len(req.Confirm))
+	for _, raw := range req.Confirm {
+		if s, ok := config.Lookup(raw); ok {
+			confirmed[s.Key] = true
+		}
+	}
+
 	// 恢复默认走的是“把键从文件里删掉”，与命令行 reset 的默认模式一致：文件里因此只留下
 	// 用户真正改过的项，不会被一堆等于默认值的键塞满。
 	// 删不删得掉由 config.PlanUnsetAt 判定，与命令行共用同一份规则（含受管项的例外放行）
@@ -210,14 +224,14 @@ func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 		// 受管项的坏列表里还留着可用条目时先要确认：清掉它就是删掉几个本来还能用的仓库。
 		// 判定与命令行 reset 共用 config.SalvagedPathListAt（计数与条目同源），
 		// 差别只在把“整段命令 + --yes”换成页面上的一次确认
-		if plan.Managed && !req.Confirm {
+		if plan.Managed && !confirmed[plan.Key] {
 			total, lost, countErr := config.SalvagedPathListAt(path, plan.Key)
 			if countErr != nil {
 				out.Errors[plan.Key] = countErr.Error()
 				continue
 			}
 			if len(lost) > 0 {
-				out.Confirm = &uiUnsetConfirm{Key: plan.Key, Total: total, Usable: len(lost), Lost: lost}
+				out.Confirms = append(out.Confirms, uiUnsetConfirm{Key: plan.Key, Total: total, Usable: len(lost), Lost: lost})
 				continue
 			}
 		}

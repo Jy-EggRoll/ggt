@@ -470,14 +470,15 @@ func TestHandleSettingsUnsetManagedBrokenListNeedsConfirmation(t *testing.T) {
 	rec := callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["repo_paths"]}`)
 	out := decodeSettingsResult(t, rec, http.StatusOK)
 
-	if out.Confirm == nil {
+	if len(out.Confirms) != 1 {
 		t.Fatalf("缺确认时应回传损失清单，实得 %+v", out)
 	}
-	if out.Confirm.Key != "repo_paths" || out.Confirm.Total != 2 || out.Confirm.Usable != 1 {
-		t.Errorf("损失清单应为 repo_paths：总 2 条、可用 1 条，实得 %+v", out.Confirm)
+	confirm := out.Confirms[0]
+	if confirm.Key != "repo_paths" || confirm.Total != 2 || confirm.Usable != 1 {
+		t.Errorf("损失清单应为 repo_paths：总 2 条、可用 1 条，实得 %+v", confirm)
 	}
-	if len(out.Confirm.Lost) != 1 || out.Confirm.Lost[0] != "/tmp/keep-me" {
-		t.Errorf("应列出会丢掉的条目，实得 %#v", out.Confirm.Lost)
+	if len(confirm.Lost) != 1 || confirm.Lost[0] != "/tmp/keep-me" {
+		t.Errorf("应列出会丢掉的条目，实得 %#v", confirm.Lost)
 	}
 	if len(out.Applied) != 0 {
 		t.Errorf("缺确认时不该写入，实得 %v", out.Applied)
@@ -491,10 +492,10 @@ func TestHandleSettingsUnsetManagedBrokenListNeedsConfirmation(t *testing.T) {
 	}
 
 	// 用户确认后重发同一个请求，这次真的删掉
-	rec = callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["repo_paths"],"confirm":true}`)
+	rec = callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["repo_paths"],"confirm":["repo_paths"]}`)
 	out = decodeSettingsResult(t, rec, http.StatusOK)
-	if out.Confirm != nil {
-		t.Errorf("带确认时不该再问一次：%+v", out.Confirm)
+	if len(out.Confirms) != 0 {
+		t.Errorf("带确认时不该再问一次：%+v", out.Confirms)
 	}
 	if len(out.Errors) != 0 {
 		t.Fatalf("带确认后应删除成功：%+v", out.Errors)
@@ -518,11 +519,66 @@ func TestHandleSettingsUnsetBrokenListWithoutUsableEntries(t *testing.T) {
 
 	rec := callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["repo_paths"]}`)
 	out := decodeSettingsResult(t, rec, http.StatusOK)
-	if out.Confirm != nil {
-		t.Errorf("没有可用条目时不该要确认：%+v", out.Confirm)
+	if len(out.Confirms) != 0 {
+		t.Errorf("没有可用条目时不该要确认：%+v", out.Confirms)
 	}
 	if len(out.Errors) != 0 || len(out.Applied) != 1 {
 		t.Errorf("应直接清掉，实得 applied=%v errors=%v", out.Applied, out.Errors)
+	}
+}
+
+// TestHandleSettingsUnsetConfirmationIsPerKey 断言“确认”只对列出的键生效。
+//
+// 这是把请求级布尔换成按项确认的直接理由：同一批里放两个受管坏列表时，一个布尔会让
+// “看过 repo_paths 的损失清单”顺带授权 parent_paths，后者在从未展示的情况下被清掉。
+// 按项确认之后，未被列出的键只回损失清单、不动文件。
+func TestHandleSettingsUnsetConfirmationIsPerKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	writeRawConfig(t, path, `{"repo_paths":["/tmp/keep-me",""],"parent_paths":["/tmp/parent",""]}`)
+
+	// 两个都要确认：响应必须把两份损失清单都给出来，且一个都不清
+	rec := callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["repo_paths","parent_paths"]}`)
+	out := decodeSettingsResult(t, rec, http.StatusOK)
+	keys := make(map[string]bool, len(out.Confirms))
+	for _, c := range out.Confirms {
+		keys[c.Key] = true
+	}
+	if !keys["repo_paths"] || !keys["parent_paths"] {
+		t.Fatalf("两个键的损失清单都要回传，实得 %+v", out.Confirms)
+	}
+	if len(out.Applied) != 0 {
+		t.Fatalf("都没确认时不该清掉任何一项，实得 %v", out.Applied)
+	}
+	raw, err := config.ReadRawAt(path)
+	if err != nil {
+		t.Fatalf("回读失败：%v", err)
+	}
+	if _, exists := raw["repo_paths"]; !exists {
+		t.Error("repo_paths 未被确认，不该被清掉")
+	}
+	if _, exists := raw["parent_paths"]; !exists {
+		t.Error("parent_paths 未被确认，不该被清掉")
+	}
+
+	// 只确认 repo_paths：它被清掉，parent_paths 仍要确认且保持原样
+	rec = callSettings(t, handleSettings(path), http.MethodPost,
+		`{"unset":["repo_paths","parent_paths"],"confirm":["repo_paths"]}`)
+	out = decodeSettingsResult(t, rec, http.StatusOK)
+	if len(out.Applied) != 1 || out.Applied[0] != "repo_paths" {
+		t.Fatalf("只该清掉已确认的那一项，实得 %v", out.Applied)
+	}
+	if len(out.Confirms) != 1 || out.Confirms[0].Key != "parent_paths" {
+		t.Fatalf("parent_paths 仍应回一份损失清单，实得 %+v", out.Confirms)
+	}
+	raw, err = config.ReadRawAt(path)
+	if err != nil {
+		t.Fatalf("回读失败：%v", err)
+	}
+	if _, exists := raw["repo_paths"]; exists {
+		t.Error("已确认的 repo_paths 应被清掉")
+	}
+	if _, exists := raw["parent_paths"]; !exists {
+		t.Error("未确认的 parent_paths 不该被清掉")
 	}
 }
 
