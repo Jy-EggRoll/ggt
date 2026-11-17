@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -25,7 +24,9 @@ import (
 var (
 	// concurrency 通过 --concurrency / -c 命令行参数传入，
 	// 在 PersistentPreRunE 中覆盖配置文件的默认值。
-	concurrency int
+	// 类型是 string 而不是 int：配置文件与设置面板认 auto 这个词，命令行若只收数字，
+	// 同一套词汇在两处就对不上；取值校验统一交给 config.resolveConcurrency。
+	concurrency string
 	// verboseCount 由 -v/--verbose 累加得到：-v 为 info，-vv 及以上为 debug。
 	// 它与配置文件里的 log_level 共同决定诊断日志详略，命令行优先级更高。
 	verboseCount int
@@ -56,10 +57,10 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 				return fmt.Errorf("%s: %w", l10n.T("Failed to load the configuration", nil), err)
 			}
 
-			// 命令行的 -c 只在显式给出时才覆盖配置：默认值 0 必须与“用户写了 -c 0”
-			// 区分开，否则 -c 0 会被当成没写而静默忽略。cobra 的 Changed 正是这个区分。
+			// 命令行的 -c 只在显式给出时才覆盖配置：默认空串表示“未指定”，
+			// 不能与用户真的写了 -c auto 混为一谈。cobra 的 Changed 正是这个区分。
 			if cmd.Flags().Changed("concurrency") {
-				cfg.Concurrency = strconv.Itoa(concurrency)
+				cfg.Concurrency = concurrency
 			}
 
 			// 并发数在这里一次性解析并装进 worker 的共享信号量。放在启动流程而不是各命令里，
@@ -81,11 +82,11 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 		},
 	}
 
-	// -c 的默认值 0 只是占位，是否生效由 cobra 的 Changed 判定（见 PersistentPreRunE）。
-	// 它没有 auto 形态：要跟着核数走就别写 -c，交给配置项的 auto 默认值。
-	// 取值边界（1 到 64）与配置文件共用同一份解析与报错，见 config.resolveConcurrency。
-	root.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0,
-		l10n.T("Concurrency: an integer from 1 to 64 (overrides the concurrency setting; the setting defaults to auto, i.e. half of the CPU cores capped at 8)", nil))
+	// -c 的默认值空串只是占位，是否生效由 cobra 的 Changed 判定（见 PersistentPreRunE）。
+	// 取值集与配置文件完全一致：auto，或 1 到 64 的整数；解析与报错共用
+	// config.resolveConcurrency，命令行因此不会漏出 strconv 的原文。
+	root.PersistentFlags().StringVarP(&concurrency, "concurrency", "c", "",
+		l10n.T("Concurrency: auto or an integer from 1 to 64 (overrides the concurrency setting; auto means half of the CPU cores capped at 8)", nil))
 	// -v/--verbose 是可累加的持久化 flag：-v 提到 info（含各阶段耗时），-vv 及以上到 debug。
 	// 与 flk 保持一致（两个工具的日志入口是同一套），默认级别由配置项 log_level 决定
 	root.PersistentFlags().CountVarP(&verboseCount, "verbose", "v",

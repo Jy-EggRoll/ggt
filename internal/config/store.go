@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -265,12 +266,25 @@ func EffectiveAt(path, key string) (any, error) {
 			return l10n.Normalize(text, locales.Supported(), locales.Default), nil
 		}
 	}
-	// concurrency 的旧语义值同理：运行期按 auto 处理（见 migrateDeprecatedConcurrency），
-	// get 若原样打出 CPUFull，脚本会以为这个值仍然有效
+	// concurrency 的输出必须与运行期一致，而且不能把非法值原样打印出去：
+	//   - 旧语义值、空串与大小写不同的 auto 都归一到 auto（运行期就是这么解析的，
+	//     见 resolveConcurrency 与 migrateDeprecatedConcurrency）
+	//   - " 8 " 这类带首尾空白的数字归一到规范十进制，与 config set 写出的形态一致
+	//   - 越界或无法解析时返回错误，让 get 以非 0 退出。否则会出现“get 说 65、
+	//     下一条命令直接失败”的错位，也与 config validate 把这类值判为 error 的口径矛盾
 	if s.Key == "concurrency" {
-		if text, isStr := v.(string); isStr && isDeprecatedConcurrencyValue(text) {
+		text := ValueText(v)
+		if isDeprecatedConcurrencyValue(text) {
 			return DefaultConcurrency, nil
 		}
+		n, err := resolveConcurrency(text)
+		if err != nil {
+			return nil, err
+		}
+		if trimmed := strings.TrimSpace(text); trimmed == "" || strings.EqualFold(trimmed, DefaultConcurrency) {
+			return DefaultConcurrency, nil
+		}
+		return strconv.Itoa(n), nil
 	}
 	return v, nil
 }

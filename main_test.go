@@ -25,6 +25,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -549,6 +550,20 @@ func TestCLIConcurrencyContract(t *testing.T) {
 		t.Fatalf("-c 64 应成功: exit=%d stderr=%q", ok.exitCode, ok.stderr)
 	}
 
+	// 1a. -c 与配置项共用同一套词汇：auto 也合法，大小写与首尾空白不敏感。
+	// 非数字串的报错必须是配置项那一句，不能漏出 strconv 的解析原文——那会让用户
+	// 以为命令行与配置文件是两套规则
+	for _, value := range []string{"auto", "AUTO", " Auto ", " 8 "} {
+		if result := runCLIWithEnv(t, home, "-c", value, "version"); result.exitCode != 0 {
+			t.Errorf("-c %q 应成功: exit=%d stderr=%q", value, result.exitCode, result.stderr)
+		}
+	}
+	if result := runCLIWithEnv(t, home, "-c", "abc", "version"); result.exitCode == 0 {
+		t.Errorf("-c abc 应以非 0 退出：stdout=%q", result.stdout)
+	} else if strings.Contains(result.stderr, "strconv") {
+		t.Errorf("-c 的报错不应漏出 strconv 原文：stderr=%q", result.stderr)
+	}
+
 	// 1b. config 子树遮蔽了 root 的钩子，-c 也必须在这里单独校验，否则它是唯一
 	// 能把 -c 0 静默吞掉的地方（config 命令不跑并发任务，合法值不产生副作用）
 	if result := runCLIWithEnv(t, home, "-c", "0", "config", "validate"); result.exitCode == 0 {
@@ -608,5 +623,43 @@ func TestCLIConcurrencyContract(t *testing.T) {
 	}
 	if !strings.Contains(legacy.stdout, "CPUFull") {
 		t.Errorf("validate 应点名旧语义值：stdout=%q", legacy.stdout)
+	}
+
+	// 6. get 的显示口径：合法值归一成运行期形态，运行期会失败的值不打印而是非 0 退出。
+	// 后者是为了避免“get 说 65、下一条命令直接失败”的错位
+	getCases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"带空白数字", `{"concurrency": " 8 "}`, "8"},
+		{"大写 auto", `{"concurrency": "AUTO"}`, "auto"},
+	}
+	for _, c := range getCases {
+		if err := os.WriteFile(configPath, []byte(c.content), 0o644); err != nil {
+			t.Fatalf("写入 %s 失败: %v", c.name, err)
+		}
+		result := runCLIWithEnv(t, home, "config", "get", "concurrency")
+		if result.exitCode != 0 {
+			t.Errorf("%s: get 应以 0 退出: exit=%d stderr=%q", c.name, result.exitCode, result.stderr)
+			continue
+		}
+		if got := strings.TrimSpace(result.stdout); got != c.want {
+			t.Errorf("%s: get = %q，期望 %q", c.name, got, c.want)
+		}
+	}
+	for _, value := range []string{"65", "0", "-3", "abc"} {
+		content := fmt.Sprintf(`{"concurrency": %q}`, value)
+		if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("写入非法并发数失败: %v", err)
+		}
+		result := runCLIWithEnv(t, home, "config", "get", "concurrency")
+		if result.exitCode == 0 {
+			t.Errorf("get 遇到 %q 应以非 0 退出：stdout=%q", value, result.stdout)
+			continue
+		}
+		if !strings.Contains(result.stderr, value) {
+			t.Errorf("get 的报错应写明实际值 %q：stderr=%q", value, result.stderr)
+		}
 	}
 }

@@ -687,17 +687,41 @@ func TestValidateAtDeprecatedConcurrencyIsWarning(t *testing.T) {
 	}
 }
 
-// TestEffectiveAtNormalizesDeprecatedConcurrency 断言 config get 的输出与运行期一致：
-// 文件里写 CPUHalf，运行期按 auto 跑，get 就不该原样打出这个废弃词。
-func TestEffectiveAtNormalizesDeprecatedConcurrency(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "c.json")
-	writeFile(t, path, `{"concurrency": "CPUHalf"}`)
-
-	got, err := EffectiveAt(path, "concurrency")
-	if err != nil {
-		t.Fatalf("读取生效值失败: %v", err)
+// TestEffectiveAtNormalizesConcurrency 断言 config get 的输出与运行期一致：
+// 合法取值归一成规范形态，运行期会失败的值直接返回错误（get 据此非 0 退出）。
+func TestEffectiveAtNormalizesConcurrency(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string
+		wantErr bool
+	}{
+		{"带空白的数字归一", `{"concurrency": " 8 "}`, "8", false},
+		{"JSON 数字归一", `{"concurrency": 8}`, "8", false},
+		{"大写 auto 归一", `{"concurrency": "AUTO"}`, "auto", false},
+		{"空串按 auto", `{"concurrency": ""}`, "auto", false},
+		{"旧语义值按 auto", `{"concurrency": "CPUHalf"}`, "auto", false},
+		{"上限本身合法", `{"concurrency": "64"}`, "64", false},
+		{"越界报错", `{"concurrency": "65"}`, "", true},
+		{"零报错", `{"concurrency": "0"}`, "", true},
+		{"负数报错", `{"concurrency": "-3"}`, "", true},
+		{"乱码报错", `{"concurrency": "abc"}`, "", true},
 	}
-	if got != DefaultConcurrency {
-		t.Errorf("EffectiveAt = %v，应为 %q", got, DefaultConcurrency)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "c.json")
+			writeFile(t, path, c.content)
+
+			got, err := EffectiveAt(path, "concurrency")
+			if (err != nil) != c.wantErr {
+				t.Fatalf("EffectiveAt 错误 = %v，wantErr=%v", err, c.wantErr)
+			}
+			if c.wantErr {
+				return
+			}
+			if got != c.want {
+				t.Errorf("EffectiveAt = %v，应为 %q", got, c.want)
+			}
+		})
 	}
 }

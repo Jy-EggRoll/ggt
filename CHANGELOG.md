@@ -12,6 +12,8 @@
 - `concurrency` 的默认值从语义值 `CPUHalf` 改为 `auto`：按本机 CPU 逻辑核数取一半，最多 8。核数再多也不提高默认值，因为瓶颈已从 CPU 转到磁盘与内存带宽
 - 语义值 `CPUHalf`、`CPUFull`、`CPUQuarter` 移除，配置项只接受 `auto` 或 1 到 64 的整数。旧配置里读到这三个值不会换算成数字，而是按 `auto` 处理并提示一次，需要显式改写；`ggt config validate` 对这类值只报警告（运行期确实还能跑），`config get` 也按 `auto` 显示，`config set` 则拒绝再写入废弃值
 - `concurrency` 的上限从 1024 收紧到 64，且在配置文件加载、`-c`、`config set`、`config validate` 四条路径上一致生效：越界值（含 `-c 0` 与负数）直接报错并以非 0 退出码结束，不再被静默忽略或截断
+- `-c` 的取值集与配置文件统一：除 1 到 64 的整数外也接受 `auto`（大小写与首尾空白都不敏感），非法值的报错与配置项共用同一句，不再漏出 `strconv` 的解析原文
+- `ggt config get concurrency` 输出运行期实际会采用的形态：`" 8 "` 显示为 `8`，`AUTO` 与旧语义值显示为 `auto`；运行期会失败的值（`0`、负数、超过 64、无法解析）不再原样打印，改为以非 0 退出并说明原因，与 `config validate` 把这类值判为 error 的口径一致
 
 **自升级**
 
