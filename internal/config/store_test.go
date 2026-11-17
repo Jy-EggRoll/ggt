@@ -359,6 +359,9 @@ func TestSettingParse(t *testing.T) {
 		{"concurrency", "65", true}, // 上限外一号：显式调高最多 64
 		{"concurrency", "abc", true},
 		{"concurrency", "2000000000", true}, // 超上限：填这么大等于让信号量失去作用
+		{"concurrency", "010", true},        // 前导零：与整数项同一套规范十进制规则
+		{"concurrency", "+8", true},         // 正号：Atoi 会接受，配置解析刻意不接受
+		{"concurrency", "8.0", true},        // 浮点字符串
 		{"concurrency", "CPUFull", true},    // 旧语义值已移除，迁移在加载期完成
 		{"size_bucket_low_mb", "100", false},
 		{"size_bucket_low_mb", "0", true},

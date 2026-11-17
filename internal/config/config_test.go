@@ -375,6 +375,8 @@ func TestLoadConfigAt(t *testing.T) {
 			{"阈值为负", `{"size_bucket_high_mb": -1}`},
 			{"非法口径", `{"size_unit": "bogus"}`},
 			{"空语言", `{"language": ""}`},
+			{"并发数前导零", `{"concurrency": "010"}`},
+			{"并发数正号", `{"concurrency": "+8"}`},
 			{"空串仍按 auto", `{"concurrency": ""}`},
 		}
 		for _, c := range cases {

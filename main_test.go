@@ -619,6 +619,12 @@ func TestCLIConcurrencyContract(t *testing.T) {
 	if result := runCLIWithEnv(t, home, "config", "set", "concurrency", "65"); result.exitCode == 0 {
 		t.Errorf("config set concurrency 65 应被拒绝，实际成功：stdout=%q", result.stdout)
 	}
+	// 字符串数字与整数项同一套规范十进制规则：前导零、正号、浮点写法都不接受
+	for _, value := range []string{"010", "+8", "8.0"} {
+		if result := runCLIWithEnv(t, home, "config", "set", "concurrency", value); result.exitCode == 0 {
+			t.Errorf("config set concurrency %q 应被拒绝，实际成功：stdout=%q", value, result.stdout)
+		}
+	}
 	if result := runCLIWithEnv(t, home, "config", "set", "concurrency", "auto"); result.exitCode != 0 {
 		t.Fatalf("config set concurrency auto 应成功: exit=%d stderr=%q", result.exitCode, result.stderr)
 	}
@@ -676,7 +682,7 @@ func TestCLIConcurrencyContract(t *testing.T) {
 			t.Errorf("%s: get = %q，期望 %q", c.name, got, c.want)
 		}
 	}
-	for _, value := range []string{"65", "0", "-3", "abc"} {
+	for _, value := range []string{"65", "0", "-3", "abc", "010", "+8", "8.0"} {
 		content := fmt.Sprintf(`{"concurrency": %q}`, value)
 		if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 			t.Fatalf("写入非法并发数失败: %v", err)

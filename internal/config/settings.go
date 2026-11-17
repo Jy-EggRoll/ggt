@@ -462,8 +462,11 @@ func parseConcurrency(s string) (any, error) {
 	if isDeprecatedConcurrencyValue(v) {
 		return nil, errDeprecatedConcurrency
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 || n > maxConcurrency {
+	// 字符串数字与整数项共用同一套规范十进制规则：前导零、正号、小数点、进制前缀
+	// 与下划线都不接受。Atoi 会悄悄接受 "010" 与 "+8"，那会让同一份配置里
+	// concurrency 与整数项有两套规矩。
+	n, ok := decimalStringToInt(v)
+	if !ok || n < 1 || n > maxConcurrency {
 		return nil, ErrInvalidValue
 	}
 	return strconv.Itoa(n), nil
