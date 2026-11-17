@@ -96,6 +96,31 @@ func logLevelValueNormalizer(key string, options func() []Option) func(any) (any
 	}
 }
 
+// concurrencyNormalizer 处理并发数这一项的特殊取值域：auto 或 1 到 maxConcurrency 的整数。
+//
+// 它虽然声明为 KindString（Config 里的字段是字符串，auto 需要落盘成文本），但语义是数值型：
+// 手写配置时 {"concurrency": 8} 是最自然的写法，若按普通字符串项拒绝 JSON 数字，
+// 规则就会反过来卡住合理用法。因此这里单独放行 JSON 整数值，并把它与字符串形式
+// 收敛到同一个规范结果（"8" 而非 8），让运行期、get、validate 看到同一形态。
+// JSON 布尔、非整数数字、数组与对象仍然拒绝；错误文案沿用 invalidValueError 或
+// “Expected ... got ...” 这一套。
+func concurrencyNormalizer(key string) func(any) (any, error) {
+	return func(v any) (any, error) {
+		switch value := v.(type) {
+		case string:
+			return parseConcurrency(value)
+		case json.Number:
+			n, ok := jsonNumberToInt(value)
+			if !ok || n < 1 || n > maxConcurrency {
+				return nil, ErrInvalidValue
+			}
+			return strconv.Itoa(n), nil
+		default:
+			return nil, expectedConcurrencyError(key, v)
+		}
+	}
+}
+
 // boolValueNormalizer 接受 JSON 布尔，以及忽略大小写与首尾空白的 "true"/"false"。
 //
 // 刻意不再接受 "1"/"0"/"t"/"f"：这些同义写法正是四条路径结论不一的来源。
@@ -221,6 +246,13 @@ func normalizeValue(s Setting, v any) (any, error) {
 // 用户看到 "got number" 才知道该加引号，而不是去改数字本身。
 func expectedStringError(key string, v any) error {
 	return fmt.Errorf("%s", l10n.T("Expected a string for {{.Key}}, got {{.Type}}",
+		map[string]any{"Key": key, "Type": jsonTypeName(v)}))
+}
+
+// expectedConcurrencyError 说明并发数既接受 auto 也接受整数，避免用户误以为
+// 只能写某一种形态。
+func expectedConcurrencyError(key string, v any) error {
+	return fmt.Errorf("%s", l10n.T(`Expected "auto" or an integer for {{.Key}}, got {{.Type}}`,
 		map[string]any{"Key": key, "Type": jsonTypeName(v)}))
 }
 

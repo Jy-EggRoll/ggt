@@ -707,7 +707,9 @@ func TestEffectiveAtNormalizesConcurrency(t *testing.T) {
 		wantErr bool
 	}{
 		{"带空白的数字归一", `{"concurrency": " 8 "}`, "8", false},
-		{"JSON 数字被拒绝", `{"concurrency": 8}`, "", true},
+		{"JSON 数字归一", `{"concurrency": 8}`, "8", false},
+		{"JSON 浮点被拒", `{"concurrency": 8.5}`, "", true},
+		{"JSON 布尔被拒", `{"concurrency": true}`, "", true},
 		{"大写 auto 归一", `{"concurrency": "AUTO"}`, "auto", false},
 		{"空串按 auto", `{"concurrency": ""}`, "auto", false},
 		{"旧语义值按 auto", `{"concurrency": "CPUHalf"}`, "auto", false},
@@ -807,7 +809,8 @@ func TestEffectiveAtRejectsWrongShape(t *testing.T) {
 		{"路径列表写 null 按未设置处理", `{"repo_paths": null}`, "repo_paths", false, "[]"},
 		{"布尔项本身合法", `{"ignore_submodules": true}`, "ignore_submodules", false, "true"},
 		{"布尔项的字符串形态仍合法", `{"push_tags": "false"}`, "push_tags", false, "false"},
-		{"并发数写成数字被拒绝", `{"concurrency": 8}`, "concurrency", true, ""},
+		{"并发数的数字形态合法", `{"concurrency": 8}`, "concurrency", false, "8"},
+		{"并发数写成浮点被拒", `{"concurrency": 1.5}`, "concurrency", true, ""},
 		{"字符串形态仍合法", `{"concurrency": "8"}`, "concurrency", false, "8"},
 		{"整数的字符串形态仍合法", `{"size_bucket_low_mb": "500"}`, "size_bucket_low_mb", false, "500"},
 	}

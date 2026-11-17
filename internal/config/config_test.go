@@ -347,15 +347,22 @@ func TestLoadConfigAt(t *testing.T) {
 		}
 	})
 
-	t.Run("数字型并发数不再接受", func(t *testing.T) {
+	t.Run("数字型并发数归一成字符串", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "c.json")
-		// concurrency 是字符串项（取值是 auto 或数字字符串），JSON 数字不是它的合法形态。
-		// 弱类型转换曾把 8 自动转成 "8"，但同一份输入在 config get 与 validate 那里
-		// 又按另一套规则解释；收紧后四处都按“字符串项只收字符串”判定
+		// concurrency 的语义是 auto 或 1 到 64 的整数，JSON 数字是最自然的写法；
+		// 加载后统一存成字符串形态，运行期与 config get 看到的是同一个规范值
 		writeFile(t, path, `{"concurrency": 8}`)
 
-		if _, err := LoadConfigAt(path); err == nil {
-			t.Fatal("数字型并发数应被拒绝，而不是弱转成字符串继续跑")
+		cfg, err := LoadConfigAt(path)
+		if err != nil {
+			t.Fatalf("读取失败: %v", err)
+		}
+		if cfg.Concurrency != "8" {
+			t.Errorf("concurrency = %q，应为 \"8\"", cfg.Concurrency)
+		}
+		got, err := cfg.ConcurrencyValue()
+		if err != nil || got != 8 {
+			t.Errorf("ConcurrencyValue() = (%d, %v)，应为 (8, nil)", got, err)
 		}
 	})
 
@@ -593,8 +600,18 @@ func TestLoadConfigAtRejectsBoolShape(t *testing.T) {
 			},
 		},
 		{
-			name:    "并发数写成数字被拒绝",
+			name:    "并发数写成数字归一成字符串",
 			content: `{"concurrency": 8}`,
+			wantErr: false,
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Concurrency != "8" {
+					t.Errorf("concurrency = %q，应为 \"8\"", cfg.Concurrency)
+				}
+			},
+		},
+		{
+			name:    "并发数写成浮点被拒绝",
+			content: `{"concurrency": 8.5}`,
 			wantErr: true,
 		},
 		{

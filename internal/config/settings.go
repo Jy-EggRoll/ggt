@@ -219,7 +219,7 @@ var settings = []Setting{
 		// 这句文案里的 64 必须与 maxConcurrency 一起改：它是给用户看的允许范围，
 		// 而提取器要求消息首参是字面量，没法在文案里插常量
 		Expected:  l10n.T("auto or an integer from 1 to 64", nil),
-		Normalize: stringValueNormalizer("concurrency", parseConcurrency),
+		Normalize: concurrencyNormalizer("concurrency"),
 		// auto 之外还接受 1 到 64 的任意整数，因此候选只是“能直接点的几个”，
 		// 不是全部合法取值
 		Options:     concurrencyOptions,

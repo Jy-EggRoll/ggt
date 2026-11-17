@@ -104,6 +104,37 @@ func TestNormalizeIntSetting(t *testing.T) {
 	})
 }
 
+// TestNormalizeConcurrencySetting 断言并发数的专属取值域：auto 或 1 到 64 的整数，
+// JSON 数字与字符串两种写法都收敛到同一个字符串形态。
+func TestNormalizeConcurrencySetting(t *testing.T) {
+	s := mustSetting(t, "concurrency")
+	runNormalizeCases(t, s, []normalizeCase{
+		{"字符串 auto", "auto", "auto", false},
+		{"大写 AUTO", "AUTO", "auto", false},
+		{"空串按 auto", "", "auto", false},
+		{"整数字符串", "8", "8", false},
+		{"带空白的整数字符串", " 8 ", "8", false},
+		{"JSON 整数", json.Number("8"), "8", false},
+		{"JSON 整数带小数零", json.Number("8.0"), "8", false},
+		{"JSON 整数带指数", json.Number("8e0"), "8", false},
+		{"JSON 下界", json.Number("1"), "1", false},
+		{"JSON 上界", json.Number("64"), "64", false},
+		{"字符串下界", "1", "1", false},
+		{"字符串上界", "64", "64", false},
+		{"JSON 下界外", json.Number("0"), nil, true},
+		{"JSON 上界外", json.Number("65"), nil, true},
+		{"字符串上界外", "65", nil, true},
+		{"字符串负数", "-3", nil, true},
+		{"JSON 浮点", json.Number("8.5"), nil, true},
+		{"浮点字符串", "8.5", nil, true},
+		{"JSON 布尔", true, nil, true},
+		{"JSON 数组", []any{}, nil, true},
+		{"JSON 对象", map[string]any{}, nil, true},
+		{"null", nil, nil, true},
+		{"旧语义值", "CPUFull", nil, true},
+	})
+}
+
 // TestNormalizeBoolSetting 断言布尔项的同义写法只保留 true/false，
 // 且大小写与首尾空白不敏感。
 func TestNormalizeBoolSetting(t *testing.T) {
@@ -281,6 +312,9 @@ func TestFourPathsAgreeOnValue(t *testing.T) {
 		{"concurrency auto", "concurrency", `"auto"`, "auto", "auto", false, false},
 		{"concurrency 数字字符串", "concurrency", `"8"`, "8", "8", false, false},
 		{"concurrency 带空白", "concurrency", `" 8 "`, " 8 ", "8", false, false},
+		{"concurrency JSON 数字", "concurrency", `8`, "8", "8", false, false},
+		{"concurrency JSON 浮点被拒", "concurrency", `8.5`, "8.5", nil, true, false},
+		{"concurrency 上界外", "concurrency", `65`, "65", nil, true, false},
 		{"concurrency 布尔被拒", "concurrency", `true`, "true", nil, true, false},
 		{"language 别名归一", "language", `"zh"`, "zh", "zh-CN", false, false},
 		{"language JSON 数字被拒", "language", `1`, "1", nil, true, false},
@@ -368,27 +402,32 @@ func TestFourPathsAgreeOnValue(t *testing.T) {
 	}
 }
 
-// TestJSONNumberRejectedForStringSetting 断言字符串项不会因为“数字看起来像并发数”
-// 就接受 JSON 数字。命令行传 "8" 是字符串，仍然合法；这是两条入口各自的输入形态，
-// 不是同一份输入得到两个结论。
-func TestJSONNumberRejectedForStringSetting(t *testing.T) {
+// TestJSONNumberForConcurrency 断言数字型并发数重新成为合法输入：JSON 数字 8 与
+// 字符串 "8" 归一成同一个 "8"，而浮点、布尔与超限值仍被拒绝。
+func TestJSONNumberForConcurrency(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
 	writeFile(t, path, `{"concurrency": 8}`)
 
-	if _, err := LoadConfigAt(path); err == nil {
-		t.Fatal("运行期应拒绝数字型 concurrency")
+	cfg, err := LoadConfigAt(path)
+	if err != nil {
+		t.Fatalf("数字型 concurrency 应能加载: %v", err)
 	}
-	if _, err := EffectiveAt(path, "concurrency"); err == nil {
-		t.Fatal("config get 应拒绝数字型 concurrency")
+	if cfg.Concurrency != "8" {
+		t.Errorf("运行期 concurrency = %q，应为 \"8\"", cfg.Concurrency)
+	}
+	got, err := EffectiveAt(path, "concurrency")
+	if err != nil || got != "8" {
+		t.Fatalf("config get = (%v, %v)，应为 (\"8\", nil)", got, err)
 	}
 	issues, err := ValidateAt(path)
 	if err != nil {
 		t.Fatalf("体检失败: %v", err)
 	}
-	if len(issues) != 1 || issues[0].Level != LevelError {
-		t.Fatalf("config validate 应报 1 条 error，实得 %+v", issues)
+	if len(issues) != 0 {
+		t.Fatalf("数字型 concurrency 不应报问题，实得 %+v", issues)
 	}
 
+	// JSON 8 与文本 "8" 都写到同一个规范形态
 	written, err := SetFromTextAt(path, "concurrency", "8", false)
 	if err != nil {
 		t.Fatalf("命令行文本 8 应能写入: %v", err)

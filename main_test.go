@@ -660,6 +660,7 @@ func TestCLIConcurrencyContract(t *testing.T) {
 		want    string
 	}{
 		{"带空白数字", `{"concurrency": " 8 "}`, "8"},
+		{"JSON 数字", `{"concurrency": 8}`, "8"},
 		{"大写 auto", `{"concurrency": "AUTO"}`, "auto"},
 	}
 	for _, c := range getCases {
@@ -756,11 +757,11 @@ func TestCLIBoolValueRejectedEverywhere(t *testing.T) {
 		t.Fatalf("写入布尔并发数失败: %v", err)
 	}
 
-	// 四处报错的前缀各不相同（运行期多一层“加载配置失败”、validate 有序号标记），
-	// 取出共同的那一句再比较
+	// 三条读路径拿到的是 JSON 布尔，报同一条类型错误；config set 收到的是文本 "true"，
+	// 属于非法取值。先取出类型错误那一句，再单独检查 set 的文案
 	sentence := func(result cliResult) string {
 		for _, line := range strings.Split(result.stdout+result.stderr, "\n") {
-			if at := strings.Index(line, "Expected a string"); at >= 0 {
+			if at := strings.Index(line, `Expected "auto" or an integer`); at >= 0 {
 				return strings.TrimSpace(line[at:])
 			}
 		}
@@ -801,28 +802,20 @@ func TestCLIBoolValueRejectedEverywhere(t *testing.T) {
 		}
 	}
 
-	// 字符串形态不受影响；数字形态不再是字符串项的合法形态
-	if err := os.WriteFile(configPath, []byte(`{"concurrency": 8}`), 0o644); err != nil {
-		t.Fatalf("写入数字并发数失败: %v", err)
-	}
-	if result := runCLIWithEnv(t, home, "version"); result.exitCode == 0 {
-		t.Errorf("数字型并发数应被拒绝：stderr=%q", result.stderr)
-	}
-	if result := runCLIWithEnv(t, home, "config", "get", "concurrency"); result.exitCode == 0 {
-		t.Errorf("数字型并发数的 get 应以非 0 退出：stdout=%q", result.stdout)
-	}
-
-	if err := os.WriteFile(configPath, []byte(`{"concurrency": "8"}`), 0o644); err != nil {
-		t.Fatalf("写入字符串并发数失败: %v", err)
-	}
-	if result := runCLIWithEnv(t, home, "version"); result.exitCode != 0 {
-		t.Errorf("字符串形态应能正常运行：stderr=%q", result.stderr)
-	}
-	result := runCLIWithEnv(t, home, "config", "get", "concurrency")
-	if result.exitCode != 0 {
-		t.Fatalf("字符串形态的 get 应以 0 退出：stderr=%q", result.stderr)
-	}
-	if got := strings.TrimSpace(result.stdout); got != "8" {
-		t.Errorf("字符串形态的 get = %q，期望 8", got)
+	// 数字形态与字符串形态都能读，且归一成同一个 "8"
+	for _, content := range []string{`{"concurrency": 8}`, `{"concurrency": "8"}`} {
+		if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("写入 %s 失败: %v", content, err)
+		}
+		if result := runCLIWithEnv(t, home, "version"); result.exitCode != 0 {
+			t.Errorf("%s 应能正常运行：stderr=%q", content, result.stderr)
+		}
+		result := runCLIWithEnv(t, home, "config", "get", "concurrency")
+		if result.exitCode != 0 {
+			t.Fatalf("%s 的 get 应以 0 退出：stderr=%q", content, result.stderr)
+		}
+		if got := strings.TrimSpace(result.stdout); got != "8" {
+			t.Errorf("%s 的 get = %q，期望 8", content, got)
+		}
 	}
 }
