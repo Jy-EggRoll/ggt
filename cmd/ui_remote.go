@@ -69,6 +69,11 @@ func (c *uiCache) handleRemote(w http.ResponseWriter, r *http.Request) {
 		writeUIRemote(w, http.StatusMethodNotAllowed, uiRemoteResult{Error: l10n.T("Only POST is allowed", nil)})
 		return
 	}
+	// 与其它写端点同一条闸门：配置非法时页面上的动作一律停用（见 uiCache.requireStrictConfig）
+	if err := c.requireStrictConfig(); err != nil {
+		writeUIRemote(w, statusOf(err, http.StatusConflict), uiRemoteResult{Error: err.Error()})
+		return
+	}
 
 	var req uiRemoteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

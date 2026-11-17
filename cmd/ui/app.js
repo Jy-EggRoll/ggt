@@ -180,6 +180,9 @@ const MSG = {
     settingsRaw: 'Value in the file: {{raw}}',
     settingsRawEmpty: '(empty)',
     settingsInvalidHint: 'This value cannot be used, so the default shown above applies until it is fixed',
+    settingsConfirmUnset: 'Clearing {{key}} removes all {{total}} entries in the file. Still usable: {{usable}}. They will be lost:',
+    settingsConfirmClear: 'Clear anyway',
+    settingsConfirmKeep: 'Keep it',
     filterPlaceholder: 'Filter repositories…',
     filterRegex: 'Regex',
     filterCount: '{{shown}} of {{total}} repositories',
@@ -323,6 +326,9 @@ const MSG = {
     settingsRaw: '文件里的值：{{raw}}',
     settingsRawEmpty: '（空）',
     settingsInvalidHint: '这个取值不能用，修复之前运行期按上面显示的默认值处理',
+    settingsConfirmUnset: '清掉 {{key}} 会把文件里 {{total}} 条全部删除；其中仍然可用的有 {{usable}} 条，它们会一起丢掉：',
+    settingsConfirmClear: '仍然清掉',
+    settingsConfirmKeep: '保留',
     filterPlaceholder: '按仓库名或路径筛选…',
     filterRegex: '正则',
     filterCount: '{{shown}} / {{total}} 个仓库',
@@ -2416,7 +2422,10 @@ function settingsRow(item) {
   let ctl = null;
   const ctlValue = () => (ctl ? ctl.get() : item.value);
   let reset = null;
-  if (!item.managedBy) {
+  // 受管项平时不给“恢复默认”（值由 ggt repo 管），但它的值坏掉时必须给：清掉坏值是唯一
+  // 能就地做的修复，而这个键正是让整个配置加载失败的那一项（服务端 PlanUnsetAt 也只在
+  // 取值非法时放行）
+  if (!item.managedBy || item.invalid) {
     reset = document.createElement('button');
     reset.type = 'button';
     reset.className = 'btn btn--secondary setting-reset';
@@ -2651,12 +2660,25 @@ function persistSettingsNote(text) {
 // 与命令行的 "ggt config reset" 是同一种做法（文件里因此只留下用户真正改过的项）。
 //
 // 立即生效而不是等“保存”：它本身就是一次明确的动作，再让用户去按一次保存反而多一步。
-// 只重画这一行而不是整块重画：整块重画会把用户还没保存的其他改动一起抹掉
-async function resetSetting(key) {
-  const out = await postJSON('/api/settings', { unset: [key] });
-  const err = out.error || (out.errors || {})[key];
-  if (err) {
-    setSettingsOp(err, true);
+// 只重画这一行而不是整块重画：整块重画会把用户还没保存的其他改动一起抹掉。
+//
+// confirmed 为真表示用户已经在确认框里同意。清掉一个受管项的坏列表会连带丢掉几个本来还能用的
+// 仓库，服务端在没有确认时只回一份损失清单（out.confirm），页面据此弹确认框、同意后带 confirm 重发
+async function resetSetting(key, confirmed) {
+  const body = confirmed ? { unset: [key], confirm: true } : { unset: [key] };
+  const out = await postJSON('/api/settings', body);
+  if (out.error) {
+    setSettingsOp(out.error, true);
+    return;
+  }
+  if (out.confirm) {
+    // 服务端拒绝执行并说明会丢什么：这一步不报错，只是等用户决定
+    showUnsetConfirm(out.confirm);
+    return;
+  }
+  const err = out.errors || {};
+  if (err[key]) {
+    setSettingsOp(err[key], true);
     return;
   }
   if (out.reload) {
@@ -2678,8 +2700,55 @@ async function resetSetting(key) {
   settingsDirty.delete(key);
   row.replaceWith(settingsRow(item));
   updateSaveButton();
-  // 结果同样写面板自己那一行，理由见 saveSettings
-  setSettingsOp(t('settingsSaved'), false);
+  // 服务端给的那句话必须一起显示：受管项的坏值被放行清理、未知键被删除，这两件事都只有
+  // notes 里那句能说清，丢掉它用户就只看到“已保存”，不知道刚才实际发生了什么
+  const note = (out.notes || {})[key];
+  setSettingsOp(note ? t('settingsSaved') + ' · ' + note : t('settingsSaved'), false);
+}
+
+// showUnsetConfirm 在那一行下面铺一块确认区：说明要丢什么、列出会丢掉的条目，两个按钮。
+//
+// 为什么不用 window.confirm：原生弹窗的按钮文字由浏览器决定，无法把“保留 / 仍然清掉”这两个
+// 意思写清楚；而这条确认要说的正是“清掉会丢东西”，按钮含糊等于白问
+function showUnsetConfirm(info) {
+  const row = settingsBodyEl.querySelector('.setting-row[data-key="' + info.key + '"]');
+  if (!row) return;
+  const oldBox = row.querySelector('.setting-confirm');
+  if (oldBox) oldBox.remove();
+
+  const box = document.createElement('div');
+  box.className = 'setting-confirm';
+  box.setAttribute('role', 'alertdialog');
+
+  const text = document.createElement('p');
+  text.textContent = t('settingsConfirmUnset', { total: info.total, usable: info.usable, key: info.key });
+  box.appendChild(text);
+
+  if (info.lost && info.lost.length > 0) {
+    const list = document.createElement('code');
+    list.textContent = info.lost.join('\n');
+    box.appendChild(list);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'setting-confirm-actions';
+  const keep = document.createElement('button');
+  keep.type = 'button';
+  keep.className = 'btn btn--secondary';
+  keep.textContent = t('settingsConfirmKeep');
+  keep.addEventListener('click', () => box.remove());
+  const drop = document.createElement('button');
+  drop.type = 'button';
+  drop.className = 'btn btn--primary setting-confirm-yes';
+  drop.textContent = t('settingsConfirmClear');
+  drop.addEventListener('click', () => {
+    box.remove();
+    resetSetting(info.key, true);
+  });
+  actions.append(keep, drop);
+  box.appendChild(actions);
+  row.appendChild(box);
+  drop.focus();
 }
 
 // openSettings 打开面板：先把浮层摆出来再取数据，取数据的那一趟往返期间面板已经可见，

@@ -36,6 +36,22 @@ type uiSettings struct {
 type uiSettingsRequest struct {
 	Values map[string]string `json:"values"`
 	Unset  []string          `json:"unset"`
+	// Confirm 为真表示用户已经在页面上看过确认框并同意。
+	// 只有“清掉受管项里一个还有可用条目的坏列表”会用到它：那一步会连带丢掉几个本来还能用的
+	// 仓库，与命令行的 reset 一样必须先让损失可见（见 uiUnsetConfirm）
+	Confirm bool `json:"confirm"`
+}
+
+// uiUnsetConfirm 说明“清掉这一项会丢掉什么”。
+//
+// 服务端在缺确认时不出手、只把这份损失摊开交给页面：条数、会丢掉的条目。页面弹一次确认，
+// 用户同意后带 confirm 重发同一个请求。计数与条目都取自宽松加载同一套抢救规则
+// （config.SalvagedPathListAt），因此确认框里承诺的与实际清掉的一定是同一批
+type uiUnsetConfirm struct {
+	Key    string   `json:"key"`
+	Total  int      `json:"total"`
+	Usable int      `json:"usable"`
+	Lost   []string `json:"lost"`
 }
 
 // uiSettingsResult 是 POST /api/settings 的响应体。
@@ -56,6 +72,9 @@ type uiSettingsResult struct {
 	// 为什么必须回传：一次保存只处理用户改过的那几项，文件里别的坏值会被原样留着，
 	// 下一次启动仍然失败。此前响应只说“已保存”，用户于是以为配置已经好了
 	Remaining map[string]string `json:"remaining,omitempty"`
+	// Confirm 非空表示这次请求没有执行完：其中有一项要先确认（见 uiUnsetConfirm）。
+	// 它不是错误——用户还没决定，页面拿到它只该弹确认框，不该报错
+	Confirm *uiUnsetConfirm `json:"confirm,omitempty"`
 	// Reload 为真表示这批改动里有页面已经烧进去的东西，需要刷新页面才看得到效果
 	Reload bool   `json:"reload,omitempty"`
 	Error  string `json:"error,omitempty"`
@@ -123,7 +142,7 @@ func handleSettings(path string) http.HandlerFunc {
 				//
 				// 修复方式直接复用 config.WithRecoveryHint：文件读不出来时面板自己无能为力，
 				// 用户要的正是“下一步敲什么”，而那句话只有命令行那一处在维护
-				out.Error = l10n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": config.WithRecoveryHint(readErr, false)})
+				out.Error = l10n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": config.WithRecoveryHintFor(readErr, false, config.HintForDashboard)})
 			}
 			writeUIJSON(w, http.StatusOK, out)
 		case http.MethodPost:
@@ -188,6 +207,20 @@ func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 			}
 			continue
 		}
+		// 受管项的坏列表里还留着可用条目时先要确认：清掉它就是删掉几个本来还能用的仓库。
+		// 判定与命令行 reset 共用 config.SalvagedPathListAt（计数与条目同源），
+		// 差别只在把“整段命令 + --yes”换成页面上的一次确认
+		if plan.Managed && !req.Confirm {
+			total, lost, countErr := config.SalvagedPathListAt(path, plan.Key)
+			if countErr != nil {
+				out.Errors[plan.Key] = countErr.Error()
+				continue
+			}
+			if len(lost) > 0 {
+				out.Confirm = &uiUnsetConfirm{Key: plan.Key, Total: total, Usable: len(lost), Lost: lost}
+				continue
+			}
+		}
 		if note := unsetNote(plan); note != "" {
 			out.Notes[plan.Key] = note
 		}
@@ -210,7 +243,7 @@ func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 		// 刚写完却读不出来，只可能是别处同时改坏了它（另一个终端、编辑器）。这不是这次
 		// 写入的失败，因此不写进 Errors，而是在顶层说明“现在连文件都读不出来”，
 		// 并附上命令行那一处维护的修复方式（见 WithRecoveryHint）
-		out.Error = l10n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": config.WithRecoveryHint(readErr, false)})
+		out.Error = l10n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": config.WithRecoveryHintFor(readErr, false, config.HintForDashboard)})
 	case len(remaining) > 0:
 		out.Remaining = make(map[string]string, len(remaining))
 		for _, p := range remaining {

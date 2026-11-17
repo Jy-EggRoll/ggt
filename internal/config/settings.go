@@ -601,7 +601,9 @@ func themeOptions() []Option {
 }
 
 // themePreferenceOptions 是 theme_dark / theme_light 的候选取值：比 themeOptions 少掉
-// 那个空值项——这两个偏好的空串没有任何含义（跟随系统时没有配色可渲染，页面会一片无色）
+// 那个空值项，因为空串在这两项上不是“可点的一种选择”，而是缺省形态：文件里写成空串时，
+// 渲染侧回落到内置默认主题（见 cmd/ui_theme.go 的 themePref）。它由 Normalize 接受、
+// 面板也接受（见 SetFromTextAt），只是不出现在候选清单里——候选清单列的是能直接点的几套主题
 func themePreferenceOptions() []Option {
 	return availableThemeOptions()
 }

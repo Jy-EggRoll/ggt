@@ -1403,6 +1403,37 @@ body {
   word-break: break-all;
 }
 
+/* 清掉一个受管坏列表之前的确认区：铺在那一行下面，说明会丢几条、列出会丢的条目。
+   配色沿用本文件既有的混色约定（见 .setting-row.invalid），危险语义走 --git-conflicting */
+.setting-confirm {
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-2);
+  border: 1px solid color-mix(in srgb, var(--git-conflicting) 45%, var(--card-border));
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--git-conflicting) 8%, var(--panel-bg, var(--bg)));
+}
+.setting-confirm p {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--git-conflicting);
+}
+.setting-confirm code {
+  display: block;
+  margin-top: var(--sp-1);
+  max-height: 8em;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-dim);
+}
+.setting-confirm-actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
 /* 页脚：左边是配置文件的路径（用户要知道改的是哪个文件），右边是保存。
    路径可能很长，省略号截断而不折行——它是一行元信息，不该把页脚撑成两行 */
 #settings footer {

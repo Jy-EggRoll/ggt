@@ -166,11 +166,28 @@ type uiCache struct {
 func (c *uiCache) configNow() (*config.Config, error) {
 	cfg, err := config.LoadConfigAt(c.configPath)
 	if err != nil {
-		// 非交互参数取假：这句话是给人看的（页面上、终端里），读者在浏览器前，
+		// 措辞按看板的语境生成，非交互参数取假：这句话是给浏览器前的人看的，
 		// 提示里给不带 --yes 的那条命令更合适——它要求确认，不会一步删掉整份配置
-		return nil, config.WithRecoveryHint(err, false)
+		return nil, config.WithRecoveryHintFor(err, false, config.HintForDashboard)
 	}
 	return cfg, nil
+}
+
+// requireStrictConfig 在配置文件当前无法按运行期规则加载时拒答写操作。
+//
+// 为什么连与配置无关的动作（暂存、提交、切分支、打标签、切协议）也一并拦下：看板在配置
+// 非法时只承担“报告并修复配置”这一件事（见 loadUIStartupConfig），而它对用户的说法只有
+// 一句“页面上的 git 操作被拒绝”。只拦参数依赖配置的那几个动作，这句话就成了假话，或者
+// 得逐项列出例外——那会把一个内部实现细节（哪个处理函数读了配置）暴露成用户要记的规则。
+// 这里因此选“全拦”：状态唯一、说法唯一，用户不必猜哪一下会被拒。
+//
+// 代价是配置里坏了一项与提交无关的取值时，暂存与提交也做不了，要先修好配置或用命令行。
+// 这与命令行一致：那份配置此刻会让所有普通命令起不来。
+func (c *uiCache) requireStrictConfig() error {
+	if _, err := c.configNow(); err != nil {
+		return configBlockedError(err)
+	}
+	return nil
 }
 
 // configBlockedError 把“配置文件当前不可用”渲染成写端点的拒答。
@@ -946,6 +963,12 @@ func (c *uiCache) handleWrite(w http.ResponseWriter, r *http.Request, run func(c
 		return
 	}
 
+	// 配置非法时一律拒答，详见 requireStrictConfig 的说明
+	if err := c.requireStrictConfig(); err != nil {
+		writeUIWrite(w, statusOf(err, http.StatusConflict), uiWriteResult{Error: err.Error()})
+		return
+	}
+
 	var req uiWriteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeUIWrite(w, http.StatusBadRequest, uiWriteResult{Error: l10n.T("Invalid request body", nil)})
@@ -1325,6 +1348,10 @@ func (c *uiCache) handleSync(w http.ResponseWriter, r *http.Request) {
 func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeUIWrite(w, http.StatusMethodNotAllowed, uiWriteResult{Error: l10n.T("Only POST is allowed", nil)})
+		return
+	}
+	if err := c.requireStrictConfig(); err != nil {
+		writeUIWrite(w, statusOf(err, http.StatusConflict), uiWriteResult{Error: err.Error()})
 		return
 	}
 

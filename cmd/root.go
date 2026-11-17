@@ -167,7 +167,7 @@ func startCommand(cmd *cobra.Command, load configLoader) error {
 // 共同的边界：坏掉的键一律按默认值处理（并逐条提示），所以这三处的输出不能
 // 当作“运行期会怎么表现”的证据；写文件只发生在用户显式执行 set / reset / repo 增删时。
 func loadRecoverableConfig() (*config.Config, error) {
-	loaded, problems, err := recoverConfig()
+	loaded, problems, err := recoverConfig(config.HintForCLI)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +189,7 @@ func loadRecoverableConfig() (*config.Config, error) {
 //
 // 连 JSON 语法、键名可读性都不成立时宽松加载也没有意义：那时没有“哪一个键坏了”可言，
 // 只能手改文件或整份重置，因此这里返回带修复提示的错误
-func recoverConfig() (*config.Config, []config.Problem, error) {
+func recoverConfig(scope config.HintScope) (*config.Config, []config.Problem, error) {
 	loaded, err := config.LoadConfig()
 	if err == nil {
 		return loaded, nil, nil
@@ -201,7 +201,7 @@ func recoverConfig() (*config.Config, []config.Problem, error) {
 		// 可言，只能手改文件或整份重置。提示在这里补上，调用方（含 config show）拿到的
 		// error 就是可直接照做的；WithRecoveryHint 幂等，startCommand 再调用一次也只会有一份。
 		// 非交互环境决定整份重置的命令带不带 --yes：那种环境下确认提示读不到，命令会直接报错
-		return nil, nil, config.WithRecoveryHint(err, !stdinIsTerminal())
+		return nil, nil, config.WithRecoveryHintFor(err, !stdinIsTerminal(), scope)
 	}
 	return lenient, problems, nil
 }
@@ -241,7 +241,7 @@ func printConfigProblems(w io.Writer, problems []config.Problem) {
 //   - 连 JSON 都读不出来时以默认配置起服务：此时没有仓库可看，但设置面板能把“文件读不出来”
 //     显示出来，用户至少知道该去改哪个文件
 func loadUIStartupConfig() (*config.Config, error) {
-	loaded, problems, err := recoverConfig()
+	loaded, problems, err := recoverConfig(config.HintForDashboard)
 	if err != nil {
 		WarnMsg(l10n.T("The config file cannot be read, so the dashboard starts with built-in defaults and git actions from the page stay disabled until it is fixed", nil))
 		WarnMsg(err.Error())

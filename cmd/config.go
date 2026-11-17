@@ -82,7 +82,7 @@ func showConfig(cmd *cobra.Command, args []string) error {
 	//
 	// 走可恢复加载而不是严格加载：配置坏了的时候，光看一遍当前配置正是排查的第一步。
 	// 坏掉的键按默认值显示，并逐条说明坏在哪、怎么修
-	cfg, problems, err := recoverConfig()
+	cfg, problems, err := recoverConfig(config.HintForCLI)
 	if err != nil {
 		ErrorMsg(l10n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": err}))
 		return errSilent

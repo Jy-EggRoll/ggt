@@ -61,19 +61,37 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// WithRecoveryHint 给“配置加载失败”补上一句可直接执行的修复命令。
+// HintScope 决定“配置坏了之后还能做什么”这句话按谁的口径写。
+//
+// 为什么不共用一段文案：命令行与网页看板在配置非法时的处境并不相同——命令行还剩
+// ggt config 与 ggt repo 两个子树，看板还剩设置面板（按文件现读，能看能改）。把前者的说法
+// 贴到面板上，会让用户读到一句与眼前界面不符的话：面板里明明能点，提示却说“也加载不了”。
+type HintScope int
+
+const (
+	// HintForCLI 是命令行的口径：ggt config 与 ggt repo 仍然可用。
+	HintForCLI HintScope = iota
+	// HintForDashboard 是网页看板的口径：设置面板能看能改，页面上的动作停用。
+	HintForDashboard
+)
+
+// WithRecoveryHint 给“命令行加载配置失败”补上一句可直接执行的修复命令。
+func WithRecoveryHint(err error, nonInteractive bool) error {
+	return WithRecoveryHintFor(err, nonInteractive, HintForCLI)
+}
+
+// WithRecoveryHintFor 按调用方语境生成修复提示，并附上可直接执行的修复命令。
 //
 // 为什么必须补：配置一旦加载失败，普通命令都起不来，用户手上只剩“手改文件”与
 // “清空全部配置”两条路。点名坏掉的键与清掉它的命令，才能把这次失败变成一次可恢复的操作。
 // 重复调用不会把提示叠两遍。
 //
 // 两种失败的可修复性并不相同，提示必须按实情写：
-//   - 键级失败（JSON 能解析）：config 与 repo 两个子树都还能跑，清掉那一个键即可；
-//   - 文件级失败（语法错误、读不出来）：宽松加载也无从下手，ggt repo 同样起不来，
-//     只有手改文件或整份重置。
+//   - 键级失败（JSON 能解析）：清掉那一个键即可；
+//   - 文件级失败（语法错误、读不出来）：宽松加载也无从下手，只有手改文件或整份重置。
 //
 // nonInteractive 决定整份重置的命令带不带 --yes（见 ResetAllCommand）。
-func WithRecoveryHint(err error, nonInteractive bool) error {
+func WithRecoveryHintFor(err error, nonInteractive bool, scope HintScope) error {
 	if err == nil {
 		return nil
 	}
@@ -87,11 +105,37 @@ func WithRecoveryHint(err error, nonInteractive bool) error {
 	// 键名来自配置文件，等于把文件内容交给 shell 执行。
 	var keyErr *KeyError
 	if errors.As(err, &keyErr) {
-		return &recoveryHinted{err: err, hint: l10n.T(`Fix it with the command below; ggt config validate lists every problem, and ggt repo along with the rest of ggt config still work in this state.
-  {{.Command}}`, map[string]any{"Command": ResetCommand(keyErr.Key)})}
+		return &recoveryHinted{err: err, hint: keyRecoveryHint(keyErr.Key, scope)}
 	}
-	return &recoveryHinted{err: err, hint: l10n.T(`The file cannot be read as JSON, so ggt repo cannot load it either. Start over with the command below, or fix the file by hand; ggt config validate reports the line and column of the syntax error.
-  {{.Command}}`, map[string]any{"Command": ResetAllCommand(nonInteractive)})}
+	return &recoveryHinted{err: err, hint: fileRecoveryHint(nonInteractive, scope)}
+}
+
+// keyRecoveryHint 是“某一个键的取值坏了”时的提示。
+func keyRecoveryHint(key string, scope HintScope) string {
+	command := map[string]any{"Command": ResetCommand(key)}
+	if scope == HintForDashboard {
+		// 只有注册表里有的键才会在面板上占一行、有“恢复默认”按钮；未知键没有行，
+		// 只能靠这条命令清掉，因此提示里不能对它的按钮作出承诺
+		if _, known := Lookup(key); known {
+			return l10n.T(`Fix it with the command below, or use the reset button on that entry in the settings panel; ggt config validate lists every problem.
+  {{.Command}}`, command)
+		}
+		return l10n.T(`Fix it with the command below; the settings panel cannot remove a key it does not know, and ggt config validate lists every problem.
+  {{.Command}}`, command)
+	}
+	return l10n.T(`Fix it with the command below; ggt config validate lists every problem, and ggt repo along with the rest of ggt config still work in this state.
+  {{.Command}}`, command)
+}
+
+// fileRecoveryHint 是“整份文件读不出来”时的提示。
+func fileRecoveryHint(nonInteractive bool, scope HintScope) string {
+	command := map[string]any{"Command": ResetAllCommand(nonInteractive)}
+	if scope == HintForDashboard {
+		return l10n.T(`The file cannot be read as JSON, so the settings panel can only show built-in defaults and page actions stay disabled. Start over with the command below, or fix the file by hand; ggt config validate reports the line and column of the syntax error.
+  {{.Command}}`, command)
+	}
+	return l10n.T(`The file cannot be read as JSON, so ggt repo cannot load it either. Start over with the command below, or fix the file by hand; ggt config validate reports the line and column of the syntax error.
+  {{.Command}}`, command)
 }
 
 // recoveryHinted 是“已经带上修复提示”的错误。
@@ -237,17 +281,27 @@ func sortedRawKeys(raw map[string]any) []string {
 // 供 reset 在清掉一份坏列表之前说清会损失什么：宽松加载已经丢掉坏条目，用户若只看到
 // “已清除”，不会意识到几个本来还能用的仓库也随之消失了。不是列表形态的取值返回 (0,0,nil)。
 func PathListCounts(path, key string) (total, usable int, err error) {
+	total, entries, err := SalvagedPathListAt(path, key)
+	return total, len(entries), err
+}
+
+// SalvagedPathListAt 返回文件里某个路径列表的条目总数，以及清理坏值之后还能保住的条目。
+//
+// 与 PathListCounts 的分工：命令行只报“原有几条、可用几条”，设置面板还要把要丢掉的条目
+// 逐条摆给用户看（确认框里那句“它们会一起丢掉”），因此多这一份入口，而不是让面板另写一套
+// 抢救规则——能保住的条目必须与宽松加载一致，否则确认框里的承诺与实际结果会对不上。
+func SalvagedPathListAt(path, key string) (total int, usable []string, err error) {
 	s, ok := Lookup(key)
 	if !ok {
-		return 0, 0, ErrUnknownKey
+		return 0, nil, ErrUnknownKey
 	}
 	raw, err := ReadRawAt(path)
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
 	v, ok := raw[s.Key]
 	if !ok {
-		return 0, 0, nil
+		return 0, nil, nil
 	}
 	switch list := v.(type) {
 	case []any:
@@ -255,9 +309,9 @@ func PathListCounts(path, key string) (total, usable int, err error) {
 	case []string:
 		total = len(list)
 	default:
-		return 0, 0, nil
+		return 0, nil, nil
 	}
-	return total, len(salvagePathList(v)), nil
+	return total, salvagePathList(v), nil
 }
 
 // ValueErrorAt 判断配置文件里某个键的当前值能否通过 Normalize。

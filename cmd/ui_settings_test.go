@@ -457,6 +457,75 @@ func TestUIReloadKeysDeriveFromRegistry(t *testing.T) {
 	}
 }
 
+// TestHandleSettingsUnsetManagedBrokenListNeedsConfirmation 断言清掉一个还有可用条目的受管坏列表
+// 之前必须确认，且服务端在缺确认时不写文件、只回传损失清单。
+//
+// 与命令行的 reset 是同一条保护：命令行会报“原有几条、可用几条”并要求 --yes，面板则把同一份
+// 计数与条目交给页面弹一次确认。两边共用 config.SalvagedPathListAt，因此确认框里承诺的与实际
+// 清掉的一定是同一批
+func TestHandleSettingsUnsetManagedBrokenListNeedsConfirmation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	writeRawConfig(t, path, `{"repo_paths":["/tmp/keep-me",""],"parent_paths":["/tmp/parent"]}`)
+
+	rec := callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["repo_paths"]}`)
+	out := decodeSettingsResult(t, rec, http.StatusOK)
+
+	if out.Confirm == nil {
+		t.Fatalf("缺确认时应回传损失清单，实得 %+v", out)
+	}
+	if out.Confirm.Key != "repo_paths" || out.Confirm.Total != 2 || out.Confirm.Usable != 1 {
+		t.Errorf("损失清单应为 repo_paths：总 2 条、可用 1 条，实得 %+v", out.Confirm)
+	}
+	if len(out.Confirm.Lost) != 1 || out.Confirm.Lost[0] != "/tmp/keep-me" {
+		t.Errorf("应列出会丢掉的条目，实得 %#v", out.Confirm.Lost)
+	}
+	if len(out.Applied) != 0 {
+		t.Errorf("缺确认时不该写入，实得 %v", out.Applied)
+	}
+	raw, err := config.ReadRawAt(path)
+	if err != nil {
+		t.Fatalf("回读失败：%v", err)
+	}
+	if _, exists := raw["repo_paths"]; !exists {
+		t.Error("缺确认时文件不该被改动")
+	}
+
+	// 用户确认后重发同一个请求，这次真的删掉
+	rec = callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["repo_paths"],"confirm":true}`)
+	out = decodeSettingsResult(t, rec, http.StatusOK)
+	if out.Confirm != nil {
+		t.Errorf("带确认时不该再问一次：%+v", out.Confirm)
+	}
+	if len(out.Errors) != 0 {
+		t.Fatalf("带确认后应删除成功：%+v", out.Errors)
+	}
+	raw, err = config.ReadRawAt(path)
+	if err != nil {
+		t.Fatalf("回读失败：%v", err)
+	}
+	if _, exists := raw["repo_paths"]; exists {
+		t.Error("确认后应把键从文件里删掉")
+	}
+}
+
+// TestHandleSettingsUnsetBrokenListWithoutUsableEntries 断言没有可用条目时不打扰用户。
+//
+// 命令行的规矩是“usable 为 0 就不问”，面板必须同一条：一条可用条目都不会丢的时候，
+// 再弹一次确认只是白拦一次
+func TestHandleSettingsUnsetBrokenListWithoutUsableEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	writeRawConfig(t, path, `{"repo_paths":[""]}`)
+
+	rec := callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["repo_paths"]}`)
+	out := decodeSettingsResult(t, rec, http.StatusOK)
+	if out.Confirm != nil {
+		t.Errorf("没有可用条目时不该要确认：%+v", out.Confirm)
+	}
+	if len(out.Errors) != 0 || len(out.Applied) != 1 {
+		t.Errorf("应直接清掉，实得 applied=%v errors=%v", out.Applied, out.Errors)
+	}
+}
+
 // writeRawConfig 直接往配置文件落一份内容，绕过 SetFromTextAt 那条写入校验，
 // 用来模拟“用户自己动手编辑配置文件”这种情形
 func writeRawConfig(t *testing.T, path, body string) {
