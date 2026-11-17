@@ -1112,6 +1112,9 @@ function syncScrollLock() {
   const overlayOpen = anyOverlayOpen();
   document.documentElement.style.overflow = overlayOpen ? 'hidden' : '';
   document.body.classList.toggle('overlay-open', overlayOpen);
+  // 通知区与设置面板的页脚（保存按钮）位置重叠，而它压在所有浮层之上：面板开着时收起它，
+  // 否则保存按钮点不到。规则与理由见 style.css 的 body.settings-open 那段
+  document.body.classList.toggle('settings-open', settingsOpen);
 }
 
 // diffLineClass 按行首字符判定这一行属于哪一类。
@@ -2663,17 +2666,20 @@ function persistSettingsNote(text) {
 // 只重画这一行而不是整块重画：整块重画会把用户还没保存的其他改动一起抹掉。
 //
 // confirmed 为真表示用户已经在确认框里同意。清掉一个受管项的坏列表会连带丢掉几个本来还能用的
-// 仓库，服务端在没有确认时只回一份损失清单（out.confirm），页面据此弹确认框、同意后带 confirm 重发
+// 仓库，服务端在没有确认时只回一份损失清单（out.confirms），页面据此弹确认框、同意后带 confirm 重发。
+// 确认按项写回（confirm: [key]）而不是一个布尔：服务端据它判断“这一个键的损失已经给用户看过”，
+// 不会把同意顺带算到同一批里别的键上
 async function resetSetting(key, confirmed) {
-  const body = confirmed ? { unset: [key], confirm: true } : { unset: [key] };
+  const body = confirmed ? { unset: [key], confirm: [key] } : { unset: [key] };
   const out = await postJSON('/api/settings', body);
   if (out.error) {
     setSettingsOp(out.error, true);
     return;
   }
-  if (out.confirm) {
-    // 服务端拒绝执行并说明会丢什么：这一步不报错，只是等用户决定
-    showUnsetConfirm(out.confirm);
+  if (out.confirms && out.confirms.length > 0) {
+    // 服务端拒绝执行并说明会丢什么：这一步不报错，只是等用户决定。
+    // 每个键的确认框铺在它自己那一行下面，逐项同意、逐项重发
+    for (const confirm of out.confirms) showUnsetConfirm(confirm);
     return;
   }
   const err = out.errors || {};
