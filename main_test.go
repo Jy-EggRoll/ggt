@@ -532,6 +532,11 @@ func TestCLIInvalidLogLevelWarning(t *testing.T) {
 func TestCLIConcurrencyContract(t *testing.T) {
 	home := t.TempDir()
 
+	// 0. 不带 -c 时一切照旧：默认配置下命令正常退出
+	if base := runCLIWithEnv(t, home, "version"); base.exitCode != 0 {
+		t.Fatalf("不带 -c 时 version 应成功: exit=%d stderr=%q", base.exitCode, base.stderr)
+	}
+
 	// 1. -c 的边界：0、负数、超过 64 都报错退出，错误信息写明实际值与允许范围
 	for _, value := range []string{"0", "-1", "65"} {
 		result := runCLIWithEnv(t, home, "-c", value, "version")
@@ -564,6 +569,23 @@ func TestCLIConcurrencyContract(t *testing.T) {
 		t.Errorf("-c 的报错不应漏出 strconv 原文：stderr=%q", result.stderr)
 	}
 
+	// 1a2. 显式空串与纯空白必须报错：脚本里 -c "$VAR" 而 VAR 未设值时，
+	// 不能静默变成 auto（那是又一次静默忽略）。配置文件里的空串仍按 auto 处理，
+	// 那条规则由 config 包的单测守着，不要混在一起
+	for _, value := range []string{"", "   "} {
+		result := runCLIWithEnv(t, home, "-c", value, "version")
+		if result.exitCode == 0 {
+			t.Errorf("-c %q 应以非 0 退出：stdout=%q", value, result.stdout)
+			continue
+		}
+		if strings.Contains(result.stderr, "strconv") {
+			t.Errorf("-c %q 的报错不应漏出 strconv 原文：stderr=%q", value, result.stderr)
+		}
+		if !strings.Contains(result.stderr, "(empty)") {
+			t.Errorf("-c %q 的报错应指代空值：stderr=%q", value, result.stderr)
+		}
+	}
+
 	// 1b. config 子树遮蔽了 root 的钩子，-c 也必须在这里单独校验，否则它是唯一
 	// 能把 -c 0 静默吞掉的地方（config 命令不跑并发任务，合法值不产生副作用）
 	if result := runCLIWithEnv(t, home, "-c", "0", "config", "validate"); result.exitCode == 0 {
@@ -571,6 +593,9 @@ func TestCLIConcurrencyContract(t *testing.T) {
 	}
 	if result := runCLIWithEnv(t, home, "-c", "65", "config", "set", "concurrency", "8"); result.exitCode == 0 {
 		t.Errorf("-c 65 config set 应以非 0 退出：stdout=%q", result.stdout)
+	}
+	if result := runCLIWithEnv(t, home, "-c", "", "config", "get", "concurrency"); result.exitCode == 0 {
+		t.Errorf("-c \"\" config get 应以非 0 退出：stdout=%q", result.stdout)
 	}
 
 	// 2. 配置文件里的越界值必须在加载期就失败，而不是带病跑到 worker
@@ -583,6 +608,10 @@ func TestCLIConcurrencyContract(t *testing.T) {
 	}
 	if result := runCLIWithEnv(t, home, "version"); result.exitCode == 0 {
 		t.Errorf("配置文件里的越界并发数应以非 0 退出：stdout=%q", result.stdout)
+	}
+	// 空格不能成为绕过手段：-c "" 必须自己报错，而不是把非法配置顶掉后按 auto 跑
+	if result := runCLIWithEnv(t, home, "-c", "", "version"); result.exitCode == 0 {
+		t.Errorf("-c \"\" 不应绕过配置文件里的非法并发数：stdout=%q", result.stdout)
 	}
 
 	// 3. config set 拒绝旧语义值与越界值，并接受 auto

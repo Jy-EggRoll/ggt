@@ -46,11 +46,11 @@ Repository paths are managed by "ggt repo" instead of "ggt config set".`, nil),
 		// 这与“只读原始 JSON”的设计本就一致。
 		//
 		// 遮蔽掉了 root 的钩子，也就连带跳过了它对 -c 的校验。用户既然在 config 命令上
-		// 写了 -c，非法值就不该被静默吞掉，因此这里按同一套边界单独校验一次（含 auto）；
-		// 合法值不产生副作用——config 子树不跑并发任务，-c 对它本来就没有含义
+		// 写了 -c，非法值（含空串与纯空白）就不该被静默吞掉，因此这里按命令行那一套
+		// 边界单独校验一次；合法值不产生副作用——config 子树不跑并发任务，-c 本来就没有含义
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("concurrency") {
-				if _, err := (&config.Config{Concurrency: concurrency}).ConcurrencyValue(); err != nil {
+				if _, err := config.ValidateCommandLineConcurrency(concurrency); err != nil {
 					return err
 				}
 			}

@@ -88,6 +88,38 @@ func TestConcurrencyValue(t *testing.T) {
 	}
 }
 
+// TestValidateCommandLineConcurrency 验证 -c 专用的入口：空串与纯空白必须报错，
+// 合法取值与配置文件同一套口径。
+//
+// 空串按 auto 是配置文件的性质（缺键、空值都是文件的正常形态），命令行不能沿用：
+// 脚本里 -c "$VAR" 而 VAR 未设值时，静默变成 auto 就是一次静默忽略，
+// 还能让一份写着非法值的配置文件借 -c "" 绕过启动校验。
+func TestValidateCommandLineConcurrency(t *testing.T) {
+	for _, raw := range []string{"", "   ", "\t", " \n "} {
+		_, err := ValidateCommandLineConcurrency(raw)
+		if err == nil {
+			t.Errorf("ValidateCommandLineConcurrency(%q) 应报错", raw)
+			continue
+		}
+		// 报错必须点出允许范围，且不能出现空值导致的“value : expected”缺口
+		if msg := err.Error(); !strings.Contains(msg, "64") || !strings.Contains(msg, "(empty)") {
+			t.Errorf("空值的报错应写明范围并以 (empty) 指代空值，实际 %q", msg)
+		}
+	}
+
+	if n, err := ValidateCommandLineConcurrency("auto"); err != nil || n < 1 || n > autoConcurrencyCeiling {
+		t.Errorf("auto 应解析成 [1, %d] 内的值，实得 (%d, %v)", autoConcurrencyCeiling, n, err)
+	}
+	if n, err := ValidateCommandLineConcurrency(" 8 "); err != nil || n != 8 {
+		t.Errorf("\" 8 \" 应解析成 8，实得 (%d, %v)", n, err)
+	}
+	for _, raw := range []string{"0", "-1", "65", "abc", "CPUFull"} {
+		if _, err := ValidateCommandLineConcurrency(raw); err == nil {
+			t.Errorf("ValidateCommandLineConcurrency(%q) 应报错", raw)
+		}
+	}
+}
+
 // TestConcurrencyValueErrorNamesValueAndRange 断言报错信息同时写明实际值与允许范围。
 // 只说“取值非法”时，用户分不清是 -c 写错了，还是配置文件里那份旧值没改。
 func TestConcurrencyValueErrorNamesValueAndRange(t *testing.T) {

@@ -57,18 +57,24 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 				return fmt.Errorf("%s: %w", l10n.T("Failed to load the configuration", nil), err)
 			}
 
-			// 命令行的 -c 只在显式给出时才覆盖配置：默认空串表示“未指定”，
-			// 不能与用户真的写了 -c auto 混为一谈。cobra 的 Changed 正是这个区分。
-			if cmd.Flags().Changed("concurrency") {
-				cfg.Concurrency = concurrency
-			}
-
 			// 并发数在这里一次性解析并装进 worker 的共享信号量。放在启动流程而不是各命令里，
 			// 是因为它同时是“上限校验”的唯一入口：-c 与配置文件两条来源都在此汇合，
 			// 越界时让命令以非 0 退出码失败，而不是截断成上限继续跑。
-			n, err := cfg.ConcurrencyValue()
-			if err != nil {
-				return err
+			//
+			// 命令行与配置文件必须分开解析：-c 明确给出空串（脚本里 -c "$VAR" 而 VAR
+			// 未设值）要报错，而配置文件里的空串仍按 auto 处理，见各自函数的注释。
+			var n int
+			if cmd.Flags().Changed("concurrency") {
+				n, err = config.ValidateCommandLineConcurrency(concurrency)
+				if err != nil {
+					return err
+				}
+				cfg.Concurrency = concurrency
+			} else {
+				n, err = cfg.ConcurrencyValue()
+				if err != nil {
+					return err
+				}
 			}
 			if err := worker.Init(n); err != nil {
 				return err

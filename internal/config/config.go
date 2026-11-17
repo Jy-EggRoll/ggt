@@ -341,6 +341,21 @@ func invalidConcurrencyError(raw string) error {
 		map[string]any{"Value": strings.TrimSpace(raw), "Max": maxConcurrency}))
 }
 
+// ValidateCommandLineConcurrency 解析并校验 -c 的取值，返回实际并发数。
+//
+// 与配置文件刻意不同的一点：命令行没有“空串表示默认”这一形态。脚本里 `-c "$VAR"`
+// 而 VAR 未设值时，空串若按 auto 处理就又是一次静默忽略；它还会让一份写着非法值的
+// 配置文件借 -c "" 绕过启动校验。配置文件里的空串仍按 auto 处理（缺键与空值是文件的
+// 正常形态），两条入口因此各有自己的规则，不要合并成一处。
+//
+// 空值在报错里显示成 (empty)：直接塞空串会让模板渲染出“value : expected”这种缺口。
+func ValidateCommandLineConcurrency(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, invalidConcurrencyError("(empty)")
+	}
+	return resolveConcurrency(raw)
+}
+
 // deprecatedConcurrencyValues 是旧版支持的 CPU 相对语义。
 // 保留这份清单只为识别旧配置：它们的含义已并入 auto，新版永远不会写入这些词。
 var deprecatedConcurrencyValues = map[string]bool{
