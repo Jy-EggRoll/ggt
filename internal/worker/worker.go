@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 )
 
 // 共享信号量的状态。Init 在启动时写一次，Map 在每次调用时读一次；
@@ -62,31 +63,49 @@ func sharedSemaphore() chan struct{} {
 	return semaphore
 }
 
-// slotHeldKey 是“这个 ctx 的来源处已经持有共享信号量的一个槽位”这一事实的载体。
+// batchState 记录一批任务里是否发生过嵌套误用。
 //
-// 用 ctx 携带而不是 goroutine local 存储：Go 不提供取当前 goroutine 标识的受支持手段，
-// 而这个包也不该为一个诊断能力引入第三方依赖。代价是盲区——见 Map 注释里“覆盖范围”一段。
-type slotHeldKey struct{}
+// 为什么需要它：任务 goroutine 的 recover 只在“回调没有自己 recover”时才看得到
+// nestedMapError。回调若自带 recover（防御性代码里并不少见），panic 会被它吞掉，
+// 该位置就安静地留了零值——这与“误用必须让调用方看见”正好相反。因此嵌套调用在 panic
+// 之前先把事实记进本批状态，Map 返回前再查一次：即使 panic 被吞掉，调用方也拿不到
+// 一份看起来正常的结果。
+type batchState struct{ nested atomic.Bool }
 
-// markSlotHeld 返回一个带“已持有槽位”标记的 ctx。
-func markSlotHeld(ctx context.Context) context.Context {
-	return context.WithValue(ctx, slotHeldKey{}, true)
+// failIfMisused 在本批发生过嵌套误用时以同一条说明终止进程。
+func (b *batchState) failIfMisused() {
+	if b.nested.Load() {
+		panic(&nestedMapError{})
+	}
 }
 
-// holdsSlot 判断 ctx 是否带着 markSlotHeld 打的标记。
-// 只有 Map 在调用 fn 之前打进 ctx 的这一种来源，因此它同时说明“调用方就是某个批次的回调”。
-func holdsSlot(ctx context.Context) bool {
-	return ctx.Value(slotHeldKey{}) == true
+// slotHeldKey 是“这个 ctx 的来源处已经持有共享信号量的一个槽位”这一事实的载体。
+// 值是该批的状态：既用来判定“当前在回调里”，也用来记录误用有没有被回调吞掉。
+//
+// 用 ctx 携带而不是 goroutine local 存储：Go 不提供取当前 goroutine 标识的受支持手段，
+// 而这个包也不该为一个诊断能力引入第三方依赖。代价是盲区——见 Map 注释里“覆盖范围”。
+type slotHeldKey struct{}
+
+// markSlotHeld 返回一个带批次状态的 ctx。
+func markSlotHeld(ctx context.Context, state *batchState) context.Context {
+	return context.WithValue(ctx, slotHeldKey{}, state)
+}
+
+// heldState 返回 ctx 携带的批次状态；不在 Map 回调里时返回 nil。
+// 只有 Map 在调用 fn 之前打进去的这一种来源，因此非 nil 就说明“调用方是某个批次的回调”。
+func heldState(ctx context.Context) *batchState {
+	state, _ := ctx.Value(slotHeldKey{}).(*batchState)
+	return state
 }
 
 // nestedMapError 是“在 Map 回调里再调 Map”的 panic 值。
 //
-// 单独成一个类型，是为了让任务内的 recover 能把它与普通任务 panic 区分开：
-// 后者只记一行日志、该位置留零值就够了，而误用必须让调用方看见（见 Map 的 recover）。
+// 单独成一个类型，是为了让任务内的 recover 与 Map 返回前的复查能把它与普通任务 panic
+// 区分开：后者只记一行日志、该位置留零值就够了，而误用必须让调用方看见。
 type nestedMapError struct{}
 
 func (*nestedMapError) Error() string {
-	return "worker: Map was called from inside a Map callback; the concurrency limit is process-wide, so the nested batch waits for slots its own outer batch is holding and hangs. Run the nested work as items of the outer batch instead"
+	return "worker: Map was called from inside a Map callback; nested batches are rejected outright because whether they hang depends on whether the outer batch happens to hold every slot. Run the nested work as items of the outer batch instead"
 }
 
 // Map 对 items 中的每个元素并发执行 fn，用进程级共享信号量限制并发数，
@@ -94,17 +113,30 @@ func (*nestedMapError) Error() string {
 //
 // ctx 用于取消/超时控制：若 ctx 已取消则停止启动新 goroutine，
 // 且 ctx 会被透传给 fn，使正在执行的任务（如 git 命令）也能感知取消。
-// fn 内 panic 会被 recover，对应位置写入 T 的零值，并通过标准 log 记录。
+// fn 内 panic 会被 recover，对应位置写入 T 的零值，并通过标准 log 记录
+// （嵌套误用是例外，见下）。
 //
 // 信号量在函数入口取一次并在整批任务中复用：即使中途有人再调 Init，
 // 这一批的上限也不会前后不一致（Init 本就只该在启动时调用一次）。
 //
 // # 嵌套调用
 //
-// 不要在 fn 里再调 Map。共享信号量没有重入额度：外层已经占住槽位、又在等内层返回，
-// 内层则等在信号量上，两者互相等下去。这种误用过去表现为“命令永久卡住，Ctrl-C 之外
-// 没有任何线索”，因此现在在入口就拒绝——panic(&nestedMapError{})，并让任务内的 recover
-// 原样抛回去，而不是记一行日志、交出一份零值结果。
+// 不要在 fn 里再调 Map：共享信号量是进程级的，没有重入额度。嵌套会不会卡住取决于
+// 外层是否已经占满全部槽位——外层项目数少于并发上限时，内层的任务还能拿到空槽位、
+// 照常跑完；一旦外层把槽位占满，外层等内层返回、内层等外层释放，双方永久互等。
+// 同一段代码会随仓库数量变化在“能跑”和“卡死”之间摇摆，这种不确定性本身就是缺陷。
+//
+// 因此本函数一律拒绝嵌套调用，哪怕当时还有空槽位：直接 panic(&nestedMapError{})。
+// 这是一次行为收紧——此前靠空槽位侥幸跑通的嵌套调用，现在会失败；换来的是误用必现、
+// 且失败点指向误用的那一行，而不是只在特定仓库数量下偶发挂住。
+//
+// 拒绝的代价是整进程退出（panic 不会被回收）：已经打印的输出会停在半截，同时在跑的
+// 其他任务也随之终止。这是有意的取舍——把“偶发挂住、只能 Ctrl-C”换成“立刻失败、
+// 栈里直接指出误用”；宁可让整次运行失败，也不交出一份缺项却看起来正常的结果。
+//
+// 失败不会因为回调自己 recover 而消失：嵌套调用在 panic 之前把事实记进本批状态，
+// Map 在返回前（defer）再查一次并重新抛出，见 batchState 的说明。也就是说回调可以
+// 吞掉 panic，但吞不掉这次失败的结论；那种情况下要等这一批任务跑完才抛出。
 //
 // 不用“等槽位超过 N 秒就算误用”来兜底：仓库多、网络慢时排队等槽位是正常状态，
 // 任何时限都会把合法等待误判成误用，而误判的代价是整批任务被判失败。
@@ -112,25 +144,30 @@ func (*nestedMapError) Error() string {
 // 覆盖范围（这是真实保证的边界，不要当成完备的死锁检测）：
 //   - fn 直接用收到的 ctx 再调 Map：能拦住；
 //   - fn 用收到的 ctx 派生（WithCancel / WithTimeout / WithValue）后再调：能拦住，
-//     标记随 ctx 一起派生；
-//   - fn 把收到的 ctx 交给自己的子 goroutine 后再调：能拦住，标记跟着 ctx 走；
+//     状态随 ctx 一起派生；
+//   - fn 把收到的 ctx 交给自己的子 goroutine 后再调：能拦住，状态跟着 ctx 走；
 //   - fn 转而用 context.Background() / context.TODO() 或另一条不经过该 ctx 的链去调：
-//     拦不住，标记不在那条 ctx 里。这种调用与“另一个业务请求恰好也在调 Map”在进程内
-//     无法区分（拿不到 goroutine 标识），仍会退回到原先的等待行为。
+//     拦不住，状态不在那条 ctx 里。这种调用与“另一个业务请求恰好也在调 Map”在进程内
+//     无法区分（拿不到 goroutine 标识），仍会退回原先的等待行为。
 //
 // 因此这条检查的正确定位是“把常见误用立刻变成一条可读的失败”，不是死锁检测器：
 // 跨 context 链的嵌套依旧要靠代码评审与测试发现。
 func Map[I any, T any](ctx context.Context, items []I, fn func(ctx context.Context, item I) T) []T {
-	if holdsSlot(ctx) {
+	if state := heldState(ctx); state != nil {
+		// 先记事实再 panic：回调可能自己 recover 掉这个 panic，那就靠返回前的复查
+		state.nested.Store(true)
 		panic(&nestedMapError{})
 	}
 
 	results := make([]T, len(items))
 	var wg sync.WaitGroup
 	sem := sharedSemaphore()
-	// 整批共用一个带标记的 ctx：context 不可变，标记对每个任务都成立。
+	state := &batchState{}
+	// 回调吞掉 panic 时的兜底：无论从哪条路径返回，返回前都按本批状态复查一次
+	defer state.failIfMisused()
+	// 整批共用一个带状态的 ctx：context 不可变，状态对每个任务都成立。
 	// 它仍然派生自调用方的 ctx，取消与超时语义不变
-	taskCtx := markSlotHeld(ctx)
+	taskCtx := markSlotHeld(ctx, state)
 
 	for i, item := range items {
 		select {
