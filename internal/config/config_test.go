@@ -80,7 +80,7 @@ func TestConcurrencyValue(t *testing.T) {
 	}
 
 	// 越界与旧语义值都不得静默回退：并发数是本机保护参数，写错了必须让命令失败
-	for _, raw := range []string{"0", "-3", "65", "1024", "2000000000", "abc", "CPUHalf", "CPUFull", "CPUQuarter"} {
+	for _, raw := range []string{"0", "-3", "65", "1024", "2000000000", "abc", "010", "+8", "8.0", "CPUHalf", "CPUFull", "CPUQuarter"} {
 		cfg := &Config{Concurrency: raw}
 		if _, err := cfg.ConcurrencyValue(); err == nil {
 			t.Errorf("ConcurrencyValue(%q) 应当报错，实际通过", raw)
@@ -113,9 +113,15 @@ func TestValidateCommandLineConcurrency(t *testing.T) {
 	if n, err := ValidateCommandLineConcurrency(" 8 "); err != nil || n != 8 {
 		t.Errorf("\" 8 \" 应解析成 8，实得 (%d, %v)", n, err)
 	}
-	for _, raw := range []string{"0", "-1", "65", "abc", "CPUFull"} {
-		if _, err := ValidateCommandLineConcurrency(raw); err == nil {
+	for _, raw := range []string{"0", "-1", "65", "abc", "010", "+8", "8.0", "CPUFull"} {
+		_, err := ValidateCommandLineConcurrency(raw)
+		if err == nil {
 			t.Errorf("ValidateCommandLineConcurrency(%q) 应报错", raw)
+			continue
+		}
+		// -c 与配置文件共用同一套报错范围，不能漏出 strconv 原文
+		if msg := err.Error(); !strings.Contains(msg, "1 to 64") || strings.Contains(msg, "strconv") {
+			t.Errorf("ValidateCommandLineConcurrency(%q) 的报错应写明范围且不露 strconv：%q", raw, msg)
 		}
 	}
 }

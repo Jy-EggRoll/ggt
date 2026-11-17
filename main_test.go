@@ -566,6 +566,23 @@ func TestCLIConcurrencyContract(t *testing.T) {
 	} else if strings.Contains(result.stderr, "strconv") {
 		t.Errorf("-c 的报错不应漏出 strconv 原文：stderr=%q", result.stderr)
 	}
+	// 1a1. 字符串数字与配置文件、config set 同一套规范十进制规则：
+	// 前导零、正号与浮点写法都在命令行入口被拒绝，报错写明实际值与范围
+	for _, value := range []string{"010", "+8", "8.0"} {
+		result := runCLIWithEnv(t, home, "-c", value, "version")
+		if result.exitCode == 0 {
+			t.Errorf("-c %q 应以非 0 退出：stdout=%q", value, result.stdout)
+			continue
+		}
+		for _, part := range []string{"Invalid concurrency value", value, "1 to 64"} {
+			if !strings.Contains(result.stderr, part) {
+				t.Errorf("-c %q 的报错应包含 %q：stderr=%q", value, part, result.stderr)
+			}
+		}
+		if strings.Contains(result.stderr, "strconv") {
+			t.Errorf("-c %q 的报错不应漏出 strconv 原文：stderr=%q", value, result.stderr)
+		}
+	}
 
 	// 1a2. 显式空串与纯空白必须报错：脚本里 -c "$VAR" 而 VAR 未设值时，
 	// 不能静默变成 auto（那是又一次静默忽略）。配置文件里的空串仍按 auto 处理，

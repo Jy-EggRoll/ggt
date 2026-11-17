@@ -27,7 +27,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -255,8 +254,10 @@ func resolveConcurrency(raw string) (int, error) {
 	if v == "" || strings.EqualFold(v, DefaultConcurrency) {
 		return autoConcurrency(), nil
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 || n > maxConcurrency {
+	// 与配置文件、config set 共用同一套规范十进制解析：Atoi 会接受 "010" 与 "+8"，
+	// 那会让同一条规则在 -c 与配置文件两个入口给出不同结论
+	n, ok := decimalStringToInt(v)
+	if !ok || n < 1 || n > maxConcurrency {
 		return 0, invalidConcurrencyError(raw)
 	}
 	return n, nil
