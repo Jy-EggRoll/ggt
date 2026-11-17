@@ -51,7 +51,7 @@ func parseRaw(data []byte) (map[string]any, error) {
 
 	var raw map[string]any
 	if err := dec.Decode(&raw); err != nil {
-		return nil, err
+		return nil, jsonParseError(data, err)
 	}
 	// 文件内容为 null 时 Decode 得到 nil map，后面直接赋值会 panic
 	if raw == nil {
@@ -59,6 +59,49 @@ func parseRaw(data []byte) (map[string]any, error) {
 	}
 	return normalizeKeys(raw)
 }
+
+// jsonParseError 给 JSON 语法错误补上行号与列号。
+//
+// 只给 "invalid character 'o' looking for beginning of object key string" 是不够的：
+// 配置文件常常上百行，用户无从知道该看哪一行。读侧（运行期加载）与 ggt config validate
+// 共用这一份解析，因此位置只在这里补一次，两边都会带上。
+func jsonParseError(data []byte, err error) error {
+	var syntaxErr *json.SyntaxError
+	if !errors.As(err, &syntaxErr) {
+		// 不是语法错误（例如空文件读到 EOF、类型解码失败）时没有“第几行”可言
+		return err
+	}
+	line, column := byteOffsetLineColumn(data, syntaxErr.Offset)
+	return &parseError{err: err, line: line, column: column}
+}
+
+// byteOffsetLineColumn 把 json.SyntaxError.Offset（1 基、指向出错的字节）换算成
+// 从 1 开始的行号与列号。
+func byteOffsetLineColumn(data []byte, offset int64) (line, column int) {
+	line, column = 1, 1
+	for i := int64(0); i < offset-1 && i < int64(len(data)); i++ {
+		if data[i] == '\n' {
+			line++
+			column = 1
+			continue
+		}
+		column++
+	}
+	return line, column
+}
+
+// parseError 是带上位置的 JSON 解析错误。保留 Unwrap 让调用方仍能判断这是语法错误。
+type parseError struct {
+	err          error
+	line, column int
+}
+
+func (e *parseError) Error() string {
+	return l10n.T("{{.Err}} (line {{.Line}}, column {{.Column}})",
+		map[string]any{"Err": e.err, "Line": e.line, "Column": e.column})
+}
+
+func (e *parseError) Unwrap() error { return e.err }
 
 // WriteRawAt 以原子方式写回配置。
 //

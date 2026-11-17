@@ -27,8 +27,9 @@ func newRepoCmd() *cobra.Command {
 		Short: l10n.T("Manage repository path configuration", nil),
 		Long: l10n.T(`Manage the list of configured repository paths.
 
-These commands also work when the config file is invalid, so a broken repository
-list can be repaired from the command line.
+When only some values in the config file are invalid, these commands still work, so
+a broken repository list can be repaired from the command line. If the file cannot
+be parsed as JSON at all, ggt cannot run them either.
 
 Examples:
   ggt repo list              List all repositories

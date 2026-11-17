@@ -176,7 +176,8 @@ func loadRecoverableConfig() (*config.Config, error) {
 
 	WarnMsg(l10n.T(`The configuration has problems, so ggt runs with built-in defaults for the affected entries; only "ggt config" and "ggt repo" work in this state`, nil))
 	for _, p := range problems {
-		WarnMsg(l10n.T("{{.Problem}} (recover with {{.Command}})",
+		// 修复命令单独占一行、不加引号：提示要能被整段复制去执行（见 config.WithRecoveryHint）
+		WarnMsg(l10n.T("{{.Problem}}\n  Clear the broken value with:\n    {{.Command}}",
 			map[string]any{"Problem": p.Error(), "Command": config.ResetCommand(p.Key)}))
 	}
 	return lenient, nil

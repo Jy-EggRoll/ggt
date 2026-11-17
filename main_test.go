@@ -548,6 +548,85 @@ func TestCLIRepoAddRejectsControlCharPath(t *testing.T) {
 	}
 }
 
+// TestCLIRecoveryHintCommandIsCopyable 断言提示里的命令能整段照抄执行，且键名不会被展开。
+//
+// 键名来自配置文件，可以包含 $() 与反引号。命令若被双引号包住，照抄会 not found（退出码
+// 127），而双引号里的命令替换仍会被 shell 执行——实测会生成探针文件。因此命令必须单独
+// 占一行、前面只有缩进，键名只落在单引号里。
+func TestCLIRecoveryHintCommandIsCopyable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("该用例用 POSIX shell 验证照抄行为")
+	}
+
+	home := t.TempDir()
+	configPath := configFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("创建配置目录失败: %v", err)
+	}
+	probe := filepath.Join(t.TempDir(), "probe")
+	// 未知键：既触发修复提示，又把这串危险字符带进命令参数
+	key := "k$(touch " + probe + ")`id`"
+	body, err := json.Marshal(map[string]any{key: 1})
+	if err != nil {
+		t.Fatalf("序列化配置失败: %v", err)
+	}
+	if err := os.WriteFile(configPath, body, 0o644); err != nil {
+		t.Fatalf("写入配置失败: %v", err)
+	}
+
+	broken := runCLIWithEnv(t, home, "version")
+	if broken.exitCode == 0 {
+		t.Fatalf("未知键应让命令失败: stdout=%q", broken.stdout)
+	}
+	line := firstCommandLine(broken.stdout + broken.stderr)
+	if line == "" {
+		t.Fatalf("提示里应有一条可执行的命令: %q", broken.stdout+broken.stderr)
+	}
+	if strings.Contains(line, `"`) {
+		t.Fatalf("命令不得用双引号包裹（照抄会 not found 且会展开）: %q", line)
+	}
+
+	// 照抄执行：包装脚本让 ggt 出现在 PATH 上，子进程仍是本测试二进制的 helper 模式
+	binDir := t.TempDir()
+	script := filepath.Join(binDir, "ggt")
+	wrapper := "#!/bin/sh\nexec \"$GGT_HELPER_BIN\" -test.run=^TestCLIHelperProcess$ -- \"$@\"\n"
+	if err := os.WriteFile(script, []byte(wrapper), 0o755); err != nil {
+		t.Fatalf("写包装脚本失败: %v", err)
+	}
+
+	run := exec.Command("sh", "-c", line)
+	run.Env = append(os.Environ(),
+		cliHelperEnv+"=1",
+		"HOME="+home,
+		"USERPROFILE="+home,
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GGT_HELPER_BIN="+os.Args[0],
+	)
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("照抄提示里的命令应能执行: %v（输出 %q）", err, out)
+	}
+	if _, err := os.Stat(probe); err == nil {
+		t.Fatal("键名里的 $() 被 shell 展开了：提示的命令必须让键名只出现在单引号里")
+	}
+	if _, ok := readConfigFile(t, configPath)[key]; ok {
+		t.Fatalf("照抄执行后该键应被删除: %#v", readConfigFile(t, configPath))
+	}
+	if recovered := runCLIWithEnv(t, home, "version"); recovered.exitCode != 0 {
+		t.Fatalf("清掉未知键后 version 应恢复正常: stderr=%q", recovered.stderr)
+	}
+}
+
+// firstCommandLine 取出输出里第一条可执行的修复命令（以 ggt config reset 开头的行）。
+func firstCommandLine(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "ggt config reset") {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 // TestCLIRecoveryHintMatchesReality 断言提示里说的可用性与实际一致，且给的命令能直接执行。
 //
 // 文件级失败（JSON 语法错误）时 ggt repo 同样起不来，提示不能把它说成可用；而提示里那条

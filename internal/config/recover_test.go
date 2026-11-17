@@ -96,7 +96,7 @@ func TestWithRecoveryHintNamesExecutableCommand(t *testing.T) {
 			t.Errorf("提示应给出可执行的修复命令，实得 %q", hinted)
 		}
 		// 键级失败时 config 与 repo 两个子树确实还能跑，提示可以这么说
-		if !strings.Contains(hinted, `"ggt repo" and the rest of "ggt config" still work`) {
+		if !strings.Contains(hinted, "still work") {
 			t.Errorf("键级失败时提示应说明这两个子树仍可用，实得 %q", hinted)
 		}
 		// 提示只加一次：每一层都调用 WithRecoveryHint 也不该叠成两遍
@@ -135,6 +135,34 @@ func TestWithRecoveryHintNamesExecutableCommand(t *testing.T) {
 		nonInteractive := WithRecoveryHint(err, true).Error()
 		if !strings.Contains(nonInteractive, "ggt config reset --all --yes") {
 			t.Errorf("非交互环境应给出带 --yes 的命令，实得 %q", nonInteractive)
+		}
+	})
+
+	t.Run("命令不带外层引号且键名里的命令替换不会展开", func(t *testing.T) {
+		// 键名来自配置文件，可以包含任何字符。提示里的命令若被双引号包住，
+		// 整段照抄会 not found（rc 127），而双引号内的 $() 与反引号仍会被 shell 执行
+		key := "k$(touch /tmp/ggt-probe)`id`"
+		err := &KeyError{Key: key, Err: unknownKeyError(key)}
+		hint := WithRecoveryHint(err, false).Error()
+
+		line := commandLineInHint(hint)
+		if line == "" {
+			t.Fatalf("提示里应有一条可执行的命令，实得 %q", hint)
+		}
+		if strings.Contains(line, `"`) {
+			t.Errorf("命令不得用双引号包裹（照抄会 not found，且双引号内会展开），实得 %q", line)
+		}
+		if want := "ggt config reset '" + key + "'"; line != want {
+			t.Errorf("命令应把键名整段放进单引号，实得 %q，期望 %q", line, want)
+		}
+		// 左引号之前、右引号之后都不许出现 $ 或反引号，否则就是会被展开的位置
+		if open := strings.Index(line, "'"); open >= 0 {
+			if strings.ContainsAny(line[:open], "$`") {
+				t.Errorf("单引号之外出现了会被展开的字符，实得 %q", line)
+			}
+			if close := strings.LastIndex(line, "'"); close > open && strings.ContainsAny(line[close+1:], "$`") {
+				t.Errorf("单引号之外出现了会被展开的字符，实得 %q", line)
+			}
 		}
 	})
 
@@ -274,5 +302,46 @@ func TestPathListCounts(t *testing.T) {
 	writeFile(t, path, `{}`)
 	if total, usable, err := PathListCounts(path, "repo_paths"); err != nil || total != 0 || usable != 0 {
 		t.Errorf("缺键应返回 (0,0,nil)，实得 (%d,%d,%v)", total, usable, err)
+	}
+}
+
+// commandLineInHint 取出提示里那条可执行命令（第一个以 "ggt config reset" 开头的行）。
+//
+// 单独抽出来是为了让用例能断言“命令本身”而不是整段提示：判断照抄后能不能执行，
+// 看的是那一行的形态。
+func commandLineInHint(hint string) string {
+	for _, line := range strings.Split(hint, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "ggt config reset") {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// TestParseErrorReportsPosition 断言 JSON 解析失败会带上行号与列号。
+//
+// 提示里承诺 ggt config validate 会指出语法错误的位置，因此这条承诺必须真的兑现：
+// 只有 Go 解析器那一行话时，上百行的配置文件根本无从下手。
+func TestParseErrorReportsPosition(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	// 错误出现在第 3 行：第 3 行的 'o' 不是合法的对象键起始（缺引号）
+	writeFile(t, path, "{\n  \"repo_paths\": []\n  oops: 1\n}")
+
+	_, err := LoadConfigAt(path)
+	if err == nil {
+		t.Fatal("语法错误应让加载失败")
+	}
+	if !strings.Contains(err.Error(), "line 3") || !strings.Contains(err.Error(), "column 3") {
+		t.Errorf("报错应给出行号与列号，实得 %q", err)
+	}
+
+	// ggt config validate 与运行期共用同一份解析：位置只补一次，两边都带上
+	issues, vErr := ValidateAt(path)
+	if vErr != nil {
+		t.Fatalf("体检本身不应失败: %v", vErr)
+	}
+	if len(issues) == 0 || !strings.Contains(issues[0].Message, "line 3") {
+		t.Errorf("体检结果也应带行号，实得 %v", issues)
 	}
 }

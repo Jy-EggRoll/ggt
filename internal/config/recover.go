@@ -82,13 +82,16 @@ func WithRecoveryHint(err error, nonInteractive bool) error {
 		return err
 	}
 
+	// 命令一律单独占一行、前面只有缩进，不加任何引号：包在双引号里时整段照抄会
+	// “not found”（退出码 127），而双引号内的 $() 与反引号仍会被 shell 展开——
+	// 键名来自配置文件，等于把文件内容交给 shell 执行。
 	var keyErr *KeyError
 	if errors.As(err, &keyErr) {
-		return &recoveryHinted{err: err, hint: l10n.T(`Fix it with "{{.Command}}", or run "ggt config validate" to see every problem; "ggt repo" and the rest of "ggt config" still work`,
-			map[string]any{"Command": ResetCommand(keyErr.Key)})}
+		return &recoveryHinted{err: err, hint: l10n.T(`Fix it with the command below; ggt config validate lists every problem, and ggt repo along with the rest of ggt config still work in this state.
+  {{.Command}}`, map[string]any{"Command": ResetCommand(keyErr.Key)})}
 	}
-	return &recoveryHinted{err: err, hint: l10n.T(`The file cannot be read as JSON, so "ggt repo" cannot load it either; run "{{.Command}}" to start over, or fix the file by hand ("ggt config validate" reports where the syntax breaks)`,
-		map[string]any{"Command": ResetAllCommand(nonInteractive)})}
+	return &recoveryHinted{err: err, hint: l10n.T(`The file cannot be read as JSON, so ggt repo cannot load it either. Start over with the command below, or fix the file by hand; ggt config validate reports the line and column of the syntax error.
+  {{.Command}}`, map[string]any{"Command": ResetAllCommand(nonInteractive)})}
 }
 
 // recoveryHinted 是“已经带上修复提示”的错误。
