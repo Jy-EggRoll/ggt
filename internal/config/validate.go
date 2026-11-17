@@ -1,7 +1,8 @@
 // validate.go 实现 ggt config validate 的体检逻辑。
 //
-// 体检与运行期加载的容错策略刻意不同：LoadConfig 力求“永远能跑”，遇到非法值会静默
-// 回退默认；体检力求“把会被静默忽略的东西说出来”。因此每条问题都标明严重级别，
+// 体检与运行期加载的容错策略刻意不同：LoadConfig 力求“永远能跑”，遇到非法取值会静默
+// 回退默认（取值形态不对是例外，那种情况下运行期也直接失败，因为它根本没法弱转成合法值）；
+// 体检力求“把会被静默忽略的东西说出来”。因此每条问题都标明严重级别，
 // 并说明运行期会发生什么，用户才不会困惑于“为什么它说有问题但命令照样能跑”。
 package config
 
@@ -108,20 +109,20 @@ func validateKeys(raw map[string]any) []Issue {
 			continue // 缺键不是问题：缺键就用默认值
 		}
 
-		// 数组项的类型不对是硬错误：运行期无法把它当成路径列表用
-		if s.Kind == KindPaths {
-			if _, isList := v.([]any); !isList {
-				issues = append(issues, Issue{
-					Level: LevelError,
-					Message: l10n.T("Expected an array for {{.Key}}, got {{.Type}}", map[string]any{
-						"Key": s.Key, "Type": jsonTypeName(v),
-					}),
-				})
-			}
+		// 取值形态不对（布尔值用在非布尔项上、路径项不是数组）是硬错误：运行期加载与
+		// config get 都按同一条判定直接失败，体检若只报一句“类型不规范、其实还能跑”，
+		// 就与实际行为正好相反
+		if err := valueShapeError(s, v); err != nil {
+			issues = append(issues, Issue{Level: LevelError, Message: err.Error()})
 			continue
 		}
 
-		// 标量的类型不规范属警告：运行期靠 mapstructure 的 WeaklyTypedInput 容错，
+		// 数组项的形态已经查过，剩余规则（取值是否合法）对它没有意义
+		if s.Kind == KindPaths {
+			continue
+		}
+
+		// 其余的标量类型差异属警告：运行期靠 mapstructure 的 WeaklyTypedInput 容错，
 		// 能跑，但不规范
 		if !scalarTypeMatches(s.Kind, v) {
 			issues = append(issues, Issue{
@@ -150,9 +151,8 @@ func validateKeys(raw map[string]any) []Issue {
 				continue
 			}
 			issues = append(issues, Issue{
-				Level: LevelError,
-				Message: l10n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
-					map[string]any{"Key": s.Key, "Value": text, "Expected": l10n.Retranslate(s.Expected, nil)}),
+				Level:   LevelError,
+				Message: invalidValueError(s, text).Error(),
 			})
 		}
 	}

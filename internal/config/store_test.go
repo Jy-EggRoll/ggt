@@ -725,3 +725,150 @@ func TestEffectiveAtNormalizesConcurrency(t *testing.T) {
 		})
 	}
 }
+
+// TestValueShapeRejectedConsistently 断言“布尔值写在非布尔配置项上”在四条路径上
+// 给出同一个结论、同一句话：运行期加载、config get、config set、config validate。
+//
+// 改造前这四处是分叉的：运行期靠 mapstructure 的弱转换把 true 变成 "1" 照常跑，
+// config get 却因为无法把 true 解析成并发数而报错退出。对比四条报错是否逐字相同，
+// 比各自断言“非 nil”更能锁住这次要的口径一致
+func TestValueShapeRejectedConsistently(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	writeFile(t, path, `{"concurrency": true}`)
+
+	_, loadErr := LoadConfigAt(path)
+	if loadErr == nil {
+		t.Fatal("运行期加载应拒绝 concurrency: true")
+	}
+
+	_, getErr := EffectiveAt(path, "concurrency")
+	if getErr == nil {
+		t.Fatal("config get 应拒绝 concurrency: true")
+	}
+
+	issues, err := ValidateAt(path)
+	if err != nil {
+		t.Fatalf("体检失败: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("concurrency: true 应只报 1 条问题，实得 %+v", issues)
+	}
+	if issues[0].Level != LevelError {
+		t.Fatalf("布尔形态应报 error（运行期直接失败），实得 %s", issues[0].Level)
+	}
+
+	_, setErr := SetFromTextAt(path, "concurrency", "true", false)
+	if setErr == nil {
+		t.Fatal("config set concurrency true 应被拒绝")
+	}
+
+	want := loadErr.Error()
+	for name, got := range map[string]string{
+		"运行期加载":           loadErr.Error(),
+		"config get":      getErr.Error(),
+		"config validate": issues[0].Message,
+		"config set":      setErr.Error(),
+	} {
+		if got != want {
+			t.Errorf("%s 的报错与运行期不一致：\n  实得 %q\n  期望 %q", name, got, want)
+		}
+	}
+	// 文案本身也要说得清：点出键、实际值与合法范围
+	for _, part := range []string{"concurrency", "true", "1 to 64"} {
+		if !strings.Contains(want, part) {
+			t.Errorf("报错应包含 %q，实得 %q", part, want)
+		}
+	}
+}
+
+// TestEffectiveAtRejectsWrongShape 断言 get 对形态不对的值一律报错，而不是原样打印，
+// 且报错说法与体检同源；合法的数字与字符串形态不受影响。
+func TestEffectiveAtRejectsWrongShape(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		key     string
+		wantErr bool
+		want    string
+	}{
+		{"并发数写成布尔", `{"concurrency": true}`, "concurrency", true, ""},
+		{"并发数写成 false", `{"concurrency": false}`, "concurrency", true, ""},
+		{"阈值写成布尔", `{"size_bucket_low_mb": true}`, "size_bucket_low_mb", true, ""},
+		{"语言写成布尔", `{"language": true}`, "language", true, ""},
+		{"路径列表写成布尔", `{"repo_paths": true}`, "repo_paths", true, ""},
+		{"路径列表写 null 按未设置处理", `{"repo_paths": null}`, "repo_paths", false, ""},
+		{"布尔项本身合法", `{"ignore_submodules": true}`, "ignore_submodules", false, "true"},
+		{"布尔项的字符串形态仍合法", `{"push_tags": "false"}`, "push_tags", false, "false"},
+		{"数字形态仍合法", `{"concurrency": 8}`, "concurrency", false, "8"},
+		{"字符串形态仍合法", `{"concurrency": "8"}`, "concurrency", false, "8"},
+		{"整数的字符串形态仍合法", `{"size_bucket_low_mb": "500"}`, "size_bucket_low_mb", false, "500"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "c.json")
+			writeFile(t, path, c.content)
+
+			got, err := EffectiveAt(path, c.key)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("EffectiveAt 错误 = %v，wantErr=%v", err, c.wantErr)
+			}
+			if c.wantErr {
+				// 形态问题不能漏出 mapstructure 的原文，得是可以直接给用户看的一句
+				if strings.Contains(err.Error(), "unconvertible") {
+					t.Errorf("报错不应漏出 mapstructure 原文：%q", err)
+				}
+				return
+			}
+			if ValueText(got) != c.want {
+				t.Errorf("EffectiveAt = %v，应为 %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestSetFromTextAtKeepsBoolKindsWritable 断言拒绝布尔形态没有波及布尔项本身：
+// 用文本 true/false 写布尔项仍然可行，别的键也不受影响。
+func TestSetFromTextAtKeepsBoolKindsWritable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+
+	if _, err := SetFromTextAt(path, "ignore_submodules", "true", false); err != nil {
+		t.Fatalf("写布尔项应成功: %v", err)
+	}
+	if _, err := SetFromTextAt(path, "concurrency", "4", false); err != nil {
+		t.Fatalf("写数字形态的并发数应成功: %v", err)
+	}
+
+	cfg, err := LoadConfigAt(path)
+	if err != nil {
+		t.Fatalf("读取失败: %v", err)
+	}
+	if !cfg.IgnoreSubmodules {
+		t.Error("ignore_submodules 应为 true")
+	}
+	if cfg.Concurrency != "4" {
+		t.Errorf("concurrency = %q，应为 \"4\"", cfg.Concurrency)
+	}
+}
+
+// TestValueShapePathMessage 断言路径项的形态错误沿用“应为数组”的说法。
+//
+// repo_paths / parent_paths 的 Setting.Expected 是空的（数组的合法取值没法用一句话概括），
+// 若套用标量那句模板，报错会渲染成 “(expected )”，看着像拼接漏了东西。
+func TestValueShapePathMessage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	writeFile(t, path, `{"repo_paths": true}`)
+
+	_, err := EffectiveAt(path, "repo_paths")
+	if err == nil {
+		t.Fatal("repo_paths 写成布尔值应报错")
+	}
+	got := err.Error()
+	for _, part := range []string{"repo_paths", "bool"} {
+		if !strings.Contains(got, part) {
+			t.Errorf("报错应点明键名与实际类型（%q）：%q", part, got)
+		}
+	}
+	if strings.Contains(got, "(expected )") || strings.HasSuffix(got, "expected ") {
+		t.Errorf("不得渲染出空的 expected：%q", got)
+	}
+}

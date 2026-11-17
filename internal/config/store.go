@@ -259,6 +259,11 @@ func EffectiveAt(path, key string) (any, error) {
 	if !ok {
 		return s.Default, nil
 	}
+	// 取值形态与运行期同一条判定（见 valueShapeError）：{"concurrency": true} 这类
+	// 布尔值运行期会直接拒绝，get 也不能把它当成一个可以打印的值
+	if err := valueShapeError(s, v); err != nil {
+		return nil, err
+	}
 	// 语言要归一化：文件里可能写着 zh 或 zh-Hans，而运行期实际生效的是 zh-CN，
 	// get 的输出应当与运行期一致
 	if s.Key == "language" {

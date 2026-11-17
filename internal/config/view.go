@@ -176,8 +176,7 @@ func SetFromTextAt(path, key, text string, strict bool) (string, error) {
 
 	parsed, err := s.Parse(text)
 	if err != nil {
-		return "", fmt.Errorf("%s", l10n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
-			map[string]any{"Key": s.Key, "Value": text, "Expected": l10n.Retranslate(s.Expected, nil)}))
+		return "", invalidValueError(s, text)
 	}
 	if err := SetKeyAt(path, s.Key, parsed); err != nil {
 		return "", err

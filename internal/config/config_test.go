@@ -520,3 +520,110 @@ func TestPushTagsAndPruneBranchesDefault(t *testing.T) {
 		}
 	})
 }
+
+// TestLoadConfigAtRejectsBoolShape 断言运行期拒绝“布尔值用在非布尔配置项上”，
+// 同时不碰合法的数字与字符串形态。
+//
+// 这条守卫的由来：{"concurrency": true} 曾被弱类型解码成 "1" 并照常运行，而
+// config get 解析不了 true、直接报错退出——同一份配置在两处结论相反。
+// 布尔值不是任何非布尔配置项的合法形态，因此这里一律拒绝。
+func TestLoadConfigAtRejectsBoolShape(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		wantErr bool
+		check   func(*testing.T, *Config)
+	}{
+		{
+			name:    "并发数写成布尔",
+			content: `{"concurrency": true}`,
+			wantErr: true,
+		},
+		{
+			name:    "阈值写成布尔",
+			content: `{"size_bucket_low_mb": true}`,
+			wantErr: true,
+		},
+		{
+			name:    "语言写成布尔",
+			content: `{"language": true}`,
+			wantErr: true,
+		},
+		{
+			name:    "路径列表写成布尔",
+			content: `{"repo_paths": true}`,
+			wantErr: true,
+		},
+		{
+			name:    "路径列表写 null 按未设置处理",
+			content: `{"repo_paths": null}`,
+			wantErr: false,
+			check: func(t *testing.T, cfg *Config) {
+				if len(cfg.RepoPaths) != 0 {
+					t.Errorf("repo_paths 应为空列表，实得 %#v", cfg.RepoPaths)
+				}
+			},
+		},
+		{
+			name:    "匿名键写成布尔不算错误",
+			content: `{"typo_key": true}`,
+			wantErr: false,
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Concurrency != DefaultConcurrency {
+					t.Errorf("未知键不应影响其它项，concurrency = %q", cfg.Concurrency)
+				}
+			},
+		},
+		{
+			name:    "布尔项本身的布尔值合法",
+			content: `{"ignore_submodules": true, "prune_branches": false}`,
+			wantErr: false,
+			check: func(t *testing.T, cfg *Config) {
+				if !cfg.IgnoreSubmodules || cfg.PruneBranches {
+					t.Errorf("布尔项读取不正确: %#v", cfg)
+				}
+			},
+		},
+		{
+			name:    "数字形态仍然合法",
+			content: `{"concurrency": 8, "size_bucket_low_mb": 200}`,
+			wantErr: false,
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Concurrency != "8" || cfg.SizeBucketLowMB != 200 {
+					t.Errorf("数字形态读取不正确: concurrency=%q low=%d", cfg.Concurrency, cfg.SizeBucketLowMB)
+				}
+			},
+		},
+		{
+			name:    "字符串形态仍然合法",
+			content: `{"concurrency": "8", "size_bucket_high_mb": "600"}`,
+			wantErr: false,
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Concurrency != "8" || cfg.SizeBucketHighMB != 600 {
+					t.Errorf("字符串形态读取不正确: concurrency=%q high=%d", cfg.Concurrency, cfg.SizeBucketHighMB)
+				}
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "c.json")
+			writeFile(t, path, c.content)
+
+			cfg, err := LoadConfigAt(path)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("LoadConfigAt 错误 = %v，wantErr=%v", err, c.wantErr)
+			}
+			if c.wantErr {
+				if !strings.Contains(err.Error(), "Invalid value for") && !strings.Contains(err.Error(), "Expected an array for") {
+					t.Errorf("报错应指出是哪个键的取值/形态问题，实得 %q", err)
+				}
+				return
+			}
+			if c.check != nil {
+				c.check(t, cfg)
+			}
+		})
+	}
+}

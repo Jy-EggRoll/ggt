@@ -181,6 +181,20 @@ func LoadConfigAt(path string) (*Config, error) {
 // 零值 false，而 LoadConfigAt 给出 true——两条读路径对同一个键给出不同答案，
 // 且只有“文件里没写这个键”时才暴露，很难在测试之外发现
 func decodeConfig(raw map[string]any) (*Config, error) {
+	// 取值形态先查一遍：布尔值不是任何非布尔配置项的合法形态，而弱类型解码会把它
+	// 转成 "1"/"0" 悄悄接受（见 valueShapeError）。这一步必须在解码之前，
+	// 否则 {"concurrency": true} 会变成并发数 1 跑起来，与 config get 的结论相反
+	for key, v := range raw {
+		s, ok := Lookup(key)
+		if !ok {
+			// 未知键不在这里管：运行期一律忽略，由 config validate 报出
+			continue
+		}
+		if err := valueShapeError(s, v); err != nil {
+			return nil, err
+		}
+	}
+
 	// 默认值先取：文件里缺哪个键，哪个键就保持 settings 里的默认值
 	merged := DefaultRaw()
 	for k, v := range raw {
@@ -191,6 +205,7 @@ func decodeConfig(raw map[string]any) (*Config, error) {
 	// WeaklyTypedInput 允许已有的数字型 concurrency 配置在反序列化为 string 字段时
 	// 自动转为字符串，也容忍 "true" 这类字符串形态的布尔值，
 	// 避免历史配置文件（旧版把并发数存成 int）读取报错。
+	// 它唯一不容忍的形态在这里拦：JSON 的布尔值（见 valueShapeError）。
 	// 官方信源：https://github.com/go-viper/mapstructure/v2
 	dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 		Result:           &cfg,
@@ -204,7 +219,9 @@ func decodeConfig(raw map[string]any) (*Config, error) {
 	}
 
 	// 文件里写了非法值（如 size_bucket_low_mb: 0、空串的语言）时的回退。
-	// 这些值由 ggt config validate 作为问题报出，本函数只保证“报出之前程序仍然可用”
+	// 这些值由 ggt config validate 作为问题报出，本函数只保证“报出之前程序仍然可用”。
+	// 例外是取值形态（布尔值用在非布尔项上）：那种形态已经在解码前直接报错，
+	// 因为“弱转成 1 继续跑”正是本次要消除的口径分叉
 	//
 	// concurrency 另有一道旧值迁移：旧版存的是 CPUHalf 这类语义串，读到就按 auto
 	// 处理并提示一次，见 migrateDeprecatedConcurrency
@@ -212,6 +229,41 @@ func decodeConfig(raw map[string]any) (*Config, error) {
 	applyConfigDefaults(&cfg)
 
 	return &cfg, nil
+}
+
+// valueShapeError 判断文件里某个键的 JSON 取值形态能否被接受。
+//
+// 拦布尔值是这次专门加的一道：mapstructure 的 WeaklyTypedInput 会把 JSON 的 true/false
+// 转成字符串 "1"/"0"，于是 {"concurrency": true} 在运行期变成并发数 1 照常跑，而
+// config get 拿到布尔 true、解析失败直接报错——同一份文件在两处给出相反结论。
+// 布尔值本来就不是任何非布尔配置项的合法形态（数字与数字字符串才是），因此在解码之前
+// 统一拒绝；运行期加载、config get、config validate 共用这一处判定，config set 收到的
+// 文本 "true" 也走同一个 invalidValueError，四处的说法因此一致。
+//
+// 路径列表项一并在这里判：布尔值转不成数组，交给 mapstructure 只会漏出一句
+// "unconvertible type" 的原文，不如给出与体检相同的说法。
+//
+// 刻意只拦这两种：数字与数字字符串之间的弱转换（concurrency: 8、size_bucket_low_mb: "500"）
+// 是历史配置的合法形态，字符串形态的布尔值（ignore_submodules: "true"）同理，都不能动。
+func valueShapeError(s Setting, v any) error {
+	// 路径项先判：它的规范形态是数组，而 Setting.Expected 对这类项是空的
+	// （数组的“合法取值”无法用一句话概括），套用下面那句会渲染出“(expected )”这种缺口。
+	// JSON null 与缺键同义（运行期就是空列表），不拒绝：它没有类型可写错，
+	// 拒绝它只会让一份原本能跑的配置在升级后起不来
+	if s.Kind == KindPaths {
+		if v == nil {
+			return nil
+		}
+		if _, isList := v.([]any); !isList {
+			return fmt.Errorf("%s", l10n.T("Expected an array for {{.Key}}, got {{.Type}}",
+				map[string]any{"Key": s.Key, "Type": jsonTypeName(v)}))
+		}
+		return nil
+	}
+	if _, isBool := v.(bool); isBool && s.Kind != KindBool {
+		return invalidValueError(s, ValueText(v))
+	}
+	return nil
 }
 
 // defaultConfig 返回所有字段填好默认值的配置。

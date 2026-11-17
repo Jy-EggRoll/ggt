@@ -15,6 +15,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
@@ -33,6 +34,17 @@ import (
 // 由调用方用统一模板渲染（见 cmd/config.go）。若让每个 Parse 各返回一句散文，
 // 用户可见文案的数量会随校验规则数线性增长，中英双语都得跟着维护。
 var ErrInvalidValue = errors.New("invalid value")
+
+// invalidValueError 把“取值非法”渲染成用户可见的那一句话。
+//
+// 运行期加载、config get、config set、config validate 四处共用这一处实现：
+// 各写一份的话，同一份文件在不同命令下会给出不同说法，用户没法判断到底哪个才是真的
+// （{"concurrency": true} 曾经就是“运行期当成并发数 1 跑、config get 却报错”的分叉）。
+// 合法取值的描述统一取自 Setting.Expected，不再有第二条措辞来源。
+func invalidValueError(s Setting, text string) error {
+	return fmt.Errorf("%s", l10n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",
+		map[string]any{"Key": s.Key, "Value": text, "Expected": l10n.Retranslate(s.Expected, nil)}))
+}
 
 // errDeprecatedConcurrency 表示写入的是旧版并发语义值（CPUHalf 等）。
 //
