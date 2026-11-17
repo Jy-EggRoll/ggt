@@ -9,6 +9,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -78,43 +79,41 @@ func newRepoAddCmd() *cobra.Command {
 		Use:   "add <path>",
 		Short: l10n.T("Add a repository path to the config file", nil),
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		// 用 RunE 而不是 Run：业务失败（不是 git 仓库、重复登记、路径被校验拒绝）
+		// 必须让退出码非 0。此前只打印错误就正常返回，脚本据此无法判断这一次有没有登记成功。
+		RunE: func(cmd *cobra.Command, args []string) error {
 			path := args[0]
 			// 与读侧共用同一份路径判定（config.ValidatePathEntry）：只在校验里拦住控制字符
 			// 是不够的，写侧放过一条坏路径之后，此后每一次加载都会失败，而那条坏条目还会
 			// 被宽松加载丢掉、repo remove 也删不掉。校验的是用户敲进来的原值，
 			// 报错里说的“第几个字节”才对得上他手上的那串路径
 			if err := config.ValidatePathEntry("repo_paths", path); err != nil {
-				ErrorMsg(err.Error())
-				return
+				return err
 			}
 
 			absPath, err := filepath.Abs(path)
 			if err != nil {
-				ErrorMsg(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
-				return
+				return errors.New(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
 			}
 
 			if !git.IsRepo(absPath) {
-				ErrorMsg(l10n.T("Not a git repository: {{.Path}}", map[string]any{"Path": absPath}))
-				return
+				return errors.New(l10n.T("Not a git repository: {{.Path}}", map[string]any{"Path": absPath}))
 			}
 
 			cfg := GetConfig()
 			for _, existing := range cfg.RepoPaths {
 				if existing == absPath {
-					ErrorMsg(l10n.T("Path already exists: {{.Path}}", map[string]any{"Path": absPath}))
-					return
+					return errors.New(l10n.T("Path already exists: {{.Path}}", map[string]any{"Path": absPath}))
 				}
 			}
 
 			cfg.RepoPaths = append(cfg.RepoPaths, absPath)
 			if err := config.SetKey("repo_paths", cfg.RepoPaths); err != nil {
-				ErrorMsg(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
-				return
+				return errors.New(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 			}
 
 			SuccessMsg(l10n.T("Repository added: {{.Path}}", map[string]any{"Path": absPath}))
+			return nil
 		},
 	}
 	return c
@@ -126,12 +125,15 @@ func newRepoRemoveCmd() *cobra.Command {
 		Use:   "remove <path>",
 		Short: l10n.T("Remove a repository path from the config file", nil),
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		// 找不到要移除的条目仍然算失败（非 0 退出）：路径列表是用户维护的清单，
+		// 一条都没匹配上通常意味着敲错了路径或那条早就被删了，静默按成功处理会让这种
+		// 情况永远看不见。需要“确保不在列表里”的脚本请先 ggt repo list 判断，
+		// 与 git remote remove 对不存在的远程报错是同一种取向。
+		RunE: func(cmd *cobra.Command, args []string) error {
 			path := args[0]
 			absPath, err := filepath.Abs(path)
 			if err != nil {
-				ErrorMsg(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
-				return
+				return errors.New(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
 			}
 
 			cfg := GetConfig()
@@ -146,17 +148,16 @@ func newRepoRemoveCmd() *cobra.Command {
 			}
 
 			if !found {
-				ErrorMsg(l10n.T("Path does not exist: {{.Path}}", map[string]any{"Path": absPath}))
-				return
+				return errors.New(l10n.T("Path does not exist: {{.Path}}", map[string]any{"Path": absPath}))
 			}
 
 			cfg.RepoPaths = newPaths
 			if err := config.SetKey("repo_paths", cfg.RepoPaths); err != nil {
-				ErrorMsg(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
-				return
+				return errors.New(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 			}
 
 			SuccessMsg(l10n.T("Repository removed: {{.Path}}", map[string]any{"Path": absPath}))
+			return nil
 		},
 	}
 	return c
@@ -169,40 +170,37 @@ func newRepoAddParentCmd() *cobra.Command {
 		Use:   "add-parent <path>",
 		Short: l10n.T("Add a parent directory and auto-discover all git repositories inside", nil),
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		// 与 repo add 同一条理由：失败要让退出码非 0，脚本才能分辨这一次登记有没有成功
+		RunE: func(cmd *cobra.Command, args []string) error {
 			path := args[0]
 			// 与 repo add 同一条理由：写侧不校验就等于把坏值留给下一次加载去发现
 			if err := config.ValidatePathEntry("parent_paths", path); err != nil {
-				ErrorMsg(err.Error())
-				return
+				return err
 			}
 
 			absPath, err := filepath.Abs(path)
 			if err != nil {
-				ErrorMsg(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
-				return
+				return errors.New(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
 			}
 
 			if _, err := os.Stat(absPath); os.IsNotExist(err) {
-				ErrorMsg(l10n.T("Directory does not exist: {{.Path}}", map[string]any{"Path": absPath}))
-				return
+				return errors.New(l10n.T("Directory does not exist: {{.Path}}", map[string]any{"Path": absPath}))
 			}
 
 			cfg := GetConfig()
 			for _, existing := range cfg.ParentPaths {
 				if existing == absPath {
-					ErrorMsg(l10n.T("Parent directory already exists: {{.Path}}", map[string]any{"Path": absPath}))
-					return
+					return errors.New(l10n.T("Parent directory already exists: {{.Path}}", map[string]any{"Path": absPath}))
 				}
 			}
 
 			cfg.ParentPaths = append(cfg.ParentPaths, absPath)
 			if err := config.SetKey("parent_paths", cfg.ParentPaths); err != nil {
-				ErrorMsg(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
-				return
+				return errors.New(l10n.T("Failed to save the configuration: {{.Err}}", map[string]any{"Err": err}))
 			}
 
 			SuccessMsg(l10n.T("Parent directory added: {{.Path}}", map[string]any{"Path": absPath}))
+			return nil
 		},
 	}
 	return c

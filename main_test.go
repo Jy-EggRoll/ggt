@@ -595,7 +595,10 @@ func TestCLIRepoAddRejectsControlCharPath(t *testing.T) {
 	initGitRepo(t, repoDir)
 
 	added := runCLIWithEnv(t, home, "repo", "add", repoDir)
-	// 与其余 repo 业务性失败同一契约：只打印错误、不改退出码（repo 系列用 Run 而非 RunE）
+	// 与其余 repo 业务性失败同一契约：打印错误并以非 0 退出，脚本能据此判断没写进去
+	if added.exitCode == 0 {
+		t.Fatalf("被拒绝的路径应让命令以非 0 退出: stdout=%q stderr=%q", added.stdout, added.stderr)
+	}
 	combined := added.stdout + added.stderr
 	for _, want := range []string{"control character", "U+0001", "byte offset"} {
 		if !strings.Contains(combined, want) {
@@ -780,14 +783,12 @@ func TestCLIConfigResetReportsEntryLoss(t *testing.T) {
 
 // TestCLIRepoLifecycle 覆盖 `ggt repo add/list/remove` 的完整生命周期
 //
-// 重点守住三件事：
+// 重点守住四件事：
 //   - 只能登记真实 git 仓库（非仓库被拒）
 //   - 路径写入前会被规范化为绝对路径，等价路径（含 .. 的写法）会被识别成重复
+//   - 每一种业务性失败都以非 0 退出码结束（重复、非仓库、要移除的条目不存在），
+//     脚本因此能分辨成功与失败；这条契约此前是缺失的——只用 Run 打印错误，退出码仍是 0
 //   - remove 后列表清空
-//
-// 注意 repo 系列命令用 cobra 的 Run 而非 RunE，业务性失败（重复、非仓库、找不到）
-// 只打印错误、**不**改变退出码，因此本用例对这类失败断言 stderr 文案而非退出码——
-// 这是当前实现的真实契约，用例如实反映它
 func TestCLIRepoLifecycle(t *testing.T) {
 	home := t.TempDir()
 	repoDir := filepath.Join(home, "myrepo")
@@ -801,8 +802,9 @@ func TestCLIRepoLifecycle(t *testing.T) {
 
 	// 路径规范化 + 去重：`myrepo/sub/..` 词法上等价于 `myrepo`，应被判为重复
 	duplicate := runCLIWithEnv(t, home, "repo", "add", filepath.Join(repoDir, "sub", ".."))
-	if !strings.Contains(duplicate.stderr, "already exists") {
-		t.Fatalf("等价路径应被识别为重复: stdout=%q stderr=%q", duplicate.stdout, duplicate.stderr)
+	if duplicate.exitCode == 0 || !strings.Contains(duplicate.stderr, "already exists") {
+		t.Fatalf("等价路径应被识别为重复并以非 0 退出: exit=%d stdout=%q stderr=%q",
+			duplicate.exitCode, duplicate.stdout, duplicate.stderr)
 	}
 
 	// list：应恰好出现一次该仓库（去重生效），并给出总数
@@ -820,8 +822,9 @@ func TestCLIRepoLifecycle(t *testing.T) {
 		t.Fatalf("创建普通目录失败: %v", err)
 	}
 	rejected := runCLIWithEnv(t, home, "repo", "add", notRepo)
-	if !strings.Contains(rejected.stderr, "Not a git repository") {
-		t.Fatalf("非 git 仓库应被拒绝: stdout=%q stderr=%q", rejected.stdout, rejected.stderr)
+	if rejected.exitCode == 0 || !strings.Contains(rejected.stderr, "Not a git repository") {
+		t.Fatalf("非 git 仓库应被拒绝并以非 0 退出: exit=%d stdout=%q stderr=%q",
+			rejected.exitCode, rejected.stdout, rejected.stderr)
 	}
 
 	// remove：移除后列表清空
@@ -829,9 +832,49 @@ func TestCLIRepoLifecycle(t *testing.T) {
 	if removed.exitCode != 0 || !strings.Contains(removed.stdout, repoDir) {
 		t.Fatalf("repo remove 失败: exit=%d stdout=%q stderr=%q", removed.exitCode, removed.stdout, removed.stderr)
 	}
+
+	// 再移除一次：条目已经不在列表里，按失败处理（非 0）。这一档刻意不做成幂等成功：
+	// 路径列表是用户维护的清单，一条都没匹配上通常意味着路径敲错了或早就被删掉，
+	// 静默返回 0 会让这种情况永远看不见（与 git remote remove 对不存在的远程报错同一取向）
+	missing := runCLIWithEnv(t, home, "repo", "remove", repoDir)
+	if missing.exitCode == 0 || !strings.Contains(missing.stderr, "does not exist") {
+		t.Fatalf("移除不存在的条目应以非 0 退出并说明原因: exit=%d stdout=%q stderr=%q",
+			missing.exitCode, missing.stdout, missing.stderr)
+	}
+
 	empty := runCLIWithEnv(t, home, "repo", "list")
 	if !strings.Contains(empty.stdout, "No repositories configured") {
 		t.Fatalf("remove 后列表应为空: %q", empty.stdout)
+	}
+}
+
+// TestCLIRepoAddParentExitCodes 验证 add-parent 成功与两种失败情形的退出码。
+//
+// 与 add 是同一条契约：路径被校验拒绝、目录不存在都算业务失败，脚本必须能分辨。
+func TestCLIRepoAddParentExitCodes(t *testing.T) {
+	home := t.TempDir()
+	parent := filepath.Join(home, "projects")
+	if err := os.MkdirAll(filepath.Join(parent, "one-repo"), 0o755); err != nil {
+		t.Fatalf("创建目录失败: %v", err)
+	}
+	initGitRepo(t, filepath.Join(parent, "one-repo"))
+
+	ok := runCLIWithEnv(t, home, "repo", "add-parent", parent)
+	if ok.exitCode != 0 || !strings.Contains(ok.stdout, parent) {
+		t.Fatalf("repo add-parent 应成功: exit=%d stdout=%q stderr=%q", ok.exitCode, ok.stdout, ok.stderr)
+	}
+
+	duplicate := runCLIWithEnv(t, home, "repo", "add-parent", parent)
+	if duplicate.exitCode == 0 || !strings.Contains(duplicate.stderr, "already exists") {
+		t.Fatalf("重复登记父目录应以非 0 退出: exit=%d stdout=%q stderr=%q",
+			duplicate.exitCode, duplicate.stdout, duplicate.stderr)
+	}
+
+	missing := filepath.Join(home, "no-such-dir")
+	notFound := runCLIWithEnv(t, home, "repo", "add-parent", missing)
+	if notFound.exitCode == 0 || !strings.Contains(notFound.stderr, "does not exist") {
+		t.Fatalf("不存在的目录应以非 0 退出: exit=%d stdout=%q stderr=%q",
+			notFound.exitCode, notFound.stdout, notFound.stderr)
 	}
 }
 
