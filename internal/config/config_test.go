@@ -1,16 +1,12 @@
 package config
 
 import (
-	"bytes"
 	"errors"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/jy-eggroll/eggokit/logger"
 )
 
 // TestAutoConcurrencyFor 用固定核数验证 auto 的两条边界：至少为 1、封顶 8。
@@ -158,10 +154,13 @@ func TestDefaultConfigConcurrency(t *testing.T) {
 // TestDeprecatedConcurrencyFallsBackToAuto 验证旧语义值不是被换算成某个数字，
 // 而是按 auto 处理——换算会把“跟着本机核数走”变成“跟着写下这行那天的那台机器走”。
 // 同时断言迁移提示每个进程只出现一次：看板会周期性重读配置，每次重读都提示一遍会刷屏。
+//
+// 提示经输出通道交出去（见 SetDeprecatedConcurrencyReporter），这里用一份切片接住：
+// 配置层不再自己打印，样式与输出流归命令层，那条路径由命令层的用例守。
 func TestDeprecatedConcurrencyFallsBackToAuto(t *testing.T) {
-	var buf bytes.Buffer
-	logger.Init(&logger.Config{Level: slog.LevelWarn, Writer: &buf})
-	t.Cleanup(func() { logger.Init(logger.DefaultConfig()) })
+	var notices []string
+	SetDeprecatedConcurrencyReporter(func(notice string) { notices = append(notices, notice) })
+	t.Cleanup(func() { SetDeprecatedConcurrencyReporter(nil) })
 	// 别的用例可能已经触发过同一条提示，这里显式复位，断言才不依赖测试执行顺序
 	deprecatedConcurrencyWarned.Store(false)
 
@@ -177,8 +176,29 @@ func TestDeprecatedConcurrencyFallsBackToAuto(t *testing.T) {
 			t.Errorf("旧语义值应回落成 %q，实际 %q", DefaultConcurrency, cfg.Concurrency)
 		}
 	}
-	if n := strings.Count(buf.String(), "CPUFull"); n != 1 {
-		t.Errorf("迁移提示应只出现一次，实际 %d 次：%s", n, buf.String())
+	if len(notices) != 1 {
+		t.Fatalf("迁移提示应只出现一次，实际 %d 次：%v", len(notices), notices)
+	}
+	if !strings.Contains(notices[0], "CPUFull") {
+		t.Errorf("迁移提示应点名旧值，实际 %q", notices[0])
+	}
+}
+
+// TestDeprecatedConcurrencyReportsNothingForCurrentValues 断言现行取值不会产生提示：
+// 旧值提示只在真正读到旧语义时才出现，正常配置下一次都不该有。
+func TestDeprecatedConcurrencyReportsNothingForCurrentValues(t *testing.T) {
+	var notices []string
+	SetDeprecatedConcurrencyReporter(func(notice string) { notices = append(notices, notice) })
+	t.Cleanup(func() { SetDeprecatedConcurrencyReporter(nil) })
+	deprecatedConcurrencyWarned.Store(false)
+
+	path := filepath.Join(t.TempDir(), "c.json")
+	writeFile(t, path, `{"concurrency": "auto"}`)
+	if _, err := LoadConfigAt(path); err != nil {
+		t.Fatalf("读取配置失败: %v", err)
+	}
+	if len(notices) != 0 {
+		t.Errorf("现行取值不应产生提示，实际 %v", notices)
 	}
 }
 

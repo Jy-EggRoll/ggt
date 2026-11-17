@@ -33,11 +33,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/jy-eggroll/eggokit/l10n"
-	"github.com/jy-eggroll/eggokit/logger"
 	"github.com/pterm/pterm"
 )
 
@@ -420,6 +420,37 @@ func isDeprecatedConcurrencyValue(raw string) bool {
 // 而用户只需要知道“旧值要改写”这一件事。
 var deprecatedConcurrencyWarned atomic.Bool
 
+// deprecatedConcurrencyReporter 是旧语义值提示的输出通道，见 SetDeprecatedConcurrencyReporter。
+var (
+	deprecatedConcurrencyReporterMu sync.Mutex
+	deprecatedConcurrencyReporter   func(string)
+)
+
+// SetDeprecatedConcurrencyReporter 注册旧语义值提示的输出通道。
+//
+// 配置层只回答“读到旧值了、该说一句”，怎么说、说到哪个流由调用方决定：这条提示
+// 出现在日志系统初始化之前，配置层若自己打印就只能落到默认格式（一条 level=WARN 的
+// logfmt 行），与同屏其它提示的样式不一致，也不受 log_level 约束。渲染统一由命令层
+// 负责（见 cmd/output.go 的约定），但配置层不能反向依赖 cmd，因此只能这样交出去。
+//
+// 调用方必须在任何一次配置加载之前接入（见 cmd.Execute）：提示在加载过程中报告，
+// 这样它出现的时机与各命令读到旧值的那一刻相同，不会拖到某个命令内部。未接入时不打印。
+func SetDeprecatedConcurrencyReporter(report func(string)) {
+	deprecatedConcurrencyReporterMu.Lock()
+	defer deprecatedConcurrencyReporterMu.Unlock()
+	deprecatedConcurrencyReporter = report
+}
+
+// reportDeprecatedConcurrency 把一条提示交给输出通道，未接入时静默丢弃。
+func reportDeprecatedConcurrency(notice string) {
+	deprecatedConcurrencyReporterMu.Lock()
+	report := deprecatedConcurrencyReporter
+	deprecatedConcurrencyReporterMu.Unlock()
+	if report != nil {
+		report(notice)
+	}
+}
+
 // migrateDeprecatedConcurrency 把旧语义值改写成 auto，并在首次遇到时提示。
 //
 // 刻意不换算成某个数字：CPUFull 原本表示“全部核数”，换算成今天这台机器的核数
@@ -431,7 +462,7 @@ func migrateDeprecatedConcurrency(cfg *Config) {
 	}
 	cfg.Concurrency = DefaultConcurrency
 	if deprecatedConcurrencyWarned.CompareAndSwap(false, true) {
-		logger.Warn(l10n.T("The concurrency value {{.Value}} is deprecated and now behaves like auto; change it to auto or an integer",
+		reportDeprecatedConcurrency(l10n.T("The concurrency value {{.Value}} is deprecated and now behaves like auto; change it to auto or an integer",
 			map[string]any{"Value": raw}))
 	}
 }

@@ -1449,3 +1449,96 @@ func TestCLIColorFollowsOutputTarget(t *testing.T) {
 		})
 	}
 }
+
+// TestCLIDeprecatedConcurrencyWarning 守旧语义值提示的对外形态。
+//
+// 这条提示此前由配置层直接交给 logger 打印，于是以 logfmt 的一行（level=WARN msg=...）
+// 出现在日志系统初始化之前：走 stderr、不受 log_level 控制，但样式与同屏所有提示都不同。
+// 现在改由命令层用 pterm 的告警样式渲染，这里把用户实际看到的东西固定下来：
+//
+//   - stdout 仍是干净的版本三行，脚本照常取值
+//   - stderr 只有一行，带与其它告警相同的前缀，不再有 level= / msg= 这类机器字段
+//   - log_level=error 时提示照样出现（它本来就不受日志级别控制）
+//   - 管道里不带转义符，与其它输出共用同一套着色判定
+//   - 现行取值（auto、整数）不产生任何提示
+func TestCLIDeprecatedConcurrencyWarning(t *testing.T) {
+	home := t.TempDir()
+	configPath := configFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("创建配置目录失败: %v", err)
+	}
+
+	// log_level 刻意设成 error：旧值提示不属于诊断日志，不该被它压掉
+	legacyConfig := `{"concurrency": "CPUHalf", "log_level": "error"}`
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+		t.Fatalf("写入旧语义值失败: %v", err)
+	}
+
+	result := runCLIWithEnv(t, home, "version")
+	if result.exitCode != 0 {
+		t.Fatalf("旧语义值不应让 version 失败：exit=%d stderr=%q", result.exitCode, result.stderr)
+	}
+
+	// stdout 仍是版本三行，提示一个字都不该混进来
+	versionLines := strings.Split(strings.TrimSuffix(result.stdout, "\n"), "\n")
+	if len(versionLines) != 3 {
+		t.Errorf("stdout 应仍是三行版本信息，实际 %d 行：%q", len(versionLines), result.stdout)
+	}
+	for _, leaked := range []string{"CPUHalf", "WARNING", "deprecated"} {
+		if strings.Contains(result.stdout, leaked) {
+			t.Errorf("stdout 不应出现 %q：%q", leaked, result.stdout)
+		}
+	}
+
+	// stderr 只有一行提示，内容点名旧值，且不带 logger 的机器字段
+	notice := strings.TrimSuffix(result.stderr, "\n")
+	if strings.Contains(notice, "\n") {
+		t.Fatalf("应只有一行提示，实际：%q", result.stderr)
+	}
+	if !strings.Contains(notice, "CPUHalf") {
+		t.Errorf("提示应点名旧值：%q", notice)
+	}
+	for _, machineField := range []string{"level=", "msg="} {
+		if strings.Contains(notice, machineField) {
+			t.Errorf("提示不应带 logger 的机器字段 %q：%q", machineField, notice)
+		}
+	}
+
+	// 前缀取自另一条命令行告警（空仓库列表用同一套渲染）：两边必须一致，
+	// 这样断言不会把 pterm 的前缀写法抄一遍，样式随实现一起变
+	other := runCLIWithEnv(t, home, "repo", "list")
+	otherLine := strings.TrimSuffix(other.stdout, "\n")
+	otherText := "No repositories configured"
+	prefixEnd := strings.Index(otherLine, otherText)
+	if prefixEnd <= 0 {
+		t.Fatalf("取不到对照告警的前缀：stdout=%q stderr=%q", other.stdout, other.stderr)
+	}
+	if wantPrefix := otherLine[:prefixEnd]; !strings.HasPrefix(notice, wantPrefix) {
+		t.Errorf("提示前缀应与其它告警一致 %q，实际 %q", wantPrefix, notice)
+	}
+
+	// 管道且未设 NO_COLOR：提示与版本输出都不带转义符
+	piped := runCLIProcess(t, home, nil, "version")
+	if strings.Contains(piped.stdout+piped.stderr, "\x1b[") {
+		t.Errorf("管道里不应出现转义符：stdout=%q stderr=%q", piped.stdout, piped.stderr)
+	}
+	// 反向对照：强制着色时提示确实经 pterm 上色，不是裸文本
+	forced := runCLIProcess(t, home, nil, "--color=always", "version")
+	if !strings.Contains(forced.stderr, "\x1b[") {
+		t.Errorf("强制着色时提示应带转义：%q", forced.stderr)
+	}
+
+	// 现行取值下没有任何提示
+	for _, content := range []string{`{"concurrency": "auto"}`, `{"concurrency": 8}`} {
+		if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("写入 %s 失败: %v", content, err)
+		}
+		current := runCLIWithEnv(t, home, "version")
+		if current.exitCode != 0 {
+			t.Fatalf("%s: version 应以 0 退出：stderr=%q", content, current.stderr)
+		}
+		if strings.TrimSpace(current.stderr) != "" {
+			t.Errorf("%s: 现行取值不应产生提示：stderr=%q", content, current.stderr)
+		}
+	}
+}

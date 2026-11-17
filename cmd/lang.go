@@ -9,9 +9,7 @@ package cmd
 
 import (
 	"errors"
-	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/jy-eggroll/eggokit/l10n"
@@ -121,13 +119,12 @@ func scanLangFlag(args []string) string {
 //
 // 走 stderr 而不是 stdout：这段提示早于任何命令，而 config show / get 的 stdout 是给
 // 脚本的（JSON、单个取值）。用 pterm 的告警样式而不是 logger，因为它与同屏的信息行
-// 同属面向用户的输出（约定见 output.go）；输出流在这里显式指定，不依赖 pterm 的全局
-// writer 设置——那些设置要等进入 Execute 之后才做。
+// 同属面向用户的输出（约定见 output.go）。
 func printLanguageNotice(notice *languageNotice) {
 	if notice == nil {
 		return
 	}
-	fmt.Fprintln(os.Stderr, WarnStr(notice.text()))
+	WarnStderr(notice.text())
 }
 
 // 语言串的归一化与白名单校验统一在 i18n 包（l10n.Normalize / l10n.IsSupported）。

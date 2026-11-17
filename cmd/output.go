@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/jy-eggroll/eggokit/l10n"
@@ -51,6 +52,16 @@ func InfoMsg(msg string) {
 // WarnMsg 打印黄色警告消息。
 func WarnMsg(msg string) {
 	pterm.Warning.Println(msg)
+}
+
+// WarnStderr 把黄色警告消息写到 stderr。
+//
+// Msg 系列写的是标准输出（pterm 的默认 writer），而启动期的提示必须落在 stderr：
+// 它们出现在命令本身还没有输出之前，而 `ggt config show` 的 stdout 是给脚本解析的
+// JSON。样式仍取 pterm.Warning，与同屏其它告警一致；输出流在这里显式指定，不依赖
+// pterm 的全局 writer 设置——那些设置要等进入 Execute 之后才做。
+func WarnStderr(msg string) {
+	fmt.Fprintln(os.Stderr, WarnStr(msg))
 }
 
 // SummaryMsg 打印遍历型命令的收尾汇总：正常结局用信息样式，被打断时用告警样式。

@@ -306,6 +306,15 @@ func Execute() {
 	// 写在这里而不是 chooseLanguage 里，是因为后者可能在语言就绪之前就被调用
 	printLanguageNotice(langNotice)
 
+	// 旧并发值的提示通道要在任何一次配置加载之前接好：配置层读到旧值就会报告，
+	// 提示因此出现在与“使用旧值的命令”相同的那一刻（启动期、日志系统建立之前），
+	// 而不是延后到某个命令内部。
+	//
+	// 装在 Execute 而不是 startCommand：config 与 repo 两个子树遮蔽了 root 的
+	// PersistentPreRunE、各自直接读配置，只挂在启动流程里会漏掉它们。渲染走 stderr
+	// 的告警样式，理由与语言回退提示相同（见 WarnStderr）
+	config.SetDeprecatedConcurrencyReporter(WarnStderr)
+
 	// 信号根 ctx：Ctrl-C（os.Interrupt）与 SIGTERM 都取消它，各命令把 cmd.Context()
 	// 一路传给 worker.Map 与 git.RunContext，正在跑的 git 子进程因此会被 context 杀掉，
 	// 而不是只剩本进程被硬杀、留下满屏 git 子进程继续跑。
