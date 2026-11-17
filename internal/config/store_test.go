@@ -285,7 +285,7 @@ func TestValidateAtReportsProblems(t *testing.T) {
 	  "typo_key": 1,
 	  "size_bucket_low_mb": 900,
 	  "size_bucket_high_mb": 800,
-	  "ignore_submodules": "true"
+	  "repo_paths": ["relative/path"]
 	}`)
 
 	issues, err := ValidateAt(path)
@@ -363,13 +363,23 @@ func TestSettingParse(t *testing.T) {
 		{"size_bucket_low_mb", "100", false},
 		{"size_bucket_low_mb", "0", true},
 		{"size_bucket_low_mb", "100000000", true}, // 超上限：32 位平台会解码失败
+		{"size_bucket_low_mb", " 100 ", true},     // 带首尾空白不是规范十进制串
+		{"size_bucket_low_mb", "010", true},       // 前导零
+		{"size_bucket_low_mb", "0x10", true},      // 进制前缀
+		{"size_bucket_low_mb", "1_000", true},     // 下划线分隔
+		{"size_bucket_low_mb", "100.0", true},     // 浮点
 		{"size_bucket_high_mb", "800", false},
 		{"size_unit", "binary", false},
 		{"size_unit", "BINARY", false},
 		{"size_unit", "hex", true},
 		{"ignore_submodules", "true", false},
 		{"ignore_submodules", "TRUE", false},
-		{"ignore_submodules", "1", false},
+		{"ignore_submodules", " true ", false},
+		{"ignore_submodules", "1", true},
+		{"ignore_submodules", "0", true},
+		{"ignore_submodules", "t", true},
+		{"ignore_submodules", "f", true},
+		{"ignore_submodules", "", true},
 		{"ignore_submodules", "yes", true},
 		{"language", "en", false},
 		{"language", "zh", false},
@@ -697,7 +707,7 @@ func TestEffectiveAtNormalizesConcurrency(t *testing.T) {
 		wantErr bool
 	}{
 		{"带空白的数字归一", `{"concurrency": " 8 "}`, "8", false},
-		{"JSON 数字归一", `{"concurrency": 8}`, "8", false},
+		{"JSON 数字被拒绝", `{"concurrency": 8}`, "", true},
 		{"大写 auto 归一", `{"concurrency": "AUTO"}`, "auto", false},
 		{"空串按 auto", `{"concurrency": ""}`, "auto", false},
 		{"旧语义值按 auto", `{"concurrency": "CPUHalf"}`, "auto", false},
@@ -726,12 +736,12 @@ func TestEffectiveAtNormalizesConcurrency(t *testing.T) {
 	}
 }
 
-// TestValueShapeRejectedConsistently 断言“布尔值写在非布尔配置项上”在四条路径上
-// 给出同一个结论、同一句话：运行期加载、config get、config set、config validate。
+// TestValueShapeRejectedConsistently 断言“布尔值写在字符串项上”在四条路径上都被拒绝。
 //
 // 改造前这四处是分叉的：运行期靠 mapstructure 的弱转换把 true 变成 "1" 照常跑，
-// config get 却因为无法把 true 解析成并发数而报错退出。对比四条报错是否逐字相同，
-// 比各自断言“非 nil”更能锁住这次要的口径一致
+// config get 却因为无法把 true 解析成并发数而报错退出。现在四处都拒绝；报错措辞按
+// 输入形态分为两类——JSON 布尔是类型错误，命令行文本 "true" 是取值错误，两类都点名
+// 出问题的键与实际值/类型，不会让用户以为是两件不同的事。
 func TestValueShapeRejectedConsistently(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
 	writeFile(t, path, `{"concurrency": true}`)
@@ -740,10 +750,16 @@ func TestValueShapeRejectedConsistently(t *testing.T) {
 	if loadErr == nil {
 		t.Fatal("运行期加载应拒绝 concurrency: true")
 	}
+	if !strings.Contains(loadErr.Error(), "concurrency") || !strings.Contains(loadErr.Error(), "bool") {
+		t.Errorf("运行期报错应点名键与 JSON 类型，实得 %q", loadErr)
+	}
 
 	_, getErr := EffectiveAt(path, "concurrency")
 	if getErr == nil {
 		t.Fatal("config get 应拒绝 concurrency: true")
+	}
+	if getErr.Error() != loadErr.Error() {
+		t.Errorf("config get 与运行期的报错应相同：\n  get: %q\n load: %q", getErr, loadErr)
 	}
 
 	issues, err := ValidateAt(path)
@@ -756,27 +772,19 @@ func TestValueShapeRejectedConsistently(t *testing.T) {
 	if issues[0].Level != LevelError {
 		t.Fatalf("布尔形态应报 error（运行期直接失败），实得 %s", issues[0].Level)
 	}
+	if issues[0].Message != loadErr.Error() {
+		t.Errorf("体检与运行期的报错应相同：\n  validate: %q\n      load: %q", issues[0].Message, loadErr)
+	}
 
+	// config set 收到的是文本 "true"，不是 JSON 布尔：这是字符串项里一个非法的取值，
+	// 不是类型错误。结论必须同样是拒绝，措辞点明允许范围
 	_, setErr := SetFromTextAt(path, "concurrency", "true", false)
 	if setErr == nil {
 		t.Fatal("config set concurrency true 应被拒绝")
 	}
-
-	want := loadErr.Error()
-	for name, got := range map[string]string{
-		"运行期加载":           loadErr.Error(),
-		"config get":      getErr.Error(),
-		"config validate": issues[0].Message,
-		"config set":      setErr.Error(),
-	} {
-		if got != want {
-			t.Errorf("%s 的报错与运行期不一致：\n  实得 %q\n  期望 %q", name, got, want)
-		}
-	}
-	// 文案本身也要说得清：点出键、实际值与合法范围
 	for _, part := range []string{"concurrency", "true", "1 to 64"} {
-		if !strings.Contains(want, part) {
-			t.Errorf("报错应包含 %q，实得 %q", part, want)
+		if !strings.Contains(setErr.Error(), part) {
+			t.Errorf("config set 的报错应包含 %q，实得 %q", part, setErr)
 		}
 	}
 }
@@ -796,10 +804,10 @@ func TestEffectiveAtRejectsWrongShape(t *testing.T) {
 		{"阈值写成布尔", `{"size_bucket_low_mb": true}`, "size_bucket_low_mb", true, ""},
 		{"语言写成布尔", `{"language": true}`, "language", true, ""},
 		{"路径列表写成布尔", `{"repo_paths": true}`, "repo_paths", true, ""},
-		{"路径列表写 null 按未设置处理", `{"repo_paths": null}`, "repo_paths", false, ""},
+		{"路径列表写 null 按未设置处理", `{"repo_paths": null}`, "repo_paths", false, "[]"},
 		{"布尔项本身合法", `{"ignore_submodules": true}`, "ignore_submodules", false, "true"},
 		{"布尔项的字符串形态仍合法", `{"push_tags": "false"}`, "push_tags", false, "false"},
-		{"数字形态仍合法", `{"concurrency": 8}`, "concurrency", false, "8"},
+		{"并发数写成数字被拒绝", `{"concurrency": 8}`, "concurrency", true, ""},
 		{"字符串形态仍合法", `{"concurrency": "8"}`, "concurrency", false, "8"},
 		{"整数的字符串形态仍合法", `{"size_bucket_low_mb": "500"}`, "size_bucket_low_mb", false, "500"},
 	}

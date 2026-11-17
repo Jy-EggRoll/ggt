@@ -250,9 +250,8 @@ func assertDefaults(t *testing.T, cfg *Config) {
 // TestDefaultConfigMatchesSettings 断言结构体形态的默认值与 settings 注册表登记的
 // 默认值完全一致。
 //
-// 这是“默认值只有一处真相”的守门测试：applyConfigDefaults 一度把 500/800/"decimal"/
-// "en" 又抄了一遍，两处一旦分叉，ggt config get（走 settings）与 ggt config show
-// （走 applyConfigDefaults）就会各说各话，而当时没有任何测试能发现。
+// 这是“默认值只有一处真相”的守门测试：配置结构体的默认值必须与 settings 注册表
+// 登记的完全一致，否则 ggt config get 与 ggt config show 会对同一个键各说各话。
 func TestDefaultConfigMatchesSettings(t *testing.T) {
 	cfg := defaultConfig()
 	got := map[string]any{
@@ -348,55 +347,64 @@ func TestLoadConfigAt(t *testing.T) {
 		}
 	})
 
-	t.Run("兼容旧版数字型并发数", func(t *testing.T) {
+	t.Run("数字型并发数不再接受", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "c.json")
-		// 旧版把并发数存成 int，读取时必须能转成字符串形式的 "8" 而不是报错
+		// concurrency 是字符串项（取值是 auto 或数字字符串），JSON 数字不是它的合法形态。
+		// 弱类型转换曾把 8 自动转成 "8"，但同一份输入在 config get 与 validate 那里
+		// 又按另一套规则解释；收紧后四处都按“字符串项只收字符串”判定
 		writeFile(t, path, `{"concurrency": 8}`)
 
-		cfg, err := LoadConfigAt(path)
-		if err != nil {
-			t.Fatalf("读取失败: %v", err)
-		}
-		if cfg.Concurrency != "8" {
-			t.Errorf("concurrency = %q, want \"8\"", cfg.Concurrency)
-		}
-		got, err := cfg.ConcurrencyValue()
-		if err != nil {
-			t.Fatalf("ConcurrencyValue() 返回错误: %v", err)
-		}
-		if got != 8 {
-			t.Errorf("ConcurrencyValue() = %d, want 8", got)
+		if _, err := LoadConfigAt(path); err == nil {
+			t.Fatal("数字型并发数应被拒绝，而不是弱转成字符串继续跑")
 		}
 	})
 
-	t.Run("非法值按字段各有分工", func(t *testing.T) {
+	t.Run("非法值在加载期直接报错", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			content string
+		}{
+			{"阈值为零", `{"size_bucket_low_mb": 0}`},
+			{"阈值为负", `{"size_bucket_high_mb": -1}`},
+			{"非法口径", `{"size_unit": "bogus"}`},
+			{"空语言", `{"language": ""}`},
+			{"空串仍按 auto", `{"concurrency": ""}`},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "c.json")
+				writeFile(t, path, c.content)
+
+				cfg, err := LoadConfigAt(path)
+				if c.name == "空串仍按 auto" {
+					if err != nil {
+						t.Fatalf("空并发数是文件的正常形态，应按 auto 读取: %v", err)
+					}
+					if cfg.Concurrency != DefaultConcurrency {
+						t.Errorf("concurrency = %q，应为 %q", cfg.Concurrency, DefaultConcurrency)
+					}
+					return
+				}
+				if err == nil {
+					t.Fatalf("非法值应让加载失败，实际得到 %#v", cfg)
+				}
+			})
+		}
+	})
+
+	t.Run("合法取值归一后加载", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "c.json")
-		writeFile(t, path, `{
-		  "concurrency": "",
-		  "size_bucket_low_mb": 0,
-		  "size_bucket_high_mb": -1,
-		  "size_unit": "bogus",
-		  "language": ""
-		}`)
+		writeFile(t, path, `{"size_unit": "BINARY", "ignore_submodules": " TRUE "}`)
 
 		cfg, err := LoadConfigAt(path)
 		if err != nil {
 			t.Fatalf("读取失败: %v", err)
 		}
-		if cfg.Concurrency != DefaultConcurrency {
-			t.Errorf("空并发数应回落默认，实得 %q", cfg.Concurrency)
+		if cfg.SizeUnit != "binary" {
+			t.Errorf("size_unit 应归一成 binary，实得 %q", cfg.SizeUnit)
 		}
-		if cfg.SizeBucketLowMB != 500 || cfg.SizeBucketHighMB != 800 {
-			t.Errorf("非正阈值应回落默认，实得 %d/%d", cfg.SizeBucketLowMB, cfg.SizeBucketHighMB)
-		}
-		if cfg.Language != "en" {
-			t.Errorf("空语言应回落默认，实得 %q", cfg.Language)
-		}
-		// size_unit 刻意**不**在加载期替换：非法取值由 ggt config validate 报出、
-		// 由 size 命令在使用端回退到 decimal 并打印警告。若在加载期就悄悄改成 decimal，
-		// 那句警告永远不会触发，用户的笔误也就永远看不见
-		if cfg.SizeUnit != "bogus" {
-			t.Errorf("size_unit 应原样保留、交给 validate 与使用端处理，实得 %q", cfg.SizeUnit)
+		if !cfg.IgnoreSubmodules {
+			t.Error("ignore_submodules 应接受带空白的 TRUE")
 		}
 	})
 
@@ -471,7 +479,7 @@ func TestValidFontFamily(t *testing.T) {
 // TestPushTagsAndPruneBranchesDefault 覆盖两个默认值为 true 的开关。
 //
 // 它们与其余配置项的区别在于 bool 的零值是 false：只要有一条读路径退回“零值结构体 +
-// applyConfigDefaults”，缺键的配置文件上就会得到 false，而设置面板仍显示 true——
+// 补默认值”，缺键的配置文件上就会得到 false，而设置面板仍显示 true——
 // 表现为“明明开着，推送却不带标签”。因此三条读路径（空配置、结构体默认值、面板视图）
 // 必须一起断言
 func TestPushTagsAndPruneBranchesDefault(t *testing.T) {
@@ -585,12 +593,17 @@ func TestLoadConfigAtRejectsBoolShape(t *testing.T) {
 			},
 		},
 		{
-			name:    "数字形态仍然合法",
-			content: `{"concurrency": 8, "size_bucket_low_mb": 200}`,
+			name:    "并发数写成数字被拒绝",
+			content: `{"concurrency": 8}`,
+			wantErr: true,
+		},
+		{
+			name:    "整数项的数字形态合法",
+			content: `{"size_bucket_low_mb": 200}`,
 			wantErr: false,
 			check: func(t *testing.T, cfg *Config) {
-				if cfg.Concurrency != "8" || cfg.SizeBucketLowMB != 200 {
-					t.Errorf("数字形态读取不正确: concurrency=%q low=%d", cfg.Concurrency, cfg.SizeBucketLowMB)
+				if cfg.SizeBucketLowMB != 200 {
+					t.Errorf("整数项读取不正确: low=%d", cfg.SizeBucketLowMB)
 				}
 			},
 		},
@@ -604,6 +617,11 @@ func TestLoadConfigAtRejectsBoolShape(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:    "布尔项收到数字被拒绝",
+			content: `{"ignore_submodules": 1}`,
+			wantErr: true,
+		},
 	}
 
 	for _, c := range cases {
@@ -616,7 +634,9 @@ func TestLoadConfigAtRejectsBoolShape(t *testing.T) {
 				t.Fatalf("LoadConfigAt 错误 = %v，wantErr=%v", err, c.wantErr)
 			}
 			if c.wantErr {
-				if !strings.Contains(err.Error(), "Invalid value for") && !strings.Contains(err.Error(), "Expected an array for") {
+				// 类型错误与取值错误各有措辞，但都必须点名出问题的键，
+				// 而不是漏出 mapstructure 的 "unconvertible type" 原文
+				if !strings.Contains(err.Error(), "Expected") && !strings.Contains(err.Error(), "Invalid value for") {
 					t.Errorf("报错应指出是哪个键的取值/形态问题，实得 %q", err)
 				}
 				return

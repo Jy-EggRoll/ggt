@@ -494,32 +494,30 @@ func TestCLIBadInvocationContract(t *testing.T) {
 	}
 }
 
-// TestCLIInvalidLogLevelWarning 验证配置文件里写了非法 log_level 时的容错契约：
-// 命令**照常成功**（不因一个日志级别写错就整体不可用），但必须给出明确告警，
-// 因为静默降级会让用户以为设置生效了，而“日志怎么变少了”极难自查
+// TestCLIInvalidLogLevelRejected 验证非法 log_level 在加载期就被拒绝。
 //
-// 关于告警的落点：ggt 的 WarnMsg 走 pterm.Warning，其默认 Writer 是 stdout
-// （root.go 只把 pterm.Error.Writer 改成了 stderr）。因此相比“只看 stderr”，
-// 这里断言合并输出更贴合实现；用例同时确认退出码为 0，即该告警不影响命令成败
-func TestCLIInvalidLogLevelWarning(t *testing.T) {
+// 统一入口后，config validate 会把非法级别判为 error；运行期若继续“回退默认级别并告警”，
+// 就又回到“校验说错、命令照跑”的分叉。日志级别不再是例外：配置文件里的取值要么合法，
+// 要么让命令以非 0 退出，用户按报错改掉即可。
+func TestCLIInvalidLogLevelRejected(t *testing.T) {
 	home := t.TempDir()
 	configPath := configFilePath(home)
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("创建配置目录失败: %v", err)
 	}
-	// 直接写坏配置文件，而不是走 config set——后者会拦下非法取值，我们正是要模拟
-	// 用户手改了文件、绕过了命令层校验的情形
 	if err := os.WriteFile(configPath, []byte(`{"log_level":"bogus"}`), 0o644); err != nil {
 		t.Fatalf("写入非法 log_level 失败: %v", err)
 	}
 
 	result := runCLIWithEnv(t, home, "version")
-	if result.exitCode != 0 {
-		t.Fatalf("非法 log_level 不应让命令失败: exit=%d stderr=%q", result.exitCode, result.stderr)
+	if result.exitCode == 0 {
+		t.Fatalf("非法 log_level 应让命令失败: stdout=%q stderr=%q", result.stdout, result.stderr)
 	}
 	combined := result.stdout + result.stderr
-	if !strings.Contains(combined, "Ignoring an invalid log_level in the config file") {
-		t.Fatalf("应给出忽略非法 log_level 的告警: stdout=%q stderr=%q", result.stdout, result.stderr)
+	for _, part := range []string{"log_level", "debug", "error"} {
+		if !strings.Contains(combined, part) {
+			t.Errorf("报错应点名 %q 与候选取值：stdout=%q stderr=%q", part, result.stdout, result.stderr)
+		}
 	}
 }
 
@@ -742,12 +740,12 @@ func TestCLIErrorsDoNotPrintUsage(t *testing.T) {
 	}
 }
 
-// TestCLIBoolValueRejectedEverywhere 断言布尔值写进配置项后，运行期、config get、
-// config set、config validate 四处给出同一个结论与同一句话。
+// TestCLIBoolValueRejectedEverywhere 断言布尔值写进字符串项后，运行期、config get、
+// config set、config validate 四处一致拒绝。
 //
-// 改造前运行期把它弱类型解码成 1 照常跑，get 却解析不了 true、直接报错退出——
-// 同一份配置在两处结论相反。这里逐字比较四处报错里的那一句，而不是各自断言
-// “非 0 退出”：只有文案也对齐了，用户才不会以为是两件不同的事。
+// 改造前运行期把它弱类型解码成 1 照常跑，get 却解析不了 true、直接报错退出。
+// 现在 JSON 布尔在三条读路径上给出同一句类型错误；config set 收到的是文本 "true"，
+// 属于字符串项里的非法取值，措辞不同但结论一致。
 func TestCLIBoolValueRejectedEverywhere(t *testing.T) {
 	home := t.TempDir()
 	configPath := configFilePath(home)
@@ -762,7 +760,7 @@ func TestCLIBoolValueRejectedEverywhere(t *testing.T) {
 	// 取出共同的那一句再比较
 	sentence := func(result cliResult) string {
 		for _, line := range strings.Split(result.stdout+result.stderr, "\n") {
-			if at := strings.Index(line, "Invalid value"); at >= 0 {
+			if at := strings.Index(line, "Expected a string"); at >= 0 {
 				return strings.TrimSpace(line[at:])
 			}
 		}
@@ -783,33 +781,48 @@ func TestCLIBoolValueRejectedEverywhere(t *testing.T) {
 
 	want := sentence(results["运行期"])
 	if want == "" {
-		t.Fatal("运行期报错里应有一句 Invalid value")
+		t.Fatal("运行期报错里应有一句类型错误")
 	}
-	for _, part := range []string{"concurrency", "true", "1 to 64"} {
+	for _, part := range []string{"concurrency", "bool"} {
 		if !strings.Contains(want, part) {
 			t.Errorf("这句报错应包含 %q，实得 %q", part, want)
 		}
 	}
-	for name, result := range results {
-		if got := sentence(result); got != want {
+	for _, name := range []string{"config get", "validate"} {
+		if got := sentence(results[name]); got != want {
 			t.Errorf("%s 的报错 = %q，期望与运行期相同：%q", name, got, want)
 		}
 	}
 
-	// 合法的数字与字符串形态不受影响：数字 8 与字符串 "8" 都要能跑、能读回 8
-	for _, content := range []string{`{"concurrency": 8}`, `{"concurrency": "8"}`} {
-		if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
-			t.Fatalf("写入 %s 失败: %v", content, err)
+	setErr := results["config set"].stdout + results["config set"].stderr
+	for _, part := range []string{"concurrency", "true", "1 to 64"} {
+		if !strings.Contains(setErr, part) {
+			t.Errorf("config set 的报错应包含 %q，实得 %q", part, setErr)
 		}
-		if result := runCLIWithEnv(t, home, "version"); result.exitCode != 0 {
-			t.Errorf("%s 应能正常运行：stderr=%q", content, result.stderr)
-		}
-		result := runCLIWithEnv(t, home, "config", "get", "concurrency")
-		if result.exitCode != 0 {
-			t.Fatalf("%s 的 get 应以 0 退出：stderr=%q", content, result.stderr)
-		}
-		if got := strings.TrimSpace(result.stdout); got != "8" {
-			t.Errorf("%s 的 get = %q，期望 8", content, got)
-		}
+	}
+
+	// 字符串形态不受影响；数字形态不再是字符串项的合法形态
+	if err := os.WriteFile(configPath, []byte(`{"concurrency": 8}`), 0o644); err != nil {
+		t.Fatalf("写入数字并发数失败: %v", err)
+	}
+	if result := runCLIWithEnv(t, home, "version"); result.exitCode == 0 {
+		t.Errorf("数字型并发数应被拒绝：stderr=%q", result.stderr)
+	}
+	if result := runCLIWithEnv(t, home, "config", "get", "concurrency"); result.exitCode == 0 {
+		t.Errorf("数字型并发数的 get 应以非 0 退出：stdout=%q", result.stdout)
+	}
+
+	if err := os.WriteFile(configPath, []byte(`{"concurrency": "8"}`), 0o644); err != nil {
+		t.Fatalf("写入字符串并发数失败: %v", err)
+	}
+	if result := runCLIWithEnv(t, home, "version"); result.exitCode != 0 {
+		t.Errorf("字符串形态应能正常运行：stderr=%q", result.stderr)
+	}
+	result := runCLIWithEnv(t, home, "config", "get", "concurrency")
+	if result.exitCode != 0 {
+		t.Fatalf("字符串形态的 get 应以 0 退出：stderr=%q", result.stderr)
+	}
+	if got := strings.TrimSpace(result.stdout); got != "8" {
+		t.Errorf("字符串形态的 get = %q，期望 8", got)
 	}
 }

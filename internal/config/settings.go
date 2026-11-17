@@ -9,7 +9,7 @@
 //
 // 同时要按需填上 Options / AllowCustom / Min / Max：这些元数据是网页设置面板生成控件的
 // 唯一依据（面板按注册表生成，因此新增配置项不必再改页面代码），也是写入校验的依据。
-// 元数据本身的自洽性（清单里的值必须能通过自己的 Parse、整数边界与默认值是否相容等）
+// 元数据本身的自洽性（清单里的值必须能通过自己的 Normalize、整数边界与默认值是否相容等）
 // 由 TestSettingMetadataIsComplete 守住
 package config
 
@@ -31,8 +31,9 @@ import (
 // ErrInvalidValue 表示用户输入的值不合法。
 //
 // 这里刻意不携带具体原因文案：合法取值的人类可读描述由 Setting.Expected 提供，
-// 由调用方用统一模板渲染（见 cmd/config.go）。若让每个 Parse 各返回一句散文，
-// 用户可见文案的数量会随校验规则数线性增长，中英双语都得跟着维护。
+// 由调用方用统一模板渲染（见 normalizeValue / init 里的 Parse 包装）。若让每个
+// Normalize 各返回一句散文，用户可见文案的数量会随校验规则数线性增长，
+// 中英双语都得跟着维护。
 var ErrInvalidValue = errors.New("invalid value")
 
 // invalidValueError 把“取值非法”渲染成用户可见的那一句话。
@@ -157,10 +158,23 @@ type Setting struct {
 	Default any
 	// Expected 是合法取值的人类可读描述，用于拼装错误信息。
 	Expected string
-	// Parse 把命令行字符串转成待写入的 JSON 值，失败时返回 ErrInvalidValue。
-	// 它同时是 set 的校验器与 validate 的校验器。
-	// 唯一的例外是并发数的旧语义值：它返回 errDeprecatedConcurrency，让 validate 能把
-	// “运行期还能跑、但该改写”与真正的非法值分成两个级别（见 validateKeys）。
+	// Normalize 是这一项唯一的取值入口：输入是配置文件里 JSON 解码后的原始值
+	// （string、json.Number、bool、nil 或 []any），输出规范形态或错误。
+	//
+	// 运行期加载、config get、config validate、config set 四条路径全部经这里，
+	// 类型判定因此只有一份实现。此前各路径各有一套规则，同一份文件会给出不同结论：
+	// size_unit: "BINARY" 校验通过、运行期却按十进制；{"concurrency": true} 运行期按
+	// 并发数 1 照跑、config get 与 validate 都拒绝。只收紧其中一条路径，问题只会从
+	// “口径不一致”变成“运行期报错、校验仍说没问题”。
+	//
+	// 返回值一律是可直接交给 mapstructure 的规范类型（string、int、bool、[]string），
+	// 中间形态（json.Number、[]any）不往下传。
+	Normalize func(any) (any, error)
+	// Parse 是文本入口（命令行与网页传来的字符串），由 init 派生自 Normalize，
+	// 注册表里不再单独声明。这样“文本能写进去、文件里却读不出来”不可能发生：
+	// 两个入口共用同一份规则，而不是两处各写一遍再靠测试对齐。
+	// 唯一的例外是并发数的旧语义值：Normalize 返回 errDeprecatedConcurrency，让 validate
+	// 能把“运行期还能跑、但该改写”与真正的非法值分成两个级别（见 validateKeys）。
 	Parse func(string) (any, error)
 	// ManagedBy 非空表示该项由别的命令管理：get 可读，set/reset 拒绝。
 	// 仓库列表就属于这种——增删要走 ggt repo，那里有去重、git 仓库校验、路径规范化。
@@ -204,8 +218,8 @@ var settings = []Setting{
 		Default: DefaultConcurrency,
 		// 这句文案里的 64 必须与 maxConcurrency 一起改：它是给用户看的允许范围，
 		// 而提取器要求消息首参是字面量，没法在文案里插常量
-		Expected: l10n.T("auto or an integer from 1 to 64", nil),
-		Parse:    parseConcurrency,
+		Expected:  l10n.T("auto or an integer from 1 to 64", nil),
+		Normalize: stringValueNormalizer("concurrency", parseConcurrency),
 		// auto 之外还接受 1 到 64 的任意整数，因此候选只是“能直接点的几个”，
 		// 不是全部合法取值
 		Options:     concurrencyOptions,
@@ -220,7 +234,6 @@ var settings = []Setting{
 		Kind:     KindBool,
 		Default:  false,
 		Expected: l10n.T("true or false", nil),
-		Parse:    parseBool,
 	},
 	{
 		Key:      "size_bucket_low_mb",
@@ -228,8 +241,7 @@ var settings = []Setting{
 		Kind:     KindInt,
 		Default:  500,
 		Expected: l10n.T("a positive integer (max 1000000)", nil),
-		Parse:    parsePositiveInt(maxBucketMB),
-		// 边界与解析器用的是同一个常量：解析器保证写得进去，边界让页面提前拦住，
+		// 边界与 Normalize 用的是同一份 Min/Max：Normalize 负责把关，边界让页面提前拦住，
 		// 两者分开写就会出现“页面允许填、提交后被拒”
 		Min: intPtr(1),
 		Max: intPtr(maxBucketMB),
@@ -240,7 +252,6 @@ var settings = []Setting{
 		Kind:     KindInt,
 		Default:  800,
 		Expected: l10n.T("a positive integer (max 1000000)", nil),
-		Parse:    parsePositiveInt(maxBucketMB),
 		Min:      intPtr(1),
 		Max:      intPtr(maxBucketMB),
 	},
@@ -250,30 +261,30 @@ var settings = []Setting{
 		Kind:     KindString,
 		Default:  "decimal",
 		Expected: l10n.T("decimal or binary", nil),
-		// 解析器由候选清单生成，合法取值因此只在 sizeUnitOptions 里写一遍
-		Parse:   enumParser(sizeUnitOptions),
-		Options: sizeUnitOptions,
+		// 规范值由候选清单生成，合法取值因此只在 sizeUnitOptions 里写一遍
+		Normalize: enumValueNormalizer("size_unit", sizeUnitOptions),
+		Options:   sizeUnitOptions,
 	},
 	{
-		Key:      "language",
-		Title:    l10n.T("Language", nil),
-		Kind:     KindString,
-		Default:  locales.Default,
-		Expected: l10n.T("a supported language tag (see ggt --help for the current list)", nil),
-		Parse:    parseLanguage,
+		Key:       "language",
+		Title:     l10n.T("Language", nil),
+		Kind:      KindString,
+		Default:   locales.Default,
+		Expected:  l10n.T("a supported language tag (see ggt --help for the current list)", nil),
+		Normalize: languageValueNormalizer("language", languageOptions),
 		// 语言清单取自 locales 包，注册表不另抄一份
 		Options: languageOptions,
 		// 语言在进程启动时由 l10n.Init 定死，改完必须重启 ggt——这一档当前是 language 与 log_level
 		ApplyAt: ApplyRestart,
 	},
 	{
-		Key:      "log_level",
-		Title:    l10n.T("Log level", nil),
-		Kind:     KindString,
-		Default:  logger.DefaultLevelText(),
-		Expected: l10n.T("debug, info, warn, or error", nil),
-		Parse:    parseLogLevel,
-		Options:  logLevelOptions,
+		Key:       "log_level",
+		Title:     l10n.T("Log level", nil),
+		Kind:      KindString,
+		Default:   logger.DefaultLevelText(),
+		Expected:  l10n.T("debug, info, warn, or error", nil),
+		Normalize: logLevelValueNormalizer("log_level", logLevelOptions),
+		Options:   logLevelOptions,
 		// 级别在进程启动时由 logger.Init 定死（cmd/root.go 的 PersistentPreRunE），
 		// 全仓没有第二处 Init，设置面板保存完也不会回灌，因此改完必须重启 ggt。
 		// 级别来源链还有一层命令行 -v/-vv 优先级高于本项：运行期重设就得重放这条链，
@@ -286,9 +297,9 @@ var settings = []Setting{
 		Title: l10n.T("Theme", nil),
 		Kind:  KindString,
 		// 默认值是空串 = 跟随系统深浅
-		Default:  "",
-		Expected: l10n.T("a theme id, or empty to follow the system", nil),
-		Parse:    parseTheme,
+		Default:   "",
+		Expected:  l10n.T("a theme id, or empty to follow the system", nil),
+		Normalize: stringValueNormalizer("theme", trimString),
 		// 候选里含一个空值项，代表“跟随系统”：这一项允许清空这件事由清单本身表达，
 		// 而不是另加一个字段
 		Options: themeOptions,
@@ -299,12 +310,12 @@ var settings = []Setting{
 		// 这两个键对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme：
 		// “跟随系统”时深色用哪套、浅色用哪套，各自可选。它们只在 theme 为空（跟随系统）时生效，
 		// 与 VSCode 里“自动检测关闭时 preferred* 被忽略”是同一个模型
-		Key:      "theme_dark",
-		Title:    l10n.T("Dark theme", nil),
-		Kind:     KindString,
-		Default:  theme.DefaultDarkID,
-		Expected: l10n.T("a theme id used when following the system and the system is dark", nil),
-		Parse:    parseTheme,
+		Key:       "theme_dark",
+		Title:     l10n.T("Dark theme", nil),
+		Kind:      KindString,
+		Default:   theme.DefaultDarkID,
+		Expected:  l10n.T("a theme id used when following the system and the system is dark", nil),
+		Normalize: stringValueNormalizer("theme_dark", trimString),
 		// 与 theme 的区别只在候选里有没有空值：这两个偏好为空时无从渲染，
 		// 因此清单里不含空值，写入校验据此拒绝空串
 		Options: themePreferenceOptions,
@@ -312,13 +323,13 @@ var settings = []Setting{
 		ApplyAt: ApplyReload,
 	},
 	{
-		Key:      "theme_light",
-		Title:    l10n.T("Light theme", nil),
-		Kind:     KindString,
-		Default:  theme.DefaultLightID,
-		Expected: l10n.T("a theme id used when following the system and the system is light", nil),
-		Parse:    parseTheme,
-		Options:  themePreferenceOptions,
+		Key:       "theme_light",
+		Title:     l10n.T("Light theme", nil),
+		Kind:      KindString,
+		Default:   theme.DefaultLightID,
+		Expected:  l10n.T("a theme id used when following the system and the system is light", nil),
+		Normalize: stringValueNormalizer("theme_light", trimString),
+		Options:   themePreferenceOptions,
 		// 与 theme 同一条理由：配色由服务端注入首页，改完要刷新页面
 		ApplyAt: ApplyReload,
 	},
@@ -331,10 +342,10 @@ var settings = []Setting{
 		Kind:  KindString,
 		// 空串 = 不指定字体：页面那层只声明“特性”（界面区 sans-serif、等宽区 monospace），
 		// 具体落到哪个字体由浏览器按自己的设置回退决定。这是“有意义的零值”，
-		// 因此 applyConfigDefaults 不需要补值
-		Default:  "",
-		Expected: l10n.T("a font-family list, or empty to leave the font to the browser", nil),
-		Parse:    parseFontFamily,
+		// 因此默认值就是空串，不需要额外补值
+		Default:   "",
+		Expected:  l10n.T("a font-family list, or empty to leave the font to the browser", nil),
+		Normalize: stringValueNormalizer("font_ui", parseFontFamily),
 		// 刻意不给候选清单：本机装了什么字体只有使用者自己知道，内置一份清单等于替人预设审美，
 		// 而清单里写到的字体在别人机器上多半没装。也不去枚举本机已装字体：三平台各要一套实现
 		// （Linux 靠 fc-list、Windows 靠注册表、macOS 靠 system_profiler），代价远大于收益。
@@ -344,12 +355,12 @@ var settings = []Setting{
 	},
 	{
 		// 与 font_ui 同一套口径：不给候选清单，留空则由浏览器挑一个等宽字体
-		Key:      "font_mono",
-		Title:    l10n.T("Code font", nil),
-		Kind:     KindString,
-		Default:  "",
-		Expected: l10n.T("a font-family list, or empty for the browser's monospace font", nil),
-		Parse:    parseFontFamily,
+		Key:       "font_mono",
+		Title:     l10n.T("Code font", nil),
+		Kind:      KindString,
+		Default:   "",
+		Expected:  l10n.T("a font-family list, or empty for the browser's monospace font", nil),
+		Normalize: stringValueNormalizer("font_mono", parseFontFamily),
 		// 与 font_ui 同一条理由：字体栈在渲染首页时被拼进 <style>，改完要刷新页面
 		ApplyAt: ApplyReload,
 	},
@@ -361,7 +372,6 @@ var settings = []Setting{
 		Kind:     KindInt,
 		Default:  0,
 		Expected: l10n.T("seconds before a notification closes itself (0 = never)", nil),
-		Parse:    parseIntInRange(0, maxNotifyTimeout),
 		Min:      intPtr(0),
 		Max:      intPtr(maxNotifyTimeout),
 		// 通知时长被页面读成一个常量（加载时就定下），改完要刷新页面才生效
@@ -375,7 +385,6 @@ var settings = []Setting{
 		Kind:     KindBool,
 		Default:  true,
 		Expected: l10n.T("true or false", nil),
-		Parse:    parseBool,
 	},
 	{
 		// fetch / pull / sync 时修剪远程跟踪分支。默认开：远端删掉的分支若一直留在本地，
@@ -387,7 +396,6 @@ var settings = []Setting{
 		Kind:     KindBool,
 		Default:  true,
 		Expected: l10n.T("true or false", nil),
-		Parse:    parseBool,
 	},
 	{
 		Key:       "repo_paths",
@@ -461,51 +469,43 @@ func parseConcurrency(s string) (any, error) {
 	return strconv.Itoa(n), nil
 }
 
-// parseBool 解析布尔项，接受 true/false 与 1/0，大小写不敏感。
-func parseBool(s string) (any, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "true", "1":
-		return true, nil
-	case "false", "0":
-		return false, nil
-	}
-	return nil, ErrInvalidValue
-}
-
-// parseIntInRange 返回一个“整数且落在 [min, max] 内”的解析器。
+// init 把文本入口接到 Normalize 上。
 //
-// 下界做成参数而不是固定为 1，是因为有的项 0 是合法取值：通知自动消失的时长用 0 表示
-// “不自动消失”，而分桶阈值必须为正，传 1 即可——两种语义共用一处实现，
-// 解析器与各项自己的 Min/Max 才不会各写一份、各自对不上
-func parseIntInRange(min, max int) func(string) (any, error) {
-	return func(s string) (any, error) {
-		n, err := strconv.Atoi(strings.TrimSpace(s))
-		if err != nil || n < min || n > max {
-			return nil, ErrInvalidValue
-		}
-		return n, nil
-	}
-}
-
-// parsePositiveInt 返回一个“正整数且不超过 max”的解析器。
-func parsePositiveInt(max int) func(string) (any, error) {
-	return parseIntInRange(1, max)
-}
-
-// enumParser 由候选清单生成解析器：取值必须命中清单（大小写不敏感），
-// 写进文件的永远是清单里的规范形态
-//
-// 用生成而不是各写一个 switch：合法取值在 switch 与候选清单里各留一份，两处迟早会对不上，
-// 而对不上的表现正是“页面上能选、命令行却拒收”这种自相矛盾
-func enumParser(options func() []Option) func(string) (any, error) {
-	return func(s string) (any, error) {
-		v := strings.TrimSpace(s)
-		for _, o := range options() {
-			if strings.EqualFold(v, o.Value) {
-				return o.Value, nil
+// Parse 与 Normalize 各写一份，就是“命令行能写进去、配置文件读不出来”的来源；
+// 让 Parse 只做一次转发，两个入口的规则不可能分叉。管理型的项（仓库列表）不提供
+// 文本入口：它们的增删要走 ggt repo，那里还有去重与 git 仓库校验。
+func init() {
+	for i := range settings {
+		s := &settings[i]
+		if s.Normalize == nil {
+			// 整数、布尔、路径列表的规则只取决于 Kind（整数的范围取该项自己的 Min/Max），
+			// 因此在这里按 Kind 绑定，注册表里不必逐项重抄一遍。
+			// 字符串项的规则随语义不同（枚举、语言、字体栈），必须在注册表里显式声明。
+			switch s.Kind {
+			case KindInt:
+				s.Normalize = intValueNormalizer(s.Key, s.Min, s.Max)
+			case KindBool:
+				s.Normalize = boolValueNormalizer(s.Key)
+			case KindPaths:
+				s.Normalize = pathsValueNormalizer(s.Key)
+			default:
+				panic(fmt.Sprintf("config: setting %q has no Normalize", s.Key))
 			}
 		}
-		return nil, ErrInvalidValue
+		if s.ManagedBy != "" {
+			continue
+		}
+		// Parse 只做一次转发：文本入口与 JSON 入口共用同一份规则，不可能分叉。
+		// 语义错误在这里补上 Key 与 Expected，让 config set 的报错与其余路径同源。
+		setting := *s
+		normalize := setting.Normalize
+		s.Parse = func(text string) (any, error) {
+			out, err := normalize(text)
+			if errors.Is(err, ErrInvalidValue) {
+				return nil, invalidValueError(setting, text)
+			}
+			return out, err
+		}
 	}
 }
 
@@ -544,7 +544,7 @@ func languageOptions() []Option {
 // logLevelOptions 是诊断日志的四个级别。
 //
 // 合法取值的真相在 eggokit/logger（parseLogLevel 把判定直接交给它），而它没有导出级别清单，
-// 因此这里手写一份，由 TestSettingMetadataIsComplete 断言“清单里每个值都能被 Parse 接受”
+// 因此这里手写一份，由 TestSettingMetadataIsComplete 断言“清单里每个值都能被 Normalize 接受”
 // 来防这种对不上——为拿到清单去改依赖库，代价比一条测试大得多
 func logLevelOptions() []Option {
 	return []Option{{Value: "debug"}, {Value: "info"}, {Value: "warn"}, {Value: "error"}}
@@ -587,17 +587,6 @@ func parseLanguage(s string) (any, error) {
 	return l10n.Normalize(v, locales.Supported(), locales.Default), nil
 }
 
-// parseTheme 解析网页看板选中的主题。
-//
-// 刻意不在这里校验主题是否存在：主题文件是用户随手粘贴、随时增删的，写进配置的值日后
-// 可能指向一个已被删掉的文件；那种情况该在渲染页面时回退到跟随系统并告警（与 language
-// 的未知取值一样），而不是让 ggt config set 当场拒绝——否则“先删旧主题、再设新主题”
-// 这个再正常不过的顺序就做不成了。值可以是内置主题的 id（builtin: 前缀），
-// 也可以是外部主题文件的绝对路径
-func parseTheme(s string) (any, error) {
-	return strings.TrimSpace(s), nil
-}
-
 // fontFamilyMaxLen 是字体栈的长度上限（按字符数，不是字节数——中文名字按字数算才符合直觉）。
 //
 // 上限不是洁癖：这个值会被拼进每一份首页的 <style> 里，几万字符的取值等于让每个请求都带上它；
@@ -611,9 +600,9 @@ const fontFamilyMaxLen = 200
 // 整个 :root 块、反斜杠与尖括号是各种解析器的转义口子。而字体栈真正需要的东西很少——
 // 字母（含中文）、数字、空格、逗号、连字符、下划线、点、单双引号，仅此而已
 //
-// 写入时（parseFontFamily）与渲染时（cmd/ui_theme.go 的 fontBlock）各用一次：注册表的 Parse
-// 只在写入时跑，而渲染读的是配置文件里的原始值，“手改配置文件”那条路完全绕过 Parse，
-// 只把校验放在写入侧等于没防住渲染
+// 写入时（parseFontFamily）与渲染时（cmd/ui_theme.go 的 fontBlock）各用一次：
+// 加载期已经会经 Normalize 校验，渲染侧仍保留一次判定作为纵深防御——
+// 手工改过的配置若被别的路径塞进内存，也不该让样式表拼进分号或花括号
 func ValidFontFamily(s string) (string, bool) {
 	v := strings.TrimSpace(s)
 	if v == "" {

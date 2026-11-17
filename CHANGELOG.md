@@ -10,12 +10,18 @@
 **不兼容变更**
 
 - `concurrency` 的默认值从语义值 `CPUHalf` 改为 `auto`：按本机 CPU 逻辑核数取一半，最多 8。核数再多也不提高默认值，因为瓶颈已从 CPU 转到磁盘与内存带宽
-- 语义值 `CPUHalf`、`CPUFull`、`CPUQuarter` 移除，配置项只接受 `auto` 或 1 到 64 的整数。旧配置里读到这三个值不会换算成数字，而是按 `auto` 处理并提示一次，需要显式改写；`ggt config validate` 对这类值只报警告（运行期确实还能跑），`config get` 也按 `auto` 显示，`config set` 则拒绝再写入废弃值
+- 语义值 `CPUHalf`、`CPUFull`、`CPUQuarter` 移除，配置项只接受 `auto` 或 1 到 64 的整数字符串。旧配置里读到这三个值不会换算成数字，而是按 `auto` 处理并提示一次，需要显式改写；`ggt config validate` 对这类值只报警告（运行期确实还能跑），`config get` 也按 `auto` 显示，`config set` 则拒绝再写入废弃值
 - `concurrency` 的上限从 1024 收紧到 64，且在配置文件加载、`-c`、`config set`、`config validate` 四条路径上一致生效：越界值（含 `-c 0` 与负数）直接报错并以非 0 退出码结束，不再被静默忽略或截断
 - `-c` 的取值集与配置文件统一：除 1 到 64 的整数外也接受 `auto`（大小写与首尾空白都不敏感），非法值的报错与配置项共用同一句，不再漏出 `strconv` 的解析原文；命令行显式给空串或纯空白会报错（脚本里 `-c "$VAR"` 漏值时不会静默变成 `auto`），而配置文件里的空串仍按 `auto` 处理
 - `ggt config get concurrency` 输出运行期实际会采用的形态：`" 8 "` 显示为 `8`，`AUTO` 与旧语义值显示为 `auto`；运行期会失败的值（`0`、负数、超过 64、无法解析）不再原样打印，改为以非 0 退出并说明原因，与 `config validate` 把这类值判为 error 的口径一致
-- 布尔值不再是配置项的隐性合法形态：`{"concurrency": true}` 过去被弱类型解码成 `1` 照常运行，而 `config get` 却解析不了 `true`、直接报错退出——同一份文件在两处结论相反。现在运行期加载、`config get`、`config set`、`config validate` 四处一致拒绝，并给出同一句说明；合法的数字 `8` 与数字字符串 `"8"` 不受影响
-- 同一套取值形态判定也管路径项：`repo_paths` / `parent_paths` 写成数字或布尔值会在四处一致报错；写成 `null` 按“未设置”处理（运行期本来就是空列表，而 `config validate` 此前会为它报 error，现在两处对齐）
+- 配置值的解析统一到一个入口：运行期加载、`config get`、`config set`、`config validate` 四处共用注册表里每一项的规范化规则，不再各自维护一套弱类型转换。取值不合法时运行期直接报错退出，不再静默回退默认值——此前 `config validate` 说是 error 的值，运行期往往照常能跑
+- 字符串项只接受 JSON 字符串。`concurrency` 也是字符串项：JSON 数字 `8` 不再被弱转成 `"8"`，必须写 `"8"` 或 `"auto"`；布尔值 `true` / `false` 同样拒绝
+- 整数项只接受 JSON 整数值或规范的十进制整数字符串：带首尾空白、前导零（如 `"010"`）、`0x` / `0b` 前缀、下划线分隔与小数点的写法一律拒绝
+- 布尔项只接受 JSON 布尔或 `"true"` / `"false"`（大小写与首尾空白不敏感）；`"1"`、`"0"`、`"t"`、`"f"` 与空串不再被当作布尔值
+- 枚举项先去首尾空白再忽略大小写匹配，文件中保存候选的规范写法：`"BINARY"` 会归一成 `binary`，运行期、`config get` 与 `config validate` 看到的是同一个值
+- 路径列表项只接受字符串数组，元素去掉空白后不能为空；`repo_paths: [""]` 与 `repo_paths: "/a"` 都会被拒绝，`null` 仍视为空列表
+- `config validate` 不再把“类型不规范但运行期还能跑”报成 warning：类型不合法现在会让运行期加载失败，因此按 error 报出
+- 配置文件里的非法 `log_level` 不再回退默认级别继续跑，而是在加载期报错退出；要确认文件哪里不对，仍用 `ggt config validate`
 
 **自升级**
 

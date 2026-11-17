@@ -22,6 +22,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,7 +60,7 @@ type Config struct {
 	Language         string   `mapstructure:"language" json:"language"`
 	LogLevel         string   `mapstructure:"log_level" json:"log_level"`
 	// Theme 是网页看板选中的主题。空串表示跟随系统深浅（那是本节唯一的“有意义的零值”，
-	// 因此 applyConfigDefaults 不需要为它补默认值——补了也是空串）
+	// 因此默认值就是空串，不需要额外补值）
 	Theme string `mapstructure:"theme" json:"theme"`
 	// ThemeDark / ThemeLight 是“跟随系统”时深色与浅色各自用哪套主题，
 	// 对应 VSCode 的 workbench.preferredDarkColorTheme / preferredLightColorTheme
@@ -67,11 +68,10 @@ type Config struct {
 	ThemeLight string `mapstructure:"theme_light" json:"theme_light"`
 	// FontUI / FontMono 是页面两片区域各自的字体栈，空串表示不指定字体：
 	// 页面那层只声明“特性”（界面区 sans-serif、等宽区 monospace），具体落到哪个字体由浏览器回退决定
-	// （与 Theme 同理，空串是有意义的零值，applyConfigDefaults 不需要补值）
+	// （与 Theme 同理，空串是有意义的零值，默认值就是空串）
 	FontUI   string `mapstructure:"font_ui" json:"font_ui"`
 	FontMono string `mapstructure:"font_mono" json:"font_mono"`
-	// NotifyTimeout 是网页通知自动消失的秒数。0 表示不自动消失，也就是零值即默认，
-	// 因此 applyConfigDefaults 同样不需要为它补值
+	// NotifyTimeout 是网页通知自动消失的秒数。0 表示不自动消失，也就是零值即默认
 	NotifyTimeout int `mapstructure:"notify_timeout" json:"notify_timeout"`
 	// PushTags 决定网页看板推送时是否附带 --follow-tags。它默认 true，而 bool 的零值是
 	// false，因此这个默认值只能来自 settings 注册表经 DefaultRaw 的解码（见 defaultConfig）
@@ -158,7 +158,7 @@ func LoadConfig() (*Config, error) {
 //   - viper 是包级全局单例，SetConfigFile/Unmarshal 会在多次调用之间互相污染，
 //     且无法指向临时路径，导致这条最常用的读路径根本没法测
 //   - 它带进来的那套默认值（viper.SetDefault）会成为 settings 之外的第二份真相
-//   - 容错能力实际来自 mapstructure 的 WeaklyTypedInput，直接用 mapstructure 即可，
+//   - 取值判定由注册表的 Normalize 负责，直接用 mapstructure 做字段映射即可，
 //     不必为此引入一整层配置框架
 //
 // 取值规则是“以 settings 登记的默认值为准，再用文件里的键覆盖”，于是默认值只有
@@ -174,42 +174,40 @@ func LoadConfigAt(path string) (*Config, error) {
 	return decodeConfig(raw)
 }
 
-// decodeConfig 把“settings 默认值 + 传入的键值”解码成 Config，并补上非法取值的回退。
+// decodeConfig 把“settings 默认值 + 传入的键值”解码成 Config。
 //
 // LoadConfigAt 与 defaultConfig 共用这一处，默认值因此只有 DefaultRaw 一份来源。
-// 早先 defaultConfig 是在零值结构体上跑 applyConfigDefaults，bool 型配置项会拿到 Go 的
-// 零值 false，而 LoadConfigAt 给出 true——两条读路径对同一个键给出不同答案，
-// 且只有“文件里没写这个键”时才暴露，很难在测试之外发现
+// 文件里出现的键先经 Setting.Normalize 收敛成规范类型与规范形态，再交给 mapstructure；
+// 规范化失败即返回错误，不再“回退默认值继续跑”——那种回退会让同一份文件在
+// config validate 里是 error、在运行期却照常工作，正是这次要消除的口径分叉。
+//
+// mapstructure 的 WeaklyTypedInput 必须关闭：类型判定已经由 Normalize 做完，
+// 再开弱转换等于给同一条规则留了第二份、更宽松的实现。
 func decodeConfig(raw map[string]any) (*Config, error) {
-	// 取值形态先查一遍：布尔值不是任何非布尔配置项的合法形态，而弱类型解码会把它
-	// 转成 "1"/"0" 悄悄接受（见 valueShapeError）。这一步必须在解码之前，
-	// 否则 {"concurrency": true} 会变成并发数 1 跑起来，与 config get 的结论相反
+	merged := DefaultRaw()
 	for key, v := range raw {
 		s, ok := Lookup(key)
 		if !ok {
-			// 未知键不在这里管：运行期一律忽略，由 config validate 报出
+			// 未知键运行期一律忽略，由 config validate 报出
 			continue
 		}
-		if err := valueShapeError(s, v); err != nil {
+		normalized, err := normalizeValue(s, v)
+		if err != nil {
+			// 旧语义值仍按 auto 继续跑，并保留原值交给 migrateDeprecatedConcurrency
+			// 统一提示。这是迁移策略，不是取值解析规则，因此不在这里判失败
+			if errors.Is(err, errDeprecatedConcurrency) {
+				merged[s.Key] = v
+				continue
+			}
 			return nil, err
 		}
-	}
-
-	// 默认值先取：文件里缺哪个键，哪个键就保持 settings 里的默认值
-	merged := DefaultRaw()
-	for k, v := range raw {
-		merged[k] = v
+		merged[s.Key] = normalized
 	}
 
 	var cfg Config
-	// WeaklyTypedInput 允许已有的数字型 concurrency 配置在反序列化为 string 字段时
-	// 自动转为字符串，也容忍 "true" 这类字符串形态的布尔值，
-	// 避免历史配置文件（旧版把并发数存成 int）读取报错。
-	// 它唯一不容忍的形态在这里拦：JSON 的布尔值（见 valueShapeError）。
-	// 官方信源：https://github.com/go-viper/mapstructure/v2
 	dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 		Result:           &cfg,
-		WeaklyTypedInput: true,
+		WeaklyTypedInput: false,
 	})
 	if err != nil {
 		return nil, err
@@ -218,58 +216,15 @@ func decodeConfig(raw map[string]any) (*Config, error) {
 		return nil, err
 	}
 
-	// 文件里写了非法值（如 size_bucket_low_mb: 0、空串的语言）时的回退。
-	// 这些值由 ggt config validate 作为问题报出，本函数只保证“报出之前程序仍然可用”。
-	// 例外是取值形态（布尔值用在非布尔项上）：那种形态已经在解码前直接报错，
-	// 因为“弱转成 1 继续跑”正是本次要消除的口径分叉
-	//
-	// concurrency 另有一道旧值迁移：旧版存的是 CPUHalf 这类语义串，读到就按 auto
-	// 处理并提示一次，见 migrateDeprecatedConcurrency
 	migrateDeprecatedConcurrency(&cfg)
-	applyConfigDefaults(&cfg)
 
 	return &cfg, nil
-}
-
-// valueShapeError 判断文件里某个键的 JSON 取值形态能否被接受。
-//
-// 拦布尔值是这次专门加的一道：mapstructure 的 WeaklyTypedInput 会把 JSON 的 true/false
-// 转成字符串 "1"/"0"，于是 {"concurrency": true} 在运行期变成并发数 1 照常跑，而
-// config get 拿到布尔 true、解析失败直接报错——同一份文件在两处给出相反结论。
-// 布尔值本来就不是任何非布尔配置项的合法形态（数字与数字字符串才是），因此在解码之前
-// 统一拒绝；运行期加载、config get、config validate 共用这一处判定，config set 收到的
-// 文本 "true" 也走同一个 invalidValueError，四处的说法因此一致。
-//
-// 路径列表项一并在这里判：布尔值转不成数组，交给 mapstructure 只会漏出一句
-// "unconvertible type" 的原文，不如给出与体检相同的说法。
-//
-// 刻意只拦这两种：数字与数字字符串之间的弱转换（concurrency: 8、size_bucket_low_mb: "500"）
-// 是历史配置的合法形态，字符串形态的布尔值（ignore_submodules: "true"）同理，都不能动。
-func valueShapeError(s Setting, v any) error {
-	// 路径项先判：它的规范形态是数组，而 Setting.Expected 对这类项是空的
-	// （数组的“合法取值”无法用一句话概括），套用下面那句会渲染出“(expected )”这种缺口。
-	// JSON null 与缺键同义（运行期就是空列表），不拒绝：它没有类型可写错，
-	// 拒绝它只会让一份原本能跑的配置在升级后起不来
-	if s.Kind == KindPaths {
-		if v == nil {
-			return nil
-		}
-		if _, isList := v.([]any); !isList {
-			return fmt.Errorf("%s", l10n.T("Expected an array for {{.Key}}, got {{.Type}}",
-				map[string]any{"Key": s.Key, "Type": jsonTypeName(v)}))
-		}
-		return nil
-	}
-	if _, isBool := v.(bool); isBool && s.Kind != KindBool {
-		return invalidValueError(s, ValueText(v))
-	}
-	return nil
 }
 
 // defaultConfig 返回所有字段填好默认值的配置。
 //
 // 走的是“空文件 + settings 默认值”这条与 LoadConfigAt 完全相同的路径，因此两者不可能
-// 对某个键给出不同答案；改回“零值结构体 + applyConfigDefaults”会让 bool 项退回 false
+// 对某个键给出不同答案；改回“零值结构体 + 补默认值”会让 bool 项退回 false
 func defaultConfig() *Config {
 	cfg, err := decodeConfig(nil)
 	if err != nil {
@@ -278,72 +233,6 @@ func defaultConfig() *Config {
 		panic(err)
 	}
 	return cfg
-}
-
-// applyConfigDefaults 对“未设置或非法”的字段补上 settings 里登记的默认值：
-//   - concurrency 为空 → "auto"（语义值，运行时才按核数换算成具体数字）
-//   - size_bucket_low_mb / size_bucket_high_mb <= 0 → 500 / 800
-//   - size_unit 为空 → "decimal"
-//   - language 为空 → locales.Default（"en"）
-//   - log_level 为空 → "warn"（注意**非法取值刻意不在这里改写**：它要留给命令层去告警，
-//     在这里静默替换掉，用户就再也看不到“你写的级别我没认”这条提示了）
-//   - repo_paths / parent_paths 为 nil → 空切片，使序列化结果是 [] 而不是 null
-//   - ignore_submodules 是 bool，零值 false 即“默认包含子模块”，无需补值
-//   - notify_timeout 是 int，零值 0 即“通知不自动消失”，无需补值
-//   - push_tags / prune_branches 默认 true，而 bool 的零值是 false，这里补不出这个区别；
-//     它们的默认值由 decodeConfig 统一从 DefaultRaw 解码得到，本函数不碰
-//
-// 取值一律向 settings 注册表要，本函数不再出现任何默认值字面量：原先这里把
-// 500/800/"decimal"/"en" 又抄了一遍，与 settings[].Default 分叉时没有任何测试能拦住。
-// 新增配置项时在 settings 里加一条，这里按需补上对应分支即可。
-func applyConfigDefaults(cfg *Config) {
-	if strings.TrimSpace(cfg.Concurrency) == "" {
-		cfg.Concurrency = defaultStringOf("concurrency")
-	}
-	if cfg.SizeBucketLowMB <= 0 {
-		cfg.SizeBucketLowMB = defaultIntOf("size_bucket_low_mb")
-	}
-	if cfg.SizeBucketHighMB <= 0 {
-		cfg.SizeBucketHighMB = defaultIntOf("size_bucket_high_mb")
-	}
-	if cfg.SizeUnit == "" {
-		cfg.SizeUnit = defaultStringOf("size_unit")
-	}
-	if strings.TrimSpace(cfg.Language) == "" {
-		cfg.Language = defaultStringOf("language")
-	}
-	if strings.TrimSpace(cfg.LogLevel) == "" {
-		cfg.LogLevel = defaultStringOf("log_level")
-	}
-	// theme_dark / theme_light 与 theme 不同：它们的空串没有含义（跟随系统时“没有配色可渲染”），
-	// 因此和上面几项一样补默认值。漏了这两个分支时，LoadConfigAt（走注册表的通用路径）与
-	// 这里会给出不同答案，而 TestLoadConfigAt 的“全默认配置”断言正好抓住这个分叉
-	if strings.TrimSpace(cfg.ThemeDark) == "" {
-		cfg.ThemeDark = defaultStringOf("theme_dark")
-	}
-	if strings.TrimSpace(cfg.ThemeLight) == "" {
-		cfg.ThemeLight = defaultStringOf("theme_light")
-	}
-	if cfg.RepoPaths == nil {
-		cfg.RepoPaths = []string{}
-	}
-	if cfg.ParentPaths == nil {
-		cfg.ParentPaths = []string{}
-	}
-}
-
-// defaultStringOf 返回 settings 里登记的字符串型默认值，
-// 键不存在或类型不符时返回零值——settings 与 Config 字段的对齐由
-// TestSettingsMatchConfigFields 守住，这里不重复校验。
-func defaultStringOf(key string) string {
-	v, _ := DefaultRaw()[key].(string)
-	return v
-}
-
-// defaultIntOf 返回 settings 里登记的整数型默认值，语义同 defaultStringOf。
-func defaultIntOf(key string) int {
-	v, _ := DefaultRaw()[key].(int)
-	return v
 }
 
 // 关于“把整份 Config 写回文件”的能力：本项目刻意不提供。

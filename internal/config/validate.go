@@ -1,9 +1,9 @@
 // validate.go 实现 ggt config validate 的体检逻辑。
 //
-// 体检与运行期加载的容错策略刻意不同：LoadConfig 力求“永远能跑”，遇到非法取值会静默
-// 回退默认（取值形态不对是例外，那种情况下运行期也直接失败，因为它根本没法弱转成合法值）；
-// 体检力求“把会被静默忽略的东西说出来”。因此每条问题都标明严重级别，
-// 并说明运行期会发生什么，用户才不会困惑于“为什么它说有问题但命令照样能跑”。
+// 体检与运行期加载共用注册表的 Normalize，因此“体检说没问题、运行期却拒绝”或反过来
+// 都不可能发生。体检的增量职责是把运行期能容忍、却会影响结果合理性的东西也说出来
+// （阈值倒置、路径不存在、重复条目等），并给每条问题标出严重级别：
+// error 表示运行期加载会直接失败，warning 表示命令能跑但结果可能不是用户想要的。
 package config
 
 import (
@@ -24,7 +24,7 @@ import (
 type Level string
 
 const (
-	// LevelError 表示运行期会被静默忽略、替换成默认值、或直接导致命令不可用的问题。
+	// LevelError 表示运行期加载会直接失败的问题：配置文件里这么写，任何命令都起不来。
 	LevelError Level = "error"
 	// LevelWarning 表示运行期能容忍、或只影响结果合理性的问题。
 	LevelWarning Level = "warning"
@@ -73,14 +73,20 @@ func ValidateAt(path string) ([]Issue, error) {
 		return issues, nil
 	}
 
-	issues = append(issues, validateKeys(raw)...)
-	issues = append(issues, validateBuckets(raw)...)
-	issues = append(issues, validatePaths(raw)...)
+	// 逐项规范化一次，后续检查直接使用规范值：桶阈值写成字符串 "500" 也要参与倒置判定，
+	// 路径列表的元素类型与空串问题也不该在体检里再判一遍
+	normalized := make(map[string]any, len(raw))
+	issues = append(issues, validateKeys(raw, normalized)...)
+	issues = append(issues, validateBuckets(normalized)...)
+	issues = append(issues, validatePaths(normalized)...)
 	return issues, nil
 }
 
 // validateKeys 逐项检查取值，并指出未知键。
-func validateKeys(raw map[string]any) []Issue {
+//
+// 每一项都走与运行期相同的 Setting.Normalize；规范化失败就是 error，因为运行期加载
+// 也会在这里失败。不再有“类型不规范但还能跑”这一档：那种说法在本次改造后已经不成立。
+func validateKeys(raw map[string]any, normalized map[string]any) []Issue {
 	var issues []Issue
 
 	known := make(map[string]bool, len(settings))
@@ -109,52 +115,22 @@ func validateKeys(raw map[string]any) []Issue {
 			continue // 缺键不是问题：缺键就用默认值
 		}
 
-		// 取值形态不对（布尔值用在非布尔项上、路径项不是数组）是硬错误：运行期加载与
-		// config get 都按同一条判定直接失败，体检若只报一句“类型不规范、其实还能跑”，
-		// 就与实际行为正好相反
-		if err := valueShapeError(s, v); err != nil {
-			issues = append(issues, Issue{Level: LevelError, Message: err.Error()})
-			continue
-		}
-
-		// 数组项的形态已经查过，剩余规则（取值是否合法）对它没有意义
-		if s.Kind == KindPaths {
-			continue
-		}
-
-		// 其余的标量类型差异属警告：运行期靠 mapstructure 的 WeaklyTypedInput 容错，
-		// 能跑，但不规范
-		if !scalarTypeMatches(s.Kind, v) {
-			issues = append(issues, Issue{
-				Level: LevelWarning,
-				Message: l10n.T("Unexpected type for {{.Key}}: got {{.Type}}, expected {{.Kind}}; it still works but is better written as the expected type",
-					map[string]any{"Key": s.Key, "Type": jsonTypeName(v), "Kind": string(s.Kind)}),
-			})
-			// 刻意不 continue：类型不规范不等于取值合法。运行期会把数字 65 弱转成
-			// "65" 再解析，而 65 超出并发上限时命令会直接失败——若这里跳过解析，
-			// 体检就只会说“类型不规范”，与实际运行结果形成分叉
-		}
-
-		if s.Parse == nil {
-			continue
-		}
-		text := ValueText(v)
-		if _, err := s.Parse(text); err != nil {
+		value, err := normalizeValue(s, v)
+		if err != nil {
 			// 废弃的旧语义值是“运行期会被替换成默认值”的一类，但它并不阻断命令：
 			// 报成 error 会让升级后的第一次 validate 直接失败，与运行期实际能跑的事实不符
 			if errors.Is(err, errDeprecatedConcurrency) {
 				issues = append(issues, Issue{
 					Level: LevelWarning,
 					Message: l10n.T("The concurrency value {{.Value}} is deprecated and now behaves like auto; change it to auto or an integer",
-						map[string]any{"Value": text}),
+						map[string]any{"Value": ValueText(v)}),
 				})
 				continue
 			}
-			issues = append(issues, Issue{
-				Level:   LevelError,
-				Message: invalidValueError(s, text).Error(),
-			})
+			issues = append(issues, Issue{Level: LevelError, Message: err.Error()})
+			continue
 		}
+		normalized[s.Key] = value
 	}
 	return issues
 }
@@ -163,11 +139,11 @@ func validateKeys(raw map[string]any) []Issue {
 //
 // 阈值倒置时 classifyBySize 的三段区间会自相矛盾（low=1000、high=800 时 900MB 落中桶），
 // 不崩溃但结果毫无意义。
-func validateBuckets(raw map[string]any) []Issue {
-	low, okLow := intValue(raw["size_bucket_low_mb"])
-	high, okHigh := intValue(raw["size_bucket_high_mb"])
+func validateBuckets(normalized map[string]any) []Issue {
+	low, okLow := normalized["size_bucket_low_mb"].(int)
+	high, okHigh := normalized["size_bucket_high_mb"].(int)
 	if !okLow || !okHigh {
-		return nil // 缺键或类型不对时前面已报过
+		return nil // 缺键或取值非法时前面已报过
 	}
 	if low >= high {
 		return []Issue{{
@@ -182,31 +158,23 @@ func validateBuckets(raw map[string]any) []Issue {
 // validatePaths 检查仓库路径与父目录的可达性。
 //
 // 判定口径必须与运行期一致（git.IsRepo），否则会出现“体检说不合法、ggt 却能跑”的错位。
-func validatePaths(raw map[string]any) []Issue {
+func validatePaths(normalized map[string]any) []Issue {
 	var issues []Issue
-	issues = append(issues, checkPathList("repo_paths", raw["repo_paths"], true)...)
-	issues = append(issues, checkPathList("parent_paths", raw["parent_paths"], false)...)
+	issues = append(issues, checkPathList("repo_paths", normalized["repo_paths"], true)...)
+	issues = append(issues, checkPathList("parent_paths", normalized["parent_paths"], false)...)
 	return issues
 }
 
 // checkPathList 检查一个路径列表。mustBeRepo 为 true 时还要求每项是 git 仓库。
 func checkPathList(key string, v any, mustBeRepo bool) []Issue {
-	list, ok := v.([]any)
+	list, ok := v.([]string)
 	if !ok {
-		return nil // 类型不对时前面已报过
+		return nil // 缺键或取值非法时前面已报过
 	}
 
 	var issues []Issue
 	seen := make(map[string]bool, len(list))
-	for _, item := range list {
-		p, ok := item.(string)
-		if !ok {
-			issues = append(issues, Issue{
-				Level:   LevelError,
-				Message: l10n.T("Expected a path string in {{.Key}}, got {{.Type}}", map[string]any{"Key": key, "Type": jsonTypeName(item)}),
-			})
-			continue
-		}
+	for _, p := range list {
 		if seen[p] {
 			issues = append(issues, Issue{
 				Level:   LevelWarning,
@@ -252,9 +220,9 @@ func checkPathList(key string, v any, mustBeRepo bool) []Issue {
 
 // ValueText 把配置值（JSON 解码后的形态）转成纯文本，去掉 JSON 的引号与类型包装。
 //
-// 有两个用途：validate 里复用 Setting.Parse 校验文件中的取值（Parse 接收字符串），
-// 以及 ggt config get 打印标量。两处共用一份实现，避免“校验时认得的写法”与
-// “展示出来的写法”不一致。
+// 用于把规范值或原始值转成可读文本：config get 的标量输出、设置面板的取值展示，
+// 以及“取值非法”报错里回显用户写下的内容。校验本身直接吃原始值，不再经过文本，
+// 因此类型信息不会在转换中丢失。
 func ValueText(v any) string {
 	switch t := v.(type) {
 	case nil:
@@ -290,35 +258,4 @@ func jsonTypeName(v any) string {
 	default:
 		return fmt.Sprintf("%T", v)
 	}
-}
-
-// scalarTypeMatches 判断标量值的 JSON 类型是否符合配置项的规范类型。
-func scalarTypeMatches(kind Kind, v any) bool {
-	switch kind {
-	case KindString:
-		_, ok := v.(string)
-		return ok
-	case KindBool:
-		_, ok := v.(bool)
-		return ok
-	case KindInt:
-		switch v.(type) {
-		case json.Number, float64:
-			return true
-		}
-		return false
-	}
-	return true
-}
-
-// intValue 把 JSON 数值取成 int，取不到时返回 false。
-func intValue(v any) (int, bool) {
-	switch t := v.(type) {
-	case json.Number:
-		n, err := t.Int64()
-		return int(n), err == nil
-	case float64:
-		return int(t), true
-	}
-	return 0, false
 }

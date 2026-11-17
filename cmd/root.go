@@ -238,9 +238,9 @@ func Concurrency() int {
 
 // initLogger 建立分级日志，级别来源链：命令行 -v/-vv > 配置项 log_level > 内置默认（warn）。
 //
-// 配置读不出来或取值非法时**不中止命令**，而是退回默认级别并提示：
-// 设置文件的问题只该影响“多打或少打日志”，不该让整个 CLI 不可用；
-// 想弄清文件到底哪里不对，入口是 ggt config validate
+// 配置加载已经由 Setting.Normalize 保证 cfg.LogLevel 是合法级别；这里仍做一次
+// 防御性解析，以防将来有别的路径直接构造 Config。级别非法时退回默认并提示，
+// 而不是让日志初始化本身失败——但那属于兜底，配置文件里的非法级别会先被加载期拒绝。
 func initLogger(cmd *cobra.Command, configLoadedAt time.Time) {
 	errWriter := cmd.ErrOrStderr()
 

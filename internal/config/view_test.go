@@ -264,30 +264,32 @@ func TestSettingsViewFollowsLanguage(t *testing.T) {
 		t.Fatal("视图里没有 log_level 这一项")
 	}
 
+	// 枚举错误按约定列出候选项；候选项是配置值，不翻译，但句式要跟着语言走
 	_, err := SetFromTextAt(path, "log_level", "trace", false)
-	if err == nil || !strings.Contains(err.Error(), "debug、info、warn、error 之一") {
-		t.Errorf("报错里的取值说明也应跟随语言，实得 %v", err)
+	if err == nil || !strings.Contains(err.Error(), "只能是下列取值之一") ||
+		!strings.Contains(err.Error(), "debug, info, warn, error") {
+		t.Errorf("报错应使用当前语言并列出候选项，实得 %v", err)
 	}
 }
 
-// TestSettingBoundsMatchParse 断言整数项的取值边界与它自己的解析器一致。
+// TestSettingBoundsMatchNormalize 断言整数项的取值边界与它自己的规范化入口一致。
 //
-// Min/Max 只是给页面设输入框上下限的提示，真正把关的是各自的 Parse。两处不一致时，
+// Min/Max 既是页面输入框的上下限，也是 Normalize 判定范围时读的那份值。两处若各写一份，
 // 页面会允许用户填一个存不进去的值，或者反过来把合法值拦在外面——两者都没有编译错误，
 // 只有用户会撞上，因此在这里用“边界外一号必须被拒绝”把它们钉在一起
-func TestSettingBoundsMatchParse(t *testing.T) {
+func TestSettingBoundsMatchNormalize(t *testing.T) {
 	for _, s := range Settings() {
 		if s.Kind != KindInt || s.Parse == nil {
 			continue
 		}
 		if s.Min != nil {
-			if _, err := s.Parse(ValueText(*s.Min - 1)); err == nil {
-				t.Errorf("%q 声明下界 %d，但 Parse 接受了 %d", s.Key, *s.Min, *s.Min-1)
+			if _, err := s.Normalize(*s.Min - 1); err == nil {
+				t.Errorf("%q 声明下界 %d，但 Normalize 接受了 %d", s.Key, *s.Min, *s.Min-1)
 			}
 		}
 		if s.Max != nil {
-			if _, err := s.Parse(ValueText(*s.Max + 1)); err == nil {
-				t.Errorf("%q 声明上界 %d，但 Parse 接受了 %d", s.Key, *s.Max, *s.Max+1)
+			if _, err := s.Normalize(*s.Max + 1); err == nil {
+				t.Errorf("%q 声明上界 %d，但 Normalize 接受了 %d", s.Key, *s.Max, *s.Max+1)
 			}
 		}
 	}

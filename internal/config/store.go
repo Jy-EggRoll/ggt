@@ -4,8 +4,8 @@
 // 落盘，**无法表达“把某个键删掉”**——而 reset 的默认模式正是删键。另外 viper.Set 会
 // 往包级全局单例里写入永不失效的 override，污染后续调用。
 //
-// 读同样不走 viper（详见 LoadConfigAt）：弱类型容错实际来自 mapstructure 的
-// WeaklyTypedInput，大小写归一与重复键拒绝由本文件的 parseRaw / normalizeKeys 负责，
+// 读同样不走 viper（详见 LoadConfigAt）：取值规范化由注册表的 Normalize 负责，
+// 大小写归一与重复键拒绝由本文件的 parseRaw / normalizeKeys 负责，
 // 读、写、体检因而共用同一套解析规则，不会分叉成“能跑但体检说不行”。
 package config
 
@@ -16,13 +16,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/jy-eggroll/eggokit/jsonfile"
 	"github.com/jy-eggroll/eggokit/l10n"
-	"github.com/jy-eggroll/ggt/internal/locales"
 )
 
 // ReadRawAt 读取配置文件的原始键值。
@@ -152,9 +150,9 @@ func ResetAllAt(path string, writeDefaults bool) error {
 
 // DefaultRaw 返回一份全默认值的配置（键值形态），默认值取自 settings 注册表，
 // 因此与结构体形态的 defaultConfig() 必然同源。
-// 切片是空切片而非 nil，序列化结果是 "repo_paths": [] 而不是 null；结构体形态也在
-// applyConfigDefaults 里保证切片非 nil——两种形态对“空列表”的呈现必须一致，
-// 否则 config show 与 reset --defaults 写出来的文件会长得不一样。
+// 切片是空切片而非 nil，序列化结果是 "repo_paths": [] 而不是 null；结构体形态经过
+// 同一条 Normalize 路径，解析 null 时同样得到空切片——两种形态对“空列表”的呈现
+// 必须一致，否则 config show 与 reset --defaults 写出来的文件会长得不一样。
 func DefaultRaw() map[string]any {
 	raw := make(map[string]any, len(settings))
 	for _, s := range settings {
@@ -246,6 +244,10 @@ var ErrUnknownKey = errors.New("unknown config key")
 //
 // 刻意不采纳命令行 -c 这类临时覆盖——那只是本次运行的参数，不属于配置。若混进来，
 // `ggt -c 4 config get concurrency` 会打印 4，让脚本作者以为配置被改过。
+//
+// 文件里的原始值经与运行期同一个 Setting.Normalize 收敛：config get 打印的形态
+// 必须就是运行期实际采用的形态（"BINARY" 显示为 binary、" 8 " 显示为 8），
+// 规范化失败则返回错误，让 get 以非 0 退出，而不是打印一个下一条命令就会拒绝的值。
 func EffectiveAt(path, key string) (any, error) {
 	s, ok := Lookup(key)
 	if !ok {
@@ -259,39 +261,16 @@ func EffectiveAt(path, key string) (any, error) {
 	if !ok {
 		return s.Default, nil
 	}
-	// 取值形态与运行期同一条判定（见 valueShapeError）：{"concurrency": true} 这类
-	// 布尔值运行期会直接拒绝，get 也不能把它当成一个可以打印的值
-	if err := valueShapeError(s, v); err != nil {
+	normalized, err := normalizeValue(s, v)
+	if err != nil {
+		// 旧语义值在运行期按 auto 继续跑（见 migrateDeprecatedConcurrency），
+		// get 显示的值必须与运行期一致
+		if errors.Is(err, errDeprecatedConcurrency) {
+			return DefaultConcurrency, nil
+		}
 		return nil, err
 	}
-	// 语言要归一化：文件里可能写着 zh 或 zh-Hans，而运行期实际生效的是 zh-CN，
-	// get 的输出应当与运行期一致
-	if s.Key == "language" {
-		if text, isStr := v.(string); isStr && l10n.IsSupported(text, locales.Supported()) {
-			return l10n.Normalize(text, locales.Supported(), locales.Default), nil
-		}
-	}
-	// concurrency 的输出必须与运行期一致，而且不能把非法值原样打印出去：
-	//   - 旧语义值、空串与大小写不同的 auto 都归一到 auto（运行期就是这么解析的，
-	//     见 resolveConcurrency 与 migrateDeprecatedConcurrency）
-	//   - " 8 " 这类带首尾空白的数字归一到规范十进制，与 config set 写出的形态一致
-	//   - 越界或无法解析时返回错误，让 get 以非 0 退出。否则会出现“get 说 65、
-	//     下一条命令直接失败”的错位，也与 config validate 把这类值判为 error 的口径矛盾
-	if s.Key == "concurrency" {
-		text := ValueText(v)
-		if isDeprecatedConcurrencyValue(text) {
-			return DefaultConcurrency, nil
-		}
-		n, err := resolveConcurrency(text)
-		if err != nil {
-			return nil, err
-		}
-		if trimmed := strings.TrimSpace(text); trimmed == "" || strings.EqualFold(trimmed, DefaultConcurrency) {
-			return DefaultConcurrency, nil
-		}
-		return strconv.Itoa(n), nil
-	}
-	return v, nil
+	return normalized, nil
 }
 
 // SetKey / UnsetKey / ResetAll 是使用默认配置路径的便捷封装，供命令层调用。

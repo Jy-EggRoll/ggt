@@ -96,11 +96,19 @@ ggt config validate            # 体检配置文件
 
 `get` 遇到运行期会失败的值（例如越界的 `concurrency`）不会原样打印：它改为以非 0 退出并说明原因，脚本因此不会读到一个下一条命令就会拒绝的值。
 
-取值形态也要写对：布尔值不是任何非布尔配置项的合法形态，例如 `{"concurrency": true}` 会被直接拒绝——运行期加载、`config get`、`config set`、`config validate` 四处给出同一个结论与同一句说明（改造前运行期会把它弱类型解码成 `1` 照常跑，而 `config get` 却报错退出）。合法的形态不受影响：`concurrency` 写成数字 `8` 或字符串 `"8"` 都能读。
+取值形态按配置项类型统一判定，运行期加载、`config get`、`config set`、`config validate` 四处共用同一套规则：
+
+- 字符串项只接受 JSON 字符串。`concurrency` 也是字符串项：写 `"8"` 或 `"auto"`，JSON 数字 `8` 会被拒绝。
+- 整数项接受 JSON 整数值，或纯十进制整数字符串（如 `"500"`）。带首尾空白、前导零、`0x`/`0b` 前缀、下划线分隔与小数点一律拒绝。
+- 布尔项接受 JSON 布尔，或忽略大小写与首尾空白的 `"true"`/`"false"`。`"1"`、`"0"`、`"t"`、`"f"` 不是布尔值。
+- 枚举项（`size_unit`、`language`、`log_level`）先去首尾空白、忽略大小写匹配，文件中保存候选项的规范写法（`"BINARY"` 存成 `binary`）。
+- 路径列表项只接受字符串数组，元素去掉空白后不能为空；`null` 视为空列表。
+
+取值不合法会让 `ggt` 在加载配置时直接失败，不再回退默认值继续跑——`config validate` 报出的 error 与运行期的结论因此始终一致。
 
 `reset` 有两种模式：默认**删除**该值（键从文件里消失），加 `--defaults` 则**写入默认值**。`--all` 同理——默认删掉整个配置文件，加 `--defaults` 则写一份只含默认值的文件。两条路径都会清空已登记的仓库，删除前会要求确认（`--yes` 可跳过，非交互环境下必须加）。
 
-`validate` 会报出那些**运行期会被静默忽略或替换**的问题，逐条标明级别：未知键、非法取值、取值形态不对（如把布尔值写给 `concurrency`）、大小写重复键、UTF-8 BOM 属 error；阈值倒置、路径不存在、相对路径、重复条目属 warning。存在 error 时退出码为 1。
+`validate` 与运行期共用同一套取值判定，逐条标明级别：未知键、取值或类型不合法、大小写重复键、UTF-8 BOM 属 error；废弃的并发语义值、阈值倒置、路径不存在、相对路径、重复条目属 warning。error 表示运行期加载会直接失败，warning 表示命令能跑但结果可能不是你要的。存在 error 时退出码为 1。
 
 `repo_paths` 与 `parent_paths` 不能用 `config set` 修改——增删请走 `ggt repo add` / `remove` / `add-parent`，那里有去重、git 仓库校验与路径规范化。
 
@@ -112,13 +120,13 @@ ggt config validate            # 体检配置文件
 | --- | --- | --- | --- |
 | `repo_paths` | string[] | 空 | 直接登记的仓库绝对路径列表 |
 | `parent_paths` | string[] | 空 | 父目录列表，运行时扫描其中的 git 仓库 |
-| `concurrency` | string | `auto` | 并发数。`auto` 表示按本机 CPU 逻辑核数取一半，最多 8：核数再多也不提高默认值，因为瓶颈已经从 CPU 转到磁盘与内存带宽，更高的并发只会让子进程互相争抢 I/O，对本地响应没有帮助。也可以写 1 到 64 的整数。上限 64 是防误填的安全边界，不是平台限流值——填得过大时信号量失去作用，同时在跑的 git 子进程数趋近仓库数，先被耗尽的是进程数与文件描述符；留到 64 是给自建镜像与企业版留出调高的余量。命令行 `-c` 接受同样的取值（`auto` 或 1 到 64 的整数），写了就覆盖此项；`-c 0`、负数、超过 64 与无法解析的值都直接报错退出，显式给空串或纯空白也报错（脚本里 `-c "$VAR"` 而变量漏值时不会静默变成 `auto`）。配置文件里的空串仍按 `auto` 处理——缺键与空值是文件的正常形态。GitHub 并未公布 git 协议的并发限制；其仓库限制文档只建议单个仓库的读操作（fetch / clone）不超过每秒 15 次，而 ggt 的并发是对不同仓库各发一次请求，不受这条建议直接约束，仓库很多时仍可自行下调 |
+| `concurrency` | string | `auto` | 并发数。`auto` 表示按本机 CPU 逻辑核数取一半，最多 8：核数再多也不提高默认值，因为瓶颈已经从 CPU 转到磁盘与内存带宽，更高的并发只会让子进程互相争抢 I/O，对本地响应没有帮助。也可以写 1 到 64 的整数字符串（如 `"8"`）。上限 64 是防误填的安全边界，不是平台限流值——填得过大时信号量失去作用，同时在跑的 git 子进程数趋近仓库数，先被耗尽的是进程数与文件描述符；留到 64 是给自建镜像与企业版留出调高的余量。命令行 `-c` 接受同样的取值（`auto` 或 1 到 64 的整数），写了就覆盖此项；`-c 0`、负数、超过 64 与无法解析的值都直接报错退出，显式给空串或纯空白也报错（脚本里 `-c "$VAR"` 而变量漏值时不会静默变成 `auto`）。配置文件里的空串仍按 `auto` 处理——缺键与空值是文件的正常形态。GitHub 并未公布 git 协议的并发限制；其仓库限制文档只建议单个仓库的读操作（fetch / clone）不超过每秒 15 次，而 ggt 的并发是对不同仓库各发一次请求，不受这条建议直接约束，仓库很多时仍可自行下调 |
 | `ignore_submodules` | bool | `false` | 为 `true` 时在所有功能中忽略子模块；默认 `false`（包含子模块） |
 | `size_bucket_low_mb` | int | `500` | `size` 命令分桶的下界阈值（MB） |
 | `size_bucket_high_mb` | int | `800` | `size` 命令分桶的上界阈值（MB） |
 | `size_unit` | string | `decimal` | `size` 命令的 MB 换算口径：`decimal`（1 MB = 1,000,000 字节）或 `binary`（1 MB = 1024×1024 字节，即 MiB） |
 | `language` | string | `en` | 输出语言，可选 `en` 或 `zh-CN`。命令行 `--lang` / `-l` 优先于此项 |
-| `log_level` | string | `warn` | 诊断日志级别，可选 `debug`/`info`/`warn`/`error`。命令行 `-v`/`-vv` 优先于此项；取值非法时不中止命令，改为回退默认级别并提示 |
+| `log_level` | string | `warn` | 诊断日志级别，可选 `debug`/`info`/`warn`/`error`。命令行 `-v`/`-vv` 优先于此项；取值非法时加载配置会失败，不会静默回退默认级别 |
 | `theme` | string | 空 | 看板选用的主题；空表示跟随系统深浅。取值是主题 id（见设置面板的“主题”） |
 | `theme_dark` | string | `builtin:vscode/2026-dark.json` | 跟随系统时，系统为深色用哪套主题（对应 VSCode 的 `workbench.preferredDarkColorTheme`） |
 | `theme_light` | string | `builtin:vscode/2026-light.json` | 跟随系统时，系统为浅色用哪套主题（对应 `workbench.preferredLightColorTheme`） |
@@ -144,7 +152,7 @@ ggt config validate            # 体检配置文件
 }
 ```
 
-`concurrency` 在文件里写成 JSON 数字（如 `8`）也能读，加载时会自动转成字符串；推荐写成字符串 `"8"` 或 `"auto"`，与 `ggt config set` 写出的形态一致。写成布尔值（`true` / `false`）不算合法形态，会与上文所述一致地被拒绝。
+`concurrency` 在文件里必须写成字符串 `"8"` 或 `"auto"`，与 `ggt config set` 写出的形态一致；JSON 数字 `8` 与布尔值都不再是合法形态。
 
 ## 语言
 

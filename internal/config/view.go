@@ -6,6 +6,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -124,8 +125,8 @@ func valueTextLines(s Setting, v any) string {
 
 // ChoiceAllowed 判断一个文本取值是否落在候选取值之内。
 //
-// 大小写不敏感：这与各解析器的口径一致（parseConcurrency、enumParser 都忽略大小写），
-// 若这里严格而解析器宽松，就会出现“命令行存得进、页面存不进”的分叉
+// 大小写不敏感：这与各配置项 Normalize 的口径一致（并发数、枚举都忽略大小写），
+// 若这里严格而 Normalize 宽松，就会出现“命令行存得进、页面存不进”的分叉
 func ChoiceAllowed(s Setting, text string) bool {
 	if s.Options == nil || s.AllowCustom {
 		return true
@@ -153,9 +154,9 @@ func choiceIn(opts []Option, text string) bool {
 // 收到候选之外的取值说明请求不是页面发出来的。命令行用宽松模式——写一个自定义主题文件的
 // 路径是合法用法，候选只是“能直接点的那几个”
 //
-// 取值的边界（Min/Max）刻意不在这里判：每个配置项的 Parse 已经把自己那套边界写死了
-// （parsePositiveInt 之类），在这里再判一遍就有了两个真相源。测试断言“边界外一号的值
-// 必须被 Parse 拒绝”，因此这份元数据只是给页面用的提示，不会与解析器脱节
+// 取值的边界（Min/Max）不在这里判：注册表的 Normalize 直接读同一份 Min/Max，
+// 在这里再判一遍就有了两个真相源。测试断言“边界外一号的值必须被 Normalize 拒绝”，
+// 因此这份元数据只是给页面用的提示，不会与校验脱节
 func SetFromTextAt(path, key, text string, strict bool) (string, error) {
 	s, ok := Lookup(key)
 	if !ok {
@@ -176,7 +177,12 @@ func SetFromTextAt(path, key, text string, strict bool) (string, error) {
 
 	parsed, err := s.Parse(text)
 	if err != nil {
-		return "", invalidValueError(s, text)
+		// Parse 已经把语义错误渲染成带 Key/Expected 的文案，枚举错误还会列出候选；
+		// 这里只补旧语义值的处理：config set 是在显式写一个新值，没有理由再把废弃词写回去
+		if errors.Is(err, errDeprecatedConcurrency) {
+			return "", invalidValueError(s, text)
+		}
+		return "", err
 	}
 	if err := SetKeyAt(path, s.Key, parsed); err != nil {
 		return "", err
