@@ -79,6 +79,15 @@ func newRepoAddCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
+			// 与读侧共用同一份路径判定（config.ValidatePathEntry）：只在校验里拦住控制字符
+			// 是不够的，写侧放过一条坏路径之后，此后每一次加载都会失败，而那条坏条目还会
+			// 被宽松加载丢掉、repo remove 也删不掉。校验的是用户敲进来的原值，
+			// 报错里说的“第几个字节”才对得上他手上的那串路径
+			if err := config.ValidatePathEntry("repo_paths", path); err != nil {
+				ErrorMsg(err.Error())
+				return
+			}
+
 			absPath, err := filepath.Abs(path)
 			if err != nil {
 				ErrorMsg(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))
@@ -161,6 +170,12 @@ func newRepoAddParentCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
+			// 与 repo add 同一条理由：写侧不校验就等于把坏值留给下一次加载去发现
+			if err := config.ValidatePathEntry("parent_paths", path); err != nil {
+				ErrorMsg(err.Error())
+				return
+			}
+
 			absPath, err := filepath.Abs(path)
 			if err != nil {
 				ErrorMsg(l10n.T("Failed to resolve path: {{.Err}}", map[string]any{"Err": err}))

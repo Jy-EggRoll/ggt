@@ -89,14 +89,19 @@ func TestWithRecoveryHintNamesExecutableCommand(t *testing.T) {
 		if err == nil {
 			t.Fatal("严格加载应拒绝这条路径")
 		}
-		wrapped := WithRecoveryHint(err)
+		wrapped := WithRecoveryHint(err, false)
 		hinted := wrapped.Error()
-		if !strings.Contains(hinted, "ggt config reset repo_paths") {
+		// 键名带 shell 引号：提示里的命令要能整段粘进终端
+		if !strings.Contains(hinted, "ggt config reset 'repo_paths'") {
 			t.Errorf("提示应给出可执行的修复命令，实得 %q", hinted)
 		}
+		// 键级失败时 config 与 repo 两个子树确实还能跑，提示可以这么说
+		if !strings.Contains(hinted, `"ggt repo" and the rest of "ggt config" still work`) {
+			t.Errorf("键级失败时提示应说明这两个子树仍可用，实得 %q", hinted)
+		}
 		// 提示只加一次：每一层都调用 WithRecoveryHint 也不该叠成两遍
-		twice := WithRecoveryHint(wrapped).Error()
-		if strings.Count(twice, "ggt config reset repo_paths") != strings.Count(hinted, "ggt config reset repo_paths") {
+		twice := WithRecoveryHint(wrapped, false).Error()
+		if strings.Count(twice, "ggt config reset 'repo_paths'") != strings.Count(hinted, "ggt config reset 'repo_paths'") {
 			t.Errorf("重复调用不应把提示叠两遍: %q", twice)
 		}
 		// 错误链仍要保留，调用方还能判断具体原因
@@ -105,7 +110,7 @@ func TestWithRecoveryHintNamesExecutableCommand(t *testing.T) {
 		}
 	})
 
-	t.Run("读不出文件时给整份重置", func(t *testing.T) {
+	t.Run("读不出文件时只给整份重置，且按交互性决定 --yes", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "c.json")
 		writeFile(t, path, `{not json`)
 
@@ -113,9 +118,31 @@ func TestWithRecoveryHintNamesExecutableCommand(t *testing.T) {
 		if err == nil {
 			t.Fatal("语法错误应让严格加载失败")
 		}
-		hinted := WithRecoveryHint(err).Error()
-		if !strings.Contains(hinted, ResetAllCommand) {
-			t.Errorf("提示应给出整份重置命令，实得 %q", hinted)
+
+		interactive := WithRecoveryHint(err, false).Error()
+		if !strings.Contains(interactive, "ggt config reset --all") {
+			t.Errorf("提示应给出整份重置命令，实得 %q", interactive)
+		}
+		if strings.Contains(interactive, "--yes") {
+			t.Errorf("交互环境下不该让用户跳过确认，实得 %q", interactive)
+		}
+		// 语法错误时 ggt repo 同样加载不了，提示不能把它说成可用
+		if strings.Contains(interactive, "still work") {
+			t.Errorf("文件级失败时不该声称 repo/config 仍可用，实得 %q", interactive)
+		}
+
+		// 非交互环境（管道、CI）缺 --yes 会被拒绝，提示必须给一条当场能跑的命令
+		nonInteractive := WithRecoveryHint(err, true).Error()
+		if !strings.Contains(nonInteractive, "ggt config reset --all --yes") {
+			t.Errorf("非交互环境应给出带 --yes 的命令，实得 %q", nonInteractive)
+		}
+	})
+
+	t.Run("键名含空格或引号时命令仍然可执行", func(t *testing.T) {
+		key := "weird key'name"
+		cmd := ResetCommand(key)
+		if want := `ggt config reset 'weird key'\''name'`; cmd != want {
+			t.Errorf("ResetCommand(%q) = %q，期望 %q", key, cmd, want)
 		}
 	})
 }
@@ -220,4 +247,32 @@ func problemKeys(problems []Problem) string {
 		keys = append(keys, p.Key)
 	}
 	return strings.Join(keys, ",")
+}
+
+// TestPathListCounts 断言 reset 在清掉坏列表之前能说清“几条、其中几条还能用”。
+//
+// 宽松加载会把坏条目丢掉，用户看到“已清除”时不会意识到几个本来能用的仓库一起没了。
+func TestPathListCounts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	writeFile(t, path, `{"repo_paths": ["/good/one", "", "/has\nnewline", "/good/two"]}`)
+
+	total, usable, err := PathListCounts(path, "repo_paths")
+	if err != nil {
+		t.Fatalf("统计失败: %v", err)
+	}
+	if total != 4 || usable != 2 {
+		t.Errorf("应为 4 条、其中 2 条可用，实得 %d / %d", total, usable)
+	}
+
+	// 不是列表形态时不报条数：没有“几条”可言，调用方据此跳过这句话
+	writeFile(t, path, `{"repo_paths": "/a"}`)
+	if total, usable, err := PathListCounts(path, "repo_paths"); err != nil || total != 0 || usable != 0 {
+		t.Errorf("非列表形态应返回 (0,0,nil)，实得 (%d,%d,%v)", total, usable, err)
+	}
+
+	// 缺键同样没有条目
+	writeFile(t, path, `{}`)
+	if total, usable, err := PathListCounts(path, "repo_paths"); err != nil || total != 0 || usable != 0 {
+		t.Errorf("缺键应返回 (0,0,nil)，实得 (%d,%d,%v)", total, usable, err)
+	}
 }

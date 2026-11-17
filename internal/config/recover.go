@@ -36,20 +36,44 @@ func (p Problem) Error() string { return p.Err.Error() }
 //
 // 提示里必须给能直接敲的命令，而不是“请修改配置文件”：出问题的正是配置文件，
 // 用户最需要的是不用先读懂它就能恢复。命令只有一个来源，报错与宽松加载的提示因此不会分叉。
+// 键名经 shell 引用：它来自配置文件，可能含空格或引号，原样拼进去的命令一敲就散架。
 func ResetCommand(key string) string {
-	return "ggt config reset " + key
+	return "ggt config reset " + shellQuote(key)
 }
 
-// ResetAllCommand 是连 JSON 都读不出来时唯一的命令行出路。
-// 它同时会清空已登记的仓库，因此只作为最后一条提示出现。
-const ResetAllCommand = "ggt config reset --all"
+// ResetAllCommand 是连 JSON 都读不出来时唯一的命令行出路，它同时会清空已登记的仓库。
+//
+// 非交互环境下必须带上 --yes：删除配置文件前要确认，而 stdin 不是终端时确认读不到，
+// 命令会直接报错“re-run with --yes”。提示里给一条当场就能跑的命令，用户才不会以为
+// 自己敲错了命令。
+func ResetAllCommand(nonInteractive bool) string {
+	if nonInteractive {
+		return "ggt config reset --all --yes"
+	}
+	return "ggt config reset --all"
+}
+
+// shellQuote 用单引号包裹参数，参数里的单引号按 POSIX shell 的单引号转义规则处理。
+//
+// 提示里的命令要能被整段粘进 shell，所以键名不能原样拼接：含空格的键名会被拆成两个参数，
+// 含引号的键名甚至会改变命令结构。
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 // WithRecoveryHint 给“配置加载失败”补上一句可直接执行的修复命令。
 //
-// 为什么必须补：配置一旦加载失败，除了 config 与 repo 两个子树，其它命令都起不来，
-// 用户手上只剩“手改文件”与“清空全部配置”两条路。点名坏掉的键与清掉它的命令，
-// 才能把这次失败变成一次可恢复的操作。重复调用不会把提示叠两遍。
-func WithRecoveryHint(err error) error {
+// 为什么必须补：配置一旦加载失败，普通命令都起不来，用户手上只剩“手改文件”与
+// “清空全部配置”两条路。点名坏掉的键与清掉它的命令，才能把这次失败变成一次可恢复的操作。
+// 重复调用不会把提示叠两遍。
+//
+// 两种失败的可修复性并不相同，提示必须按实情写：
+//   - 键级失败（JSON 能解析）：config 与 repo 两个子树都还能跑，清掉那一个键即可；
+//   - 文件级失败（语法错误、读不出来）：宽松加载也无从下手，ggt repo 同样起不来，
+//     只有手改文件或整份重置。
+//
+// nonInteractive 决定整份重置的命令带不带 --yes（见 ResetAllCommand）。
+func WithRecoveryHint(err error, nonInteractive bool) error {
 	if err == nil {
 		return nil
 	}
@@ -63,8 +87,8 @@ func WithRecoveryHint(err error) error {
 		return &recoveryHinted{err: err, hint: l10n.T(`Fix it with "{{.Command}}", or run "ggt config validate" to see every problem; "ggt repo" and the rest of "ggt config" still work`,
 			map[string]any{"Command": ResetCommand(keyErr.Key)})}
 	}
-	return &recoveryHinted{err: err, hint: l10n.T(`Edit the file by hand, or run "{{.Command}}" to start over; "ggt repo" and the rest of "ggt config" still work`,
-		map[string]any{"Command": ResetAllCommand})}
+	return &recoveryHinted{err: err, hint: l10n.T(`The file cannot be read as JSON, so "ggt repo" cannot load it either; run "{{.Command}}" to start over, or fix the file by hand ("ggt config validate" reports where the syntax breaks)`,
+		map[string]any{"Command": ResetAllCommand(nonInteractive)})}
 }
 
 // recoveryHinted 是“已经带上修复提示”的错误。
@@ -159,7 +183,10 @@ func salvagePathList(v any) []string {
 	out := make([]string, 0, len(items))
 	for _, item := range items {
 		path, ok := item.(string)
-		if !ok || strings.TrimSpace(path) == "" || hasControlChar(path) {
+		if !ok || strings.TrimSpace(path) == "" {
+			continue
+		}
+		if _, _, bad := firstControlChar(path); bad {
 			continue
 		}
 		out = append(out, path)
@@ -178,6 +205,34 @@ func sortedRawKeys(raw map[string]any) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// PathListCounts 统计配置文件里某个路径列表的条目总数与其中仍然可用的条数。
+//
+// 供 reset 在清掉一份坏列表之前说清会损失什么：宽松加载已经丢掉坏条目，用户若只看到
+// “已清除”，不会意识到几个本来还能用的仓库也随之消失了。不是列表形态的取值返回 (0,0,nil)。
+func PathListCounts(path, key string) (total, usable int, err error) {
+	s, ok := Lookup(key)
+	if !ok {
+		return 0, 0, ErrUnknownKey
+	}
+	raw, err := ReadRawAt(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	v, ok := raw[s.Key]
+	if !ok {
+		return 0, 0, nil
+	}
+	switch list := v.(type) {
+	case []any:
+		total = len(list)
+	case []string:
+		total = len(list)
+	default:
+		return 0, 0, nil
+	}
+	return total, len(salvagePathList(v)), nil
 }
 
 // ValueErrorAt 判断配置文件里某个键的当前值能否通过 Normalize。

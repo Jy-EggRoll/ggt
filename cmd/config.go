@@ -217,7 +217,10 @@ By default the value is REMOVED from the file, so the setting falls back to its
 built-in default. With --defaults the default value is written explicitly instead.
 
 The repository lists are normally managed by "ggt repo", but when their current
-value is invalid this command is allowed once to clear the broken value.
+value is invalid this command is allowed once to clear the broken value. Clearing
+one reports how many entries it held and how many were still usable; when any of
+them are usable, the removal has to be confirmed first (--yes skips the prompt, and
+is required when stdin is not a terminal).
 
 A key that ggt does not know is removed from the file if it is present there.
 
@@ -242,7 +245,7 @@ Examples:
 			if all {
 				return resetAllConfig(defaults, yes)
 			}
-			return resetOneKey(args[0], defaults)
+			return resetOneKey(args[0], defaults, yes)
 		},
 	}
 
@@ -251,12 +254,15 @@ Examples:
 	c.Flags().BoolVar(&defaults, "defaults", false,
 		l10n.T("Write the default value instead of removing the setting", nil))
 	c.Flags().BoolVar(&yes, "yes", false,
-		l10n.T("Skip the confirmation prompt (only used with --all)", nil))
+		l10n.T("Skip the confirmation prompt (used with --all, and when reset would drop usable entries of a broken repository list)", nil))
 	return c
 }
 
 // resetOneKey 重置单个配置项。
-func resetOneKey(key string, writeDefault bool) error {
+//
+// yes 只影响“清理坏掉的仓库列表”这一条路径：列表里还有可用条目时，清掉它就等于删掉
+// 几个本来能用的仓库，必须先确认（与 reset --all 同一套处理，非交互时同样需要 --yes）。
+func resetOneKey(key string, writeDefault, yes bool) error {
 	s, ok := config.Lookup(key)
 	if !ok {
 		return resetUnknownKey(key, writeDefault)
@@ -275,8 +281,13 @@ func resetOneKey(key string, writeDefault bool) error {
 		// 受管约束的是“怎么设值”，不该拦住“怎么清除一个已经坏掉的值”：受管项的值非法时
 		// 所有命令都起不来（其中包括 ggt repo 自己的写入校验），唯一能落地的修复就是这个
 		// reset。因此放行一次，并说明这次是清理非法值而不是绕开 ggt repo
-		WarnMsg(l10n.T("{{.Key}} is normally managed by \"{{.Command}}\", but its current value is invalid, so it is cleared to recover the config file",
-			map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
+		proceed, err := confirmClearingBrokenList(s, yes)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			return nil
+		}
 	}
 
 	defaultText := config.ValueText(s.Default)
@@ -297,6 +308,45 @@ func resetOneKey(key string, writeDefault bool) error {
 	return nil
 }
 
+// confirmClearingBrokenList 说清这次是清理非法值，并在会连带丢掉可用仓库时要求确认。
+//
+// 为什么必须报条数：宽松加载已经丢掉坏条目，“清掉一个坏值”听起来很轻，实际可能连同
+// 几个本来还能用的仓库一起消失。用户需要先知道损失，再决定要不要继续。
+//
+// 非交互环境缺 --yes 时直接拒绝而不是卡在确认上：脚本与 CI 里没有人回答提示，
+// 这与 reset --all 的处理是同一条约定。
+func confirmClearingBrokenList(s config.Setting, yes bool) (bool, error) {
+	WarnMsg(l10n.T("{{.Key}} is normally managed by \"{{.Command}}\", but its current value is invalid, so it is cleared to recover the config file",
+		map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
+
+	total, usable, err := config.PathListCounts(config.GetDefaultConfigPath(), s.Key)
+	if err != nil {
+		return false, err
+	}
+	if total > 0 {
+		// 条数用“总数 / 可用数”两个独立数值表达，避开英文单复数的配合问题：
+		// 写成 “{{.Total}} entries” 时总数为 1 就会打印 “1 entries”
+		WarnMsg(l10n.T("Current value: total {{.Total}}, usable {{.Usable}}; clearing removes all of them",
+			map[string]any{"Total": total, "Usable": usable}))
+	}
+	if usable == 0 || yes {
+		return true, nil
+	}
+	if !stdinIsTerminal() {
+		return false, errors.New(l10n.T("Refusing to clear {{.Key}} without confirmation: usable entries ({{.Usable}}) would be lost; re-run with --yes",
+			map[string]any{"Usable": usable, "Key": s.Key}))
+	}
+	confirmed, err := pterm.DefaultInteractiveConfirm.WithDefaultValue(false).Show()
+	if err != nil {
+		return false, err
+	}
+	if !confirmed {
+		InfoMsg(l10n.T("Aborted; nothing was changed", nil))
+		return false, nil
+	}
+	return true, nil
+}
+
 // resetUnknownKey 处理“键名根本没注册”的 reset。
 //
 // 为什么允许：未知键现在会让运行期加载失败（否则拼写错误会被静默忽略，用户以为配置生效了），
@@ -314,8 +364,8 @@ func resetUnknownKey(key string, writeDefault bool) error {
 	}
 	if writeDefault {
 		// 未知键没有默认值可写；这里要说清该用哪一种 reset，而不是让用户以为命令没生效
-		return errors.New(l10n.T("{{.Key}} is not a known setting, so it has no default value; run \"ggt config reset {{.Key}}\" to remove it",
-			map[string]any{"Key": k}))
+		return errors.New(l10n.T("{{.Key}} is not a known setting, so it has no default value; run {{.Command}} to remove it",
+			map[string]any{"Key": k, "Command": config.ResetCommand(k)}))
 	}
 	if err := config.UnsetKey(k); err != nil {
 		return err

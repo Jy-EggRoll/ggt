@@ -213,16 +213,29 @@ func pathsValueNormalizer(key string) func(any) (any, error) {
 			if !ok {
 				return nil, expectedPathError(key, item)
 			}
-			if strings.TrimSpace(path) == "" {
-				return nil, emptyPathError(key)
-			}
-			if hasControlChar(path) {
-				return nil, controlCharPathError(key, path)
+			if err := ValidatePathEntry(key, path); err != nil {
+				return nil, err
 			}
 			out = append(out, path)
 		}
 		return out, nil
 	}
+}
+
+// ValidatePathEntry 判定一个路径条目能不能写进配置，是路径元素校验的唯一入口。
+//
+// 读侧（pathsValueNormalizer）与写侧（ggt repo add / add-parent）共用它，才不会重演
+// “写得进去、读不出来”：ggt repo add 曾经直接落盘一个含控制字符的路径，此后的每一次
+// 加载都失败，而那条坏条目又被宽松加载丢掉、repo remove 也删不掉。返回的 error 已是
+// 当前语言的文案，点名键名、字符码与位置。
+func ValidatePathEntry(key, path string) error {
+	if strings.TrimSpace(path) == "" {
+		return emptyPathError(key)
+	}
+	if offset, r, ok := firstControlChar(path); ok {
+		return controlCharPathError(key, path, offset, r)
+	}
+	return nil
 }
 
 // trimString 是主题类配置项的内容规则：只去首尾空白，不限定取值。
@@ -296,26 +309,36 @@ func emptyPathError(key string) error {
 		map[string]any{"Key": key}))
 }
 
-// controlCharPathError 说明路径条目里不能有换行或其它控制字符。
+// controlCharPathError 说明路径条目里不能有换行或其它控制字符，并指出是哪一个字符、
+// 落在第几个字节。
 //
-// 路径用 %q 形态嵌进文案：原样拼进去的话，一个换行会把这条报错本身也拆成两行，
-// 用户反而看不出到底是哪一个字符出的问题。
-func controlCharPathError(key, path string) error {
-	return fmt.Errorf("%s", l10n.T("Path in {{.Key}} contains a control character: {{.Path}}; entries must be a single line",
-		map[string]any{"Key": key, "Path": strconv.Quote(path)}))
+// 只说“含控制字符”不够：用户面对一条看起来正常的路径无从下手，尤其是换行、制表符这类
+// 看不见的字符。字符码（U+000A）说明是什么，字节偏移说明在哪；路径用 %q 形态回显，
+// 否则一个换行会把这条报错本身也拆成两行。
+//
+// 偏移按字节给而不是按“第几个字符”：用户要核对的是文件里那一段字节（JSON 转义、
+// 脚本里的路径都以字节为单位），按字符序号反而对不上。
+func controlCharPathError(key, path string, offset int, r rune) error {
+	return fmt.Errorf("%s", l10n.T("Path in {{.Key}} contains a control character ({{.Code}}) at byte offset {{.Offset}}: {{.Path}}; entries must be a single line",
+		map[string]any{
+			"Key":    key,
+			"Code":   fmt.Sprintf("U+%04X", r),
+			"Offset": offset,
+			"Path":   strconv.Quote(path),
+		}))
 }
 
-// hasControlChar 判断字符串里是否含换行或其它控制字符。
+// firstControlChar 返回字符串里第一个控制字符及其字节偏移。
 //
-// normalize 与宽松加载的抢救逻辑（recover.go 的 salvagePathList）共用这一处：
+// normalize 的元素校验与宽松加载的抢救逻辑（recover.go 的 salvagePathList）共用这一处：
 // 两处各写一份判定，迟早出现“严格加载拒绝、宽松加载却放行”的错位。
-func hasControlChar(s string) bool {
-	for _, r := range s {
-		if unicode.IsControl(r) {
-			return true
+func firstControlChar(s string) (offset int, r rune, ok bool) {
+	for i, ch := range s {
+		if unicode.IsControl(ch) {
+			return i, ch, true
 		}
 	}
-	return false
+	return 0, 0, false
 }
 
 // choiceError 列出枚举项的候选项。写清候选比只说“取值非法”有用：

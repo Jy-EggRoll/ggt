@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode"
@@ -432,7 +433,7 @@ func TestCLIConfigRecoveryFromInvalidPaths(t *testing.T) {
 		t.Fatalf("配置非法时 status 应失败: stdout=%q", broken.stdout)
 	}
 	brokenOutput := broken.stdout + broken.stderr
-	for _, want := range []string{"repo_paths", "ggt config reset repo_paths"} {
+	for _, want := range []string{"repo_paths", "ggt config reset 'repo_paths'"} {
 		if !strings.Contains(brokenOutput, want) {
 			t.Fatalf("报错应含 %q: %q", want, brokenOutput)
 		}
@@ -446,7 +447,7 @@ func TestCLIConfigRecoveryFromInvalidPaths(t *testing.T) {
 	if !strings.Contains(listed.stdout, "No repositories configured") {
 		t.Fatalf("坏路径被丢掉后列表应为空: %q", listed.stdout)
 	}
-	if !strings.Contains(listed.stdout, "ggt config reset repo_paths") {
+	if !strings.Contains(listed.stdout, "ggt config reset 'repo_paths'") {
 		t.Fatalf("repo list 应说明坏在哪、怎么修: %q", listed.stdout)
 	}
 
@@ -502,6 +503,129 @@ func TestCLIRepoAddRepairsBrokenPathList(t *testing.T) {
 	}
 	if status := runCLIWithEnv(t, home, "status"); status.exitCode != 0 {
 		t.Fatalf("修好配置后 status 应恢复正常: exit=%d stderr=%q", status.exitCode, status.stderr)
+	}
+}
+
+// TestCLIRepoAddRejectsControlCharPath 守住写侧的路径校验。
+//
+// 只在校验（读侧）里拦控制字符是不够的：ggt repo add 曾经照样把它写进配置，此后每一次
+// 加载都失败，而那条坏条目又被宽松加载丢掉、repo remove 也删不掉——用户只能清空整个列表。
+func TestCLIRepoAddRejectsControlCharPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows 上控制字符本身不能出现在路径里，这个用例的前提不成立
+		t.Skip("Windows 不允许路径中出现控制字符")
+	}
+
+	home := t.TempDir()
+	configPath := configFilePath(home)
+	repoDir := filepath.Join(home, "repo\x01bad")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("创建仓库目录失败: %v", err)
+	}
+	initGitRepo(t, repoDir)
+
+	added := runCLIWithEnv(t, home, "repo", "add", repoDir)
+	// 与其余 repo 业务性失败同一契约：只打印错误、不改退出码（repo 系列用 Run 而非 RunE）
+	combined := added.stdout + added.stderr
+	for _, want := range []string{"control character", "U+0001", "byte offset"} {
+		if !strings.Contains(combined, want) {
+			t.Fatalf("拒绝时应说明问题（含 %q）: %q", want, combined)
+		}
+	}
+	if _, err := os.Stat(configPath); err == nil {
+		if raw := readConfigFile(t, configPath); raw["repo_paths"] != nil {
+			t.Fatalf("被拒绝的路径不应写进配置: %#v", raw)
+		}
+	}
+
+	// 同一目录换一个干净的名字应当能正常登记，证明拒绝的是那个字符而不是整条命令
+	clean := filepath.Join(home, "repo-clean")
+	if err := os.Rename(repoDir, clean); err != nil {
+		t.Fatalf("重命名仓库目录失败: %v", err)
+	}
+	if ok := runCLIWithEnv(t, home, "repo", "add", clean); ok.exitCode != 0 || !strings.Contains(ok.stdout, clean) {
+		t.Fatalf("干净路径应能登记: exit=%d stdout=%q stderr=%q", ok.exitCode, ok.stdout, ok.stderr)
+	}
+}
+
+// TestCLIRecoveryHintMatchesReality 断言提示里说的可用性与实际一致，且给的命令能直接执行。
+//
+// 文件级失败（JSON 语法错误）时 ggt repo 同样起不来，提示不能把它说成可用；而提示里那条
+// reset --all 在非交互环境（管道、CI）缺 --yes 会被拒绝，因此必须自带 --yes。
+func TestCLIRecoveryHintMatchesReality(t *testing.T) {
+	home := t.TempDir()
+	configPath := configFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("创建配置目录失败: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{not json`), 0o644); err != nil {
+		t.Fatalf("写入坏配置失败: %v", err)
+	}
+
+	broken := runCLIWithEnv(t, home, "repo", "list")
+	if broken.exitCode == 0 {
+		t.Fatalf("JSON 语法错误时 repo list 也应失败: stdout=%q", broken.stdout)
+	}
+	combined := broken.stdout + broken.stderr
+	if strings.Contains(combined, "still work") {
+		t.Fatalf("提示不该声称 repo/config 仍可用: %q", combined)
+	}
+	if !strings.Contains(combined, "ggt config reset --all --yes") {
+		t.Fatalf("提示应给出非交互环境可直接执行的命令: %q", combined)
+	}
+
+	// 照抄提示里的命令：必须是当场就能跑通的那一条
+	reset := runCLIWithEnv(t, home, "config", "reset", "--all", "--yes")
+	if reset.exitCode != 0 {
+		t.Fatalf("提示里的命令应可直接执行: exit=%d stdout=%q stderr=%q", reset.exitCode, reset.stdout, reset.stderr)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("整份重置后配置文件应被删除，实得 %v", err)
+	}
+}
+
+// TestCLIConfigResetReportsEntryLoss 断言清掉坏列表之前先说清损失，并在有可用条目时要求确认。
+func TestCLIConfigResetReportsEntryLoss(t *testing.T) {
+	home := t.TempDir()
+	configPath := configFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("创建配置目录失败: %v", err)
+	}
+	// 两条里一条可用、一条是空串：整体非法，但里面有用户还想保留的仓库
+	usable := filepath.Join(home, "keep-me")
+	content := fmt.Sprintf(`{"repo_paths":[%q,""]}`, usable)
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("写入坏配置失败: %v", err)
+	}
+
+	// 非交互环境缺 --yes：直接拒绝，并说清会丢几条
+	refused := runCLIWithEnv(t, home, "config", "reset", "repo_paths")
+	refusedOutput := refused.stdout + refused.stderr
+	if refused.exitCode == 0 {
+		t.Fatalf("还有可用条目时非交互 reset 应被拒绝: stdout=%q", refused.stdout)
+	}
+	for _, want := range []string{"total 2", "usable 1", "--yes"} {
+		if !strings.Contains(refusedOutput, want) {
+			t.Fatalf("拒绝时应说清损失与出路（含 %q）: %q", want, refusedOutput)
+		}
+	}
+	if _, ok := readConfigFile(t, configPath)["repo_paths"]; !ok {
+		t.Fatal("被拒绝时不应改动文件")
+	}
+
+	// 带上 --yes：清理成功，并报出同样的条数
+	done := runCLIWithEnv(t, home, "config", "reset", "repo_paths", "--yes")
+	doneOutput := done.stdout + done.stderr
+	if done.exitCode != 0 {
+		t.Fatalf("带 --yes 应能清理: exit=%d stderr=%q", done.exitCode, done.stderr)
+	}
+	for _, want := range []string{"total 2", "usable 1"} {
+		if !strings.Contains(doneOutput, want) {
+			t.Fatalf("清理时应报出损失（含 %q）: %q", want, doneOutput)
+		}
+	}
+	if _, ok := readConfigFile(t, configPath)["repo_paths"]; ok {
+		t.Fatalf("清理后文件里不应还有 repo_paths: %#v", readConfigFile(t, configPath))
 	}
 }
 

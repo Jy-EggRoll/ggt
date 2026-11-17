@@ -106,9 +106,10 @@ func startCommand(cmd *cobra.Command, load configLoader) error {
 	loaded, err := load()
 	if err != nil {
 		// 错误包装保持 Go 侧拼接：go-i18n 模板没有 %w 等价物，写进模板会丢掉错误链。
-		// 修复提示附在同一个错误里：配置加载失败时，用户唯一能敲的就是那几条命令
+		// 修复提示附在同一个错误里：配置加载失败时，用户唯一能敲的就是那几条命令。
+		// 是否交互决定提示里那条 reset --all 带不带 --yes（非交互时缺 --yes 会被拒绝）
 		return config.WithRecoveryHint(
-			fmt.Errorf("%s: %w", l10n.T("Failed to load the configuration", nil), err))
+			fmt.Errorf("%s: %w", l10n.T("Failed to load the configuration", nil), err), !stdinIsTerminal())
 	}
 	cfg = loaded
 
@@ -170,7 +171,7 @@ func loadRecoverableConfig() (*config.Config, error) {
 		// 连 JSON 语法、键名可读性都不成立时宽松加载也没有意义：那时没有“哪一个键坏了”
 		// 可言，只能手改文件或整份重置。提示在这里补上，调用方（含 config show）拿到的
 		// error 就是可直接照做的；WithRecoveryHint 幂等，startCommand 再调用一次也只会有一份
-		return nil, config.WithRecoveryHint(err)
+		return nil, config.WithRecoveryHint(err, !stdinIsTerminal())
 	}
 
 	WarnMsg(l10n.T(`The configuration has problems, so ggt runs with built-in defaults for the affected entries; only "ggt config" and "ggt repo" work in this state`, nil))

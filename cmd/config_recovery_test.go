@@ -59,7 +59,7 @@ func TestLoadRecoverableConfigFallsBackToDefaults(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"ggt config reset repo_paths", "ggt config reset concurrency"} {
+	for _, want := range []string{"ggt config reset 'repo_paths'", "ggt config reset 'concurrency'"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("提示应给出可执行的修复命令 %q，实得 %q", want, out)
 		}
@@ -76,8 +76,15 @@ func TestLoadRecoverableConfigFailsOnBrokenJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("JSON 语法错误应让可恢复加载也失败")
 	}
-	if !strings.Contains(err.Error(), config.ResetAllCommand) {
-		t.Errorf("提示应给出整份重置命令 %q，实得 %q", config.ResetAllCommand, err)
+	msg := err.Error()
+	// 测试进程的 stdin 不是终端，因此提示里那条 reset --all 必须自带 --yes，
+	// 否则用户照抄就被“re-run with --yes”挡回来
+	if !strings.Contains(msg, "ggt config reset --all --yes") {
+		t.Errorf("非交互环境应给出带 --yes 的整份重置命令，实得 %q", msg)
+	}
+	// JSON 都读不出来时 ggt repo 同样起不来，提示不能说它可用
+	if strings.Contains(msg, "still work") {
+		t.Errorf("文件级失败时不该声称 repo/config 仍可用，实得 %q", msg)
 	}
 }
 
@@ -92,7 +99,7 @@ func TestResetManagedKeyAllowedOnlyWhenInvalid(t *testing.T) {
 		path := brokenConfig(t, `{"repo_paths":[""]}`)
 
 		buf := capturePtermOutput(t)
-		if err := resetOneKey("repo_paths", false); err != nil {
+		if err := resetOneKey("repo_paths", false, false); err != nil {
 			t.Fatalf("受管项的当前值非法时应允许 reset: %v", err)
 		}
 		raw, err := config.ReadRawAt(path)
@@ -114,7 +121,7 @@ func TestResetManagedKeyAllowedOnlyWhenInvalid(t *testing.T) {
 	t.Run("当前值合法时仍按受管拒绝", func(t *testing.T) {
 		path := brokenConfig(t, `{"repo_paths":["/tmp/somewhere"]}`)
 
-		err := resetOneKey("repo_paths", false)
+		err := resetOneKey("repo_paths", false, false)
 		if err == nil {
 			t.Fatal("受管项的值合法时不该被 reset 掉")
 		}
@@ -131,6 +138,77 @@ func TestResetManagedKeyAllowedOnlyWhenInvalid(t *testing.T) {
 	})
 }
 
+// TestResetBrokenListReportsLossAndAsksConfirmation 断言清理坏列表时先说清损失，再要求确认。
+//
+// 宽松加载已经丢掉坏条目，用户看到的“清掉一个坏值”可能连同几个本来还能用的仓库一起消失；
+// 非交互环境缺 --yes 时应当直接拒绝，而不是卡在确认上。
+func TestResetBrokenListReportsLossAndAsksConfirmation(t *testing.T) {
+	initL10n(t, "en")
+
+	t.Run("没有可用条目时直接清理并报出条数", func(t *testing.T) {
+		path := brokenConfig(t, `{"repo_paths":["",""]}`)
+
+		buf := capturePtermOutput(t)
+		if err := resetOneKey("repo_paths", false, false); err != nil {
+			t.Fatalf("全是坏条目时应直接清理: %v", err)
+		}
+		out := buf.String()
+		for _, want := range []string{"total 2", "usable 0"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("应报出条数与可用数（%q），实得 %q", want, out)
+			}
+		}
+		raw, err := config.ReadRawAt(path)
+		if err != nil {
+			t.Fatalf("读取配置失败: %v", err)
+		}
+		if _, ok := raw["repo_paths"]; ok {
+			t.Errorf("清理后文件里不应还有 repo_paths: %#v", raw)
+		}
+	})
+
+	t.Run("仍有可用条目时非交互缺 --yes 被拒", func(t *testing.T) {
+		path := brokenConfig(t, `{"repo_paths":["/good/one",""]}`)
+
+		buf := capturePtermOutput(t)
+		err := resetOneKey("repo_paths", false, false)
+		if err == nil {
+			t.Fatal("还有可用条目时，非交互环境缺 --yes 应被拒绝")
+		}
+		if !strings.Contains(err.Error(), "--yes") {
+			t.Errorf("拒绝时应告诉用户加 --yes，实得 %v", err)
+		}
+		out := buf.String()
+		for _, want := range []string{"total 2", "usable 1"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("应报出条数与可用数（%q），实得 %q", want, out)
+			}
+		}
+		raw, readErr := config.ReadRawAt(path)
+		if readErr != nil {
+			t.Fatalf("读取配置失败: %v", readErr)
+		}
+		if _, ok := raw["repo_paths"]; !ok {
+			t.Error("被拒绝时不应改动文件")
+		}
+	})
+
+	t.Run("加 --yes 后清理并报出损失", func(t *testing.T) {
+		path := brokenConfig(t, `{"repo_paths":["/good/one",""]}`)
+
+		if err := resetOneKey("repo_paths", false, true); err != nil {
+			t.Fatalf("带 --yes 时应清理: %v", err)
+		}
+		raw, err := config.ReadRawAt(path)
+		if err != nil {
+			t.Fatalf("读取配置失败: %v", err)
+		}
+		if _, ok := raw["repo_paths"]; ok {
+			t.Errorf("清理后文件里不应还有 repo_paths: %#v", raw)
+		}
+	})
+}
+
 // TestResetUnknownKeyRemovesOnlyWhenPresent 断言未知键的 reset 只在文件里确实写着它时放行。
 //
 // 未知键现在会让运行期加载失败，而 reset 若不认它，用户就只剩手改文件或 reset --all，
@@ -141,7 +219,7 @@ func TestResetUnknownKeyRemovesOnlyWhenPresent(t *testing.T) {
 	t.Run("文件里有该键时删除", func(t *testing.T) {
 		path := brokenConfig(t, `{"typo_key":1}`)
 
-		if err := resetOneKey("typo_key", false); err != nil {
+		if err := resetOneKey("typo_key", false, false); err != nil {
 			t.Fatalf("清掉文件里存在的未知键应被允许: %v", err)
 		}
 		raw, err := config.ReadRawAt(path)
@@ -159,7 +237,7 @@ func TestResetUnknownKeyRemovesOnlyWhenPresent(t *testing.T) {
 	t.Run("文件里没有该键时仍报未知键", func(t *testing.T) {
 		brokenConfig(t, `{}`)
 
-		err := resetOneKey("typo_key", false)
+		err := resetOneKey("typo_key", false, false)
 		if err == nil || !strings.Contains(err.Error(), "Unknown config key") {
 			t.Errorf("文件里没有该键时应报未知键，实得 %v", err)
 		}
@@ -168,7 +246,7 @@ func TestResetUnknownKeyRemovesOnlyWhenPresent(t *testing.T) {
 	t.Run("未知键没有默认值可写", func(t *testing.T) {
 		path := brokenConfig(t, `{"typo_key":1}`)
 
-		err := resetOneKey("typo_key", true)
+		err := resetOneKey("typo_key", true, false)
 		if err == nil || !strings.Contains(err.Error(), "no default value") {
 			t.Errorf("未知键的 --defaults 应说明它没有默认值，实得 %v", err)
 		}

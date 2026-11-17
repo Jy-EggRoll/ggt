@@ -453,10 +453,11 @@ func TestPathsRejectControlChars(t *testing.T) {
 		name    string
 		content string
 		escaped string
+		code    string
 	}{
-		{"换行", `{"repo_paths": ["/a\nb"]}`, `\n`},
-		{"回车", `{"repo_paths": ["/a\rb"]}`, `\r`},
-		{"制表符", `{"repo_paths": ["/a\tb"]}`, `\t`},
+		{"换行", `{"repo_paths": ["/a\nb"]}`, `\n`, "U+000A"},
+		{"回车", `{"repo_paths": ["/a\rb"]}`, `\r`, "U+000D"},
+		{"制表符", `{"repo_paths": ["/a\tb"]}`, `\t`, "U+0009"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -468,8 +469,12 @@ func TestPathsRejectControlChars(t *testing.T) {
 				t.Fatal("运行期加载应拒绝含控制字符的路径")
 			}
 			// 报错里用转义形态回显路径：原样拼进去的话，一个换行会把报错本身也拆成两行
-			if !strings.Contains(loadErr.Error(), "control character") || !strings.Contains(loadErr.Error(), c.escaped) {
-				t.Errorf("报错应点明控制字符并转义回显路径，实得 %q", loadErr)
+			msg := loadErr.Error()
+			// 三件事缺一不可：是“控制字符”这一类问题、是哪一个字符、落在第几个字节
+			for _, want := range []string{"control character", c.code, "byte offset 2", c.escaped} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("报错应含 %q，实得 %q", want, msg)
+				}
 			}
 			if _, err := EffectiveAt(path, "repo_paths"); err == nil {
 				t.Error("config get 应拒绝含控制字符的路径")
@@ -523,5 +528,31 @@ func TestSetRejectsBlankConcurrency(t *testing.T) {
 	}
 	if cfg.Concurrency != DefaultConcurrency {
 		t.Errorf("文件里的空串应归一成 %q，实得 %q", DefaultConcurrency, cfg.Concurrency)
+	}
+}
+
+// TestValidatePathEntryIsTheWriteSideRule 断言写侧用的就是读侧那份判定。
+//
+// ggt repo add / add-parent 直接调这个函数：只在 Normalize 里拦控制字符是不够的，
+// 写侧放过去一条坏路径，此后每次加载都会失败，而那条坏条目又被宽松加载丢掉、删不掉。
+func TestValidatePathEntry(t *testing.T) {
+	if err := ValidatePathEntry("repo_paths", "/tmp/fine"); err != nil {
+		t.Errorf("普通路径应通过: %v", err)
+	}
+	for _, blank := range []string{"", "   ", "\t"} {
+		if err := ValidatePathEntry("repo_paths", blank); err == nil {
+			t.Errorf("空白路径 %q 应被拒绝", blank)
+		}
+	}
+
+	err := ValidatePathEntry("repo_paths", "/tmp/x\x01y")
+	if err == nil {
+		t.Fatal("含控制字符的路径应被拒绝")
+	}
+	msg := err.Error()
+	for _, want := range []string{"repo_paths", "U+0001", "byte offset 6", "/tmp/x\\x01y"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("报错应含 %q，实得 %q", want, msg)
+		}
 	}
 }
