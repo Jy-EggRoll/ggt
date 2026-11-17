@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -142,13 +143,16 @@ func startCommand(cmd *cobra.Command, load configLoader) error {
 //
 // 只有 ggt config 与 ggt repo 两个子树使用它，理由是这样一条死锁链（已实测）：
 // repo_paths 写成 [""] 之后，ggt repo list（它要先读配置）与
-// ggt config reset repo_paths（受管项被拒）一起失败，用户只剩手改文件或
-// config reset --all（丢掉全部仓库记录）。这两个子树恰好是唯一的命令行修复入口，
+// ggt config reset repo_paths（受管项被拒绝）一起失败，用户只剩手改文件或
+// config reset --all（丢掉全部仓库记录）。这两个子树恰好是命令行修复入口，
 // 因此必须能在“配置已经坏了”的状态下运行。
 //
-// 为什么只放开这两个子树：其它命令的职责都建立在配置之上（按仓库列表跑 git、
+// 看板（ggt ui）另走 loadUIStartupConfig：它同样需要宽松加载，但放宽的范围只有“启动”
+// 这一步，理由与边界见那个函数。
+//
+// 为什么只放开这三处：其它命令的职责都建立在配置之上（按仓库列表跑 git、
 // 按 size_unit 分桶、按 language 输出），配置坏了它们本来也无事可做，让它们带着
-// 一半默认值继续跑只会给出与用户配置无关的结果。这两个子树的职责则只是配置本身，
+// 一半默认值继续跑只会给出与用户配置无关的结果。这三处的职责则只是配置本身，
 // 因此各自的权限也被收在这里：
 //
 //   - ggt config：只读写配置文件（show / get / set / reset / validate / path）。
@@ -157,30 +161,99 @@ func startCommand(cmd *cobra.Command, load configLoader) error {
 //   - ggt repo：只读写仓库路径列表（list / add / remove / add-parent）。
 //     允许在配置非法时列出仍然可用的条目，并把修好的列表写回文件；不允许遍历仓库采集
 //     状态、跑并发任务，也不依据其它配置项做判断。
+//   - ggt ui：允许启动、允许设置面板报告并修复配置；页面上的 git 操作按“当前配置能否
+//     严格加载”现判，配置非法时一律拒绝（见 uiCache.configNow）。
 //
-// 两条共同的边界：坏掉的键一律按默认值处理（并逐条提示），所以这两个子树的输出不能
+// 共同的边界：坏掉的键一律按默认值处理（并逐条提示），所以这三处的输出不能
 // 当作“运行期会怎么表现”的证据；写文件只发生在用户显式执行 set / reset / repo 增删时。
 func loadRecoverableConfig() (*config.Config, error) {
+	loaded, problems, err := recoverConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(problems) > 0 {
+		WarnMsg(l10n.T(`The configuration has problems, so ggt runs with built-in defaults for the affected entries; only "ggt config" and "ggt repo" work in this state`, nil))
+		for _, line := range configProblemLines(problems) {
+			WarnMsg(line)
+		}
+	}
+	return loaded, nil
+}
+
+// recoverConfig 先按严格规则加载配置，失败后退回宽松加载，把逐键问题交回调用方。
+//
+// 问题清单不在这里打印：写到哪里、讲什么由命令决定。config show 的提示必须进 stderr
+// （stdout 只留 JSON），而 ggt config / ggt repo 两个子树在配置非法时仍能读写配置文件、
+// 看板则仍能起来并报告问题——三种处境要说的话并不相同
+//
+// 连 JSON 语法、键名可读性都不成立时宽松加载也没有意义：那时没有“哪一个键坏了”可言，
+// 只能手改文件或整份重置，因此这里返回带修复提示的错误
+func recoverConfig() (*config.Config, []config.Problem, error) {
 	loaded, err := config.LoadConfig()
 	if err == nil {
-		return loaded, nil
+		return loaded, nil, nil
 	}
 
 	lenient, problems, lenientErr := config.LoadConfigLenient()
 	if lenientErr != nil {
 		// 连 JSON 语法、键名可读性都不成立时宽松加载也没有意义：那时没有“哪一个键坏了”
 		// 可言，只能手改文件或整份重置。提示在这里补上，调用方（含 config show）拿到的
-		// error 就是可直接照做的；WithRecoveryHint 幂等，startCommand 再调用一次也只会有一份
-		return nil, config.WithRecoveryHint(err, !stdinIsTerminal())
+		// error 就是可直接照做的；WithRecoveryHint 幂等，startCommand 再调用一次也只会有一份。
+		// 非交互环境决定整份重置的命令带不带 --yes：那种环境下确认提示读不到，命令会直接报错
+		return nil, nil, config.WithRecoveryHint(err, !stdinIsTerminal())
 	}
+	return lenient, problems, nil
+}
 
-	WarnMsg(l10n.T(`The configuration has problems, so ggt runs with built-in defaults for the affected entries; only "ggt config" and "ggt repo" work in this state`, nil))
+// configProblemLines 把逐键问题渲染成一行行可直接照做的说明。
+//
+// 每条都点名坏在哪、给出清掉它的命令：用户知道“配置坏了”却不知道下一步能敲什么，
+// 这次失败就仍然只能靠手改文件解决（见 config.WithRecoveryHint 的说明）
+func configProblemLines(problems []config.Problem) []string {
+	lines := make([]string, 0, len(problems))
 	for _, p := range problems {
 		// 修复命令单独占一行、不加引号：提示要能被整段复制去执行（见 config.WithRecoveryHint）
-		WarnMsg(l10n.T("{{.Problem}}\n  Clear the broken value with:\n    {{.Command}}",
+		lines = append(lines, l10n.T("{{.Problem}}\n  Clear the broken value with:\n    {{.Command}}",
 			map[string]any{"Problem": p.Error(), "Command": config.ResetCommand(p.Key)}))
 	}
-	return lenient, nil
+	return lines
+}
+
+// printConfigProblems 把逐键问题写到指定输出流，供面向脚本的命令使用（当前是 config show）。
+//
+// 用 WarnStr 而不是 WarnMsg：后者的目标是标准输出，写进管道就会让 JSON 解析失败
+func printConfigProblems(w io.Writer, problems []config.Problem) {
+	for _, line := range configProblemLines(problems) {
+		fmt.Fprintln(w, WarnStr(line))
+	}
+}
+
+// loadUIStartupConfig 让看板在配置坏掉时也能起来。
+//
+// 看板是唯一能在图形界面里报告并修复配置的入口，而它此前走的是严格加载：配置文件里有一项
+// 非法，ggt ui 就在启动阶段退出——面板打不开，也就修不了。这里因此允许宽松加载，
+// 但只放宽“启动”这一步：
+//   - 坏掉的项按默认值处理，并逐条打印（终端里看得见）
+//   - 设置面板按文件现读，逐项标出原值、坏在哪（见 /api/settings）
+//   - 页面上的 git 写操作在配置非法时一律拒绝（见 uiCache.configNow）：它们的参数来自配置
+//     （push_tags / prune_branches），替用户按默认值执行等于让坏配置静默生效
+//   - 连 JSON 都读不出来时以默认配置起服务：此时没有仓库可看，但设置面板能把“文件读不出来”
+//     显示出来，用户至少知道该去改哪个文件
+func loadUIStartupConfig() (*config.Config, error) {
+	loaded, problems, err := recoverConfig()
+	if err != nil {
+		WarnMsg(l10n.T("The config file cannot be read, so the dashboard starts with built-in defaults and git actions from the page stay disabled until it is fixed", nil))
+		WarnMsg(err.Error())
+		return config.DefaultConfig(), nil
+	}
+	if len(problems) > 0 {
+		WarnMsg(l10n.T("The configuration has problems, so the dashboard runs with built-in defaults for the affected entries and git actions from the page stay disabled until the file is valid", nil))
+		for _, line := range configProblemLines(problems) {
+			WarnMsg(line)
+		}
+	}
+	return loaded, nil
 }
 
 // exitCodeInterrupted 是“被 SIGINT 打断”的退出码。

@@ -19,9 +19,11 @@
 //   - prune_branches: fetch / pull / sync 时是否加 --prune 修剪远程跟踪分支，默认 true；
 //     它只管分支，本地标签一律不自动修剪
 //
-// 取值不合法会让加载失败，所有命令因此在启动前退出。为保留一条命令行修复路径，
-// ggt config 与 ggt repo 两个子树改用宽松加载（见 recover.go 与 cmd 层 loadRecoverableConfig）：
-// 坏的键按默认值处理并提示怎么修，这两个子树只读写配置本身，不按配置执行 git 操作。
+// 取值不合法会让加载失败，所有命令因此在启动前退出。为保留修复路径，三处改用宽松加载
+// （见 recover.go 与 cmd 层的 loadRecoverableConfig / loadUIStartupConfig）：
+// ggt config 与 ggt repo 两个子树只读写配置本身、不按配置执行 git 操作，坏的键按默认值处理
+// 并提示怎么修；ggt ui 放宽的只有“启动”这一步，好让设置面板能把坏掉的项显示出来，
+// 它上面的 git 操作在配置恢复合法之前一律拒绝。
 package config
 
 import (
@@ -271,6 +273,15 @@ func defaultConfig() *Config {
 		panic(err)
 	}
 	return cfg
+}
+
+// DefaultConfig 返回一份全默认值的配置。
+//
+// 只有一种场景需要它：配置文件连读都读不出来、但进程仍要起来（当前是 ggt ui——设置面板
+// 正是用来报告并修复这种文件的）。其余任何路径都必须走 LoadConfig 或宽松加载，
+// 直接拿默认配置跑命令等于假装用户没有配置。
+func DefaultConfig() *Config {
+	return defaultConfig()
 }
 
 // 关于“把整份 Config 写回文件”的能力：本项目刻意不提供。

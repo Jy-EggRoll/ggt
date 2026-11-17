@@ -194,7 +194,7 @@ func TestUnknownKeySameVerdictOnAllPaths(t *testing.T) {
 		t.Errorf("config get 应报未知键，实得 %v", err)
 	}
 
-	if _, err := SetFromTextAt(path, "typo_key", "1", false); !errors.Is(err, ErrUnknownKey) {
+	if _, err := SetFromTextAt(path, "typo_key", "1"); !errors.Is(err, ErrUnknownKey) {
 		t.Errorf("config set 应报未知键，实得 %v", err)
 	}
 

@@ -143,25 +143,220 @@ func TestHandleSettingsPostWrites(t *testing.T) {
 	}
 }
 
-// TestHandleSettingsPostRejectsUnknownChoice 断言严格模式挡住了候选之外的取值。
+// TestHandleSettingsPostMatchesCommandLineStrictness 断言面板与命令行对同一批取值给出同一结论。
 //
-// 网页的下拉框只会给出候选取值，收到别的值说明请求不是页面发的——这条限制继承了
-// 旧的 /api/theme：它同样只接受已知主题 id
-func TestHandleSettingsPostRejectsUnknownChoice(t *testing.T) {
+// 三个取值都是实测被面板单独拒绝、而命令行接受的：language 的别名 zh、自定义主题 id、
+// theme_dark 的空串。合法取值的唯一判据是注册表的 Normalize，候选清单只是“页面上能直接
+// 点的那几个”——拿它当写入判据，同一份请求在不同机器上会给出不同结论
+func TestHandleSettingsPostMatchesCommandLineStrictness(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ggt-config.json")
 	rec := callSettings(t, handleSettings(path), http.MethodPost,
-		`{"values":{"theme":"/tmp/evil.json"}}`)
+		`{"values":{"language":"zh","theme":"/tmp/my-theme.json","theme_dark":""}}`)
 	out := decodeSettingsResult(t, rec, http.StatusOK)
 
-	if out.Errors["theme"] == "" {
-		t.Fatalf("候选之外的主题应被拒绝：%+v", out)
+	if len(out.Errors) != 0 {
+		t.Fatalf("命令行能写的取值，面板也该写进去：%+v", out.Errors)
 	}
 	raw, err := config.ReadRawAt(path)
 	if err != nil {
 		t.Fatalf("回读失败：%v", err)
 	}
-	if _, exists := raw["theme"]; exists {
-		t.Errorf("被拒绝的取值不该落盘，实得 %#v", raw["theme"])
+	if raw["language"] != "zh-CN" {
+		t.Errorf("language 应归一成 zh-CN，实得 %#v", raw["language"])
+	}
+	if raw["theme"] != "/tmp/my-theme.json" {
+		t.Errorf("自定义主题 id 应原样落盘，实得 %#v", raw["theme"])
+	}
+	// 空串的落盘形态就是空串：它表示“回落到内置默认主题”（见 cmd/ui_theme.go 的 themePref）
+	if v, exists := raw["theme_dark"]; !exists || v != "" {
+		t.Errorf("theme_dark 应写成空串，实得 %#v（存在：%v）", v, exists)
+	}
+}
+
+// TestHandleSettingsPostRejectsUnknownKeys 断言请求里的未知键进 errors，而不是被静默丢掉。
+//
+// 此前端点只按注册表遍历请求，多出来的键一声不响地消失，响应还是 200 空结果——
+// 用户以为那一项保存了
+func TestHandleSettingsPostRejectsUnknownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	rec := callSettings(t, handleSettings(path), http.MethodPost,
+		`{"values":{"Log_Levle":"debug","log_level":"debug"}}`)
+	out := decodeSettingsResult(t, rec, http.StatusOK)
+
+	errText, ok := out.Errors["Log_Levle"]
+	if !ok {
+		t.Fatalf("未知键应以原样键名报错，实得 %+v", out.Errors)
+	}
+	if !strings.Contains(errText, "Log_Levle") {
+		t.Errorf("报错应点名那个键，实得 %q", errText)
+	}
+	if len(out.Applied) != 1 || out.Applied[0] != "log_level" {
+		t.Errorf("同批里合法的项仍应写入，实得 %v", out.Applied)
+	}
+}
+
+// TestHandleSettingsPostMatchesKeysCaseInsensitively 断言键名匹配与命令行同一规则。
+//
+// config.Lookup 忽略大小写与首尾空白，面板此前却按请求里的原样键名去查注册表，
+// 于是 "Language" 既不生效也不报错。两种口径必须一致，否则“面板存的、命令行读的”会分叉
+func TestHandleSettingsPostMatchesKeysCaseInsensitively(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	rec := callSettings(t, handleSettings(path), http.MethodPost, `{"values":{" Language ":"zh"}}`)
+	out := decodeSettingsResult(t, rec, http.StatusOK)
+
+	if len(out.Errors) != 0 {
+		t.Fatalf("大小写与空白不该影响键名匹配：%+v", out.Errors)
+	}
+	if len(out.Applied) != 1 || out.Applied[0] != "language" {
+		t.Errorf("应报告规范键名 language 已写入，实得 %v", out.Applied)
+	}
+	raw, err := config.ReadRawAt(path)
+	if err != nil {
+		t.Fatalf("回读失败：%v", err)
+	}
+	if raw["language"] != "zh-CN" {
+		t.Errorf("文件里的 language 应为 zh-CN，实得 %#v", raw["language"])
+	}
+}
+
+// TestHandleSettingsPostRejectsConflictingDuplicates 断言同一项写成两个不同取值时不写入。
+//
+// 任选一个的后果是“保存成功”却写进了用户没打算用的值，而页面事后只能显示其中一个
+func TestHandleSettingsPostRejectsConflictingDuplicates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	rec := callSettings(t, handleSettings(path), http.MethodPost,
+		`{"values":{"language":"zh","Language":"en"}}`)
+	out := decodeSettingsResult(t, rec, http.StatusOK)
+
+	if out.Errors["language"] == "" {
+		t.Fatalf("同一项的两个不同取值应被拒绝：%+v", out)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Errorf("冲突的取值不该落盘")
+	}
+}
+
+// TestHandleSettingsPostReportsRemainingProblems 断言保存后把文件里仍然存在的问题按项回传。
+//
+// 这一次保存只处理用户改过的那几项，文件里别的坏值（以及拼错的未知键）会被原样留着，
+// 下一次启动仍然失败。只回一句“已保存”会让用户以为配置已经好了
+func TestHandleSettingsPostReportsRemainingProblems(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	writeRawConfig(t, path, `{"repo_paths":[""],"typo_key":1,"log_level":"trace"}`)
+
+	rec := callSettings(t, handleSettings(path), http.MethodPost, `{"values":{"log_level":"debug"}}`)
+	out := decodeSettingsResult(t, rec, http.StatusOK)
+
+	if len(out.Errors) != 0 {
+		t.Fatalf("这一项应当写进去：%+v", out.Errors)
+	}
+	for _, key := range []string{"repo_paths", "typo_key"} {
+		if out.Remaining[key] == "" {
+			t.Errorf("剩余问题里应包含 %q，实得 %+v", key, out.Remaining)
+		}
+	}
+	if _, still := out.Remaining["log_level"]; still {
+		t.Error("刚改好的项不该出现在剩余问题里")
+	}
+}
+
+// TestHandleSettingsUnsetManagedBrokenValue 断言受管项的坏值可以从面板清掉。
+//
+// 与命令行 reset 共用同一份判定（config.PlanUnsetAt）：受管约束的是“怎么设值”，
+// 不该拦住“怎么清除一个已经坏掉的值”，否则配置坏掉时面板也救不回来
+func TestHandleSettingsUnsetManagedBrokenValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	writeRawConfig(t, path, `{"repo_paths":[""]}`)
+
+	rec := callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["repo_paths"]}`)
+	out := decodeSettingsResult(t, rec, http.StatusOK)
+
+	if len(out.Errors) != 0 {
+		t.Fatalf("受管项的坏值应允许清掉：%+v", out.Errors)
+	}
+	if out.Notes["repo_paths"] == "" {
+		t.Error("应说明这次是清理受管项的坏值，而不是绕开了 ggt repo")
+	}
+	raw, err := config.ReadRawAt(path)
+	if err != nil {
+		t.Fatalf("回读失败：%v", err)
+	}
+	if _, exists := raw["repo_paths"]; exists {
+		t.Error("恢复默认应当把键从文件里删掉")
+	}
+}
+
+// TestHandleSettingsPostUnsetsUnknownKey 断言文件里确实写着的未知键能从面板删掉。
+//
+// 与命令行 reset 同一规则：键在文件里就放行（否则拼错一个键名只剩手改文件），
+// 不在文件里则报错，拼写错误当场暴露
+func TestHandleSettingsPostUnsetsUnknownKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	writeRawConfig(t, path, `{"typo_key":1}`)
+
+	rec := callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["typo_key"]}`)
+	out := decodeSettingsResult(t, rec, http.StatusOK)
+	if len(out.Errors) != 0 {
+		t.Fatalf("文件里存在的未知键应允许删除：%+v", out.Errors)
+	}
+
+	rec = callSettings(t, handleSettings(path), http.MethodPost, `{"unset":["other_typo"]}`)
+	out = decodeSettingsResult(t, rec, http.StatusOK)
+	if out.Errors["other_typo"] == "" {
+		t.Error("文件里不存在的未知键应报错")
+	}
+}
+
+// TestHandleSettingsGetMarksInvalidEntries 断言 GET 把坏值及其原值一并交给页面。
+//
+// 这是“面板看不出文件是坏的”的直接修复：坏值此前被换成默认值发出，页面上与“从没改过”
+// 一模一样，“恢复默认”按钮因此隐藏，坏值永远提交不上去
+func TestHandleSettingsGetMarksInvalidEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	writeRawConfig(t, path, `{"log_level":"trace"}`)
+
+	rec := callSettings(t, handleSettings(path), http.MethodGet, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET 应返回 200，实得 %d", rec.Code)
+	}
+	var out uiSettings
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("响应不是合法 JSON：%v", err)
+	}
+	if out.Error != "" {
+		t.Errorf("单个坏键不该升级成整份文件的错误：%q", out.Error)
+	}
+	for _, item := range out.Items {
+		if item.Key != "log_level" {
+			continue
+		}
+		if !item.Invalid {
+			t.Fatal("log_level 应被标成 invalid")
+		}
+		if item.Raw != "trace" || item.Error == "" {
+			t.Errorf("应给出文件里的原值与原因，实得 raw=%q error=%q", item.Raw, item.Error)
+		}
+		return
+	}
+	t.Fatal("视图里没有 log_level")
+}
+
+// TestHandleSettingsGetReportsUnreadableFile 断言整份文件读不出来时响应顶层带 error，
+// 同时仍然逐项给出视图（面板要能一边画表、一边说清文件坏在哪）
+func TestHandleSettingsGetReportsUnreadableFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ggt-config.json")
+	writeRawConfig(t, path, `{"log_level":`)
+
+	rec := callSettings(t, handleSettings(path), http.MethodGet, "")
+	var out uiSettings
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("响应不是合法 JSON：%v", err)
+	}
+	if out.Error == "" {
+		t.Fatal("读不出文件时顶层应有 error，页面据此显示原因")
+	}
+	if len(out.Items) != len(config.Settings()) {
+		t.Errorf("仍应逐项给出视图，实得 %d 项", len(out.Items))
 	}
 }
 

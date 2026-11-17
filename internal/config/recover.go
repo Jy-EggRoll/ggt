@@ -123,6 +123,33 @@ func LoadConfigLenientAt(path string) (*Config, []Problem, error) {
 		return nil, nil, err
 	}
 
+	merged, problems := mergeLenient(raw)
+	cfg, err := decodeMerged(merged)
+	if err != nil {
+		return nil, problems, err
+	}
+	return cfg, problems, nil
+}
+
+// ProblemsAt 只报告文件里让运行期加载失败的那些项，不要求整份配置能解码。
+//
+// 供设置面板在保存之后回传“还剩下哪些问题”：用户改好一项时，文件里可能还有另一项坏值或
+// 一个拼错的键，而它们会让下一次启动仍然失败。校验口径与宽松加载完全相同（同一个
+// mergeLenient），因此这里报出来的问题必然就是“下一次启动会被挡下的那些”。
+func ProblemsAt(path string) ([]Problem, error) {
+	raw, err := ReadRawAt(path)
+	if err != nil {
+		return nil, err
+	}
+	_, problems := mergeLenient(raw)
+	return problems, nil
+}
+
+// mergeLenient 把一份原始键值合并进默认值，同时收集逐键的问题。
+//
+// 严格加载（decodeConfig）与它共用同一套 Normalize 与错误文案，差别只在遇到问题时：
+// 严格加载立刻失败，这里记下问题、退回默认值继续。
+func mergeLenient(raw map[string]any) (map[string]any, []Problem) {
 	merged := DefaultRaw()
 	var problems []Problem
 	for _, key := range sortedRawKeys(raw) {
@@ -151,12 +178,7 @@ func LoadConfigLenientAt(path string) (*Config, []Problem, error) {
 		}
 		merged[s.Key] = normalized
 	}
-
-	cfg, err := decodeMerged(merged)
-	if err != nil {
-		return nil, problems, err
-	}
-	return cfg, problems, nil
+	return merged, problems
 }
 
 // LoadConfigLenient 是使用默认配置路径的便捷封装。

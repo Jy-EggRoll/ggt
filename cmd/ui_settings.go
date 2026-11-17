@@ -7,7 +7,10 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/eggokit/logger"
@@ -19,7 +22,10 @@ type uiSettings struct {
 	// Path 是配置文件路径：面板上要显示它，用户想手工改或备份时不用再去命令行问一次
 	Path  string               `json:"path"`
 	Items []config.SettingView `json:"items"`
-	Error string               `json:"error,omitempty"`
+	// Error 非空表示整份配置文件读不出来（语法错误、权限、大小写重复键）。
+	// 此时 Items 仍然逐项给出（取值是内置默认值）：页面要能同时画出配置表并说清文件坏在哪，
+	// 否则用户打开面板只看得到一片空白，连“该修哪个文件”都无从下手
+	Error string `json:"error,omitempty"`
 }
 
 // uiSettingsRequest 是 POST /api/settings 的请求体。
@@ -43,6 +49,13 @@ type uiSettingsResult struct {
 	Notes map[string]string `json:"notes,omitempty"`
 	// Errors 按项报失败原因：一项写不进去不该让整批都失败，用户改对那一项就行
 	Errors map[string]string `json:"errors,omitempty"`
+	// Remaining 是保存之后文件里**仍然**存在的问题（键名 → 原因），包括这次没动过的坏值
+	// 与拼错的未知键。它与 Errors 的区别是责任方：Errors 是这次请求没写进去的项，
+	// Remaining 是文件里本来就坏、需要继续修的地方。
+	//
+	// 为什么必须回传：一次保存只处理用户改过的那几项，文件里别的坏值会被原样留着，
+	// 下一次启动仍然失败。此前响应只说“已保存”，用户于是以为配置已经好了
+	Remaining map[string]string `json:"remaining,omitempty"`
 	// Reload 为真表示这批改动里有页面已经烧进去的东西，需要刷新页面才看得到效果
 	Reload bool   `json:"reload,omitempty"`
 	Error  string `json:"error,omitempty"`
@@ -66,7 +79,13 @@ var uiReloadKeys = config.KeysWithApplyAt(config.ApplyReload)
 // 也不会截断脚本标签；序列化失败时回退成空数组——页面拿不到配置就按各自的默认行为走
 // （例如通知不自动消失），这比让整个首页渲染失败轻得多
 func uiSettingsJSON(path string) []byte {
-	b, err := json.Marshal(config.SettingsViewAt(path))
+	views, readErr := config.SettingsViewAt(path)
+	if readErr != nil {
+		// 文件读不出来不是这里能修的事：面板会把它显示在顶部，首页快照照常给出默认值，
+		// 页面行为（例如通知不自动消失）因此仍然有确定的取值
+		logger.Warn(l10n.T("Failed to read the configuration for the settings snapshot", nil), "err", readErr)
+	}
+	b, err := json.Marshal(views)
 	if err != nil {
 		logger.Warn(l10n.T("Failed to serialize the settings snapshot", nil), "err", err)
 		return []byte("[]")
@@ -95,10 +114,18 @@ func handleSettings(path string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			writeUIJSON(w, http.StatusOK, uiSettings{
-				Path:  path,
-				Items: config.SettingsViewAt(path),
-			})
+			items, readErr := config.SettingsViewAt(path)
+			out := uiSettings{Path: path, Items: items}
+			if readErr != nil {
+				// 状态码仍是 200：整份视图照常返回，页面要能一边画出配置表、一边把这句话
+				// 放在面板顶部。改用 5xx 的话前端只剩一条“加载失败”，连配置表都看不到，
+				// 而这个面板恰恰是用户唯一能就地看清文件状况的地方。
+				//
+				// 修复方式直接复用 config.WithRecoveryHint：文件读不出来时面板自己无能为力，
+				// 用户要的正是“下一步敲什么”，而那句话只有命令行那一处在维护
+				out.Error = l10n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": config.WithRecoveryHint(readErr, false)})
+			}
+			writeUIJSON(w, http.StatusOK, out)
 		case http.MethodPost:
 			applySettings(w, r, path)
 		default:
@@ -110,9 +137,12 @@ func handleSettings(path string) http.HandlerFunc {
 
 // applySettings 按注册表写入面板提交的取值。
 //
-// 校验、解析、写入全部走 config.SetFromTextAt，与命令行的 "ggt config set" 是同一份实现；
-// 这里只负责把多项请求拆开、把结果按项归拢。严格模式（取值必须在候选之内）是给网页的：
-// 面板的控件只会给出候选，收到候选之外的取值说明请求不是页面发出来的
+// 校验、解析、写入全部走 config.SetFromTextAt，与命令行的 "ggt config set" 是同一份实现：
+// 两处的严格度因此不可能分叉（此前面板按候选清单拦、命令行只看 Normalize，于是 language
+// 写 zh、自定义主题 id、theme_dark 的空串三分之二被面板拒绝而命令行接受）
+//
+// 这里负责三件事：把请求里的键按注册表的规则归一、把多项结果按项归拢、写完之后对整份文件
+// 再校验一次并把仍然存在的问题回传
 func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 	var req uiSettingsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -125,14 +155,16 @@ func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 		Errors: map[string]string{},
 	}
 
-	// 按注册表的顺序写，而不是按 map 的遍历顺序：Go 里 map 的顺序是随机的，
+	values := requestedValues(req.Values, out.Errors)
+
+	// 按注册表的顺序写，而不是按请求或 map 的遍历顺序：Go 里 map 的顺序是随机的，
 	// 而“同时改两项、其中一项失败”时用户看到的报错顺序会一次一个样，问题很难复现
 	for _, s := range config.Settings() {
-		text, ok := req.Values[s.Key]
+		text, ok := values[s.Key]
 		if !ok {
 			continue
 		}
-		if _, err := config.SetFromTextAt(path, s.Key, text, true); err != nil {
+		if _, err := config.SetFromTextAt(path, s.Key, text); err != nil {
 			out.Errors[s.Key] = err.Error()
 			continue
 		}
@@ -143,24 +175,47 @@ func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 		out.Reload = out.Reload || uiReloadsPage(s.Key)
 	}
 
+	// 恢复默认走的是“把键从文件里删掉”，与命令行 reset 的默认模式一致：文件里因此只留下
+	// 用户真正改过的项，不会被一堆等于默认值的键塞满。
+	// 删不删得掉由 config.PlanUnsetAt 判定，与命令行共用同一份规则（含受管项的例外放行）
 	for _, key := range req.Unset {
-		s, ok := config.Lookup(key)
-		if !ok {
-			out.Errors[key] = errUnknownKey(key).Error()
+		plan, err := config.PlanUnsetAt(path, key)
+		if err != nil {
+			if errors.Is(err, config.ErrUnknownKey) {
+				out.Errors[key] = errUnknownKey(key).Error()
+			} else {
+				out.Errors[key] = err.Error()
+			}
 			continue
 		}
-		if err := config.NotWritableError(s); err != nil {
-			out.Errors[s.Key] = err.Error()
+		if note := unsetNote(plan); note != "" {
+			out.Notes[plan.Key] = note
+		}
+		if err := config.UnsetKeyAt(path, plan.Key); err != nil {
+			out.Errors[plan.Key] = err.Error()
 			continue
 		}
-		// 删键而不是写入默认值：与命令行 reset 的默认模式一致，文件里因此只留下
-		// 用户真正改过的项，不会被一堆等于默认值的键塞满
-		if err := config.UnsetKeyAt(path, s.Key); err != nil {
-			out.Errors[s.Key] = err.Error()
-			continue
+		out.Applied = append(out.Applied, plan.Key)
+		if s, ok := config.Lookup(plan.Key); ok {
+			out.Reload = out.Reload || uiReloadsPage(s.Key)
 		}
-		out.Applied = append(out.Applied, s.Key)
-		out.Reload = out.Reload || uiReloadsPage(s.Key)
+	}
+
+	// 写完之后对整份文件再校验一次：这一次保存只处理用户改过的那几项，文件里别的坏值
+	// （或一个拼错的键）会被原样留着，下一次启动仍然失败。不把这件事说出来，
+	// 用户看到“已保存”就以为配置好了
+	remaining, readErr := config.ProblemsAt(path)
+	switch {
+	case readErr != nil:
+		// 刚写完却读不出来，只可能是别处同时改坏了它（另一个终端、编辑器）。这不是这次
+		// 写入的失败，因此不写进 Errors，而是在顶层说明“现在连文件都读不出来”，
+		// 并附上命令行那一处维护的修复方式（见 WithRecoveryHint）
+		out.Error = l10n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": config.WithRecoveryHint(readErr, false)})
+	case len(remaining) > 0:
+		out.Remaining = make(map[string]string, len(remaining))
+		for _, p := range remaining {
+			out.Remaining[p.Key] = p.Error()
+		}
 	}
 
 	// 一个键都没动（例如用户点保存时什么都没改）也回 200：这不是错误，
@@ -172,6 +227,63 @@ func applySettings(w http.ResponseWriter, r *http.Request, path string) {
 		out.Errors = nil
 	}
 	writeUIJSON(w, http.StatusOK, out)
+}
+
+// requestedValues 把请求里的取值归一成“规范键名 → 文本”。
+//
+// 键名匹配与命令行同一规则（config.Lookup：忽略大小写与首尾空白），因此 "Language" 与
+// " language " 落到同一个键上。认不出来的键进 errors：此前只有注册表在驱动遍历，请求里
+// 多出来的键被静默丢掉、响应仍是 200 空结果，用户以为那一项写进去了
+//
+// 同一项被写成两个取值不同的键时无法判断用户要哪个，按冲突报错而不是任选一个：
+// 任选一个的后果是“保存成功”却写进了用户没打算用的值
+func requestedValues(req map[string]string, errs map[string]string) map[string]string {
+	out := make(map[string]string, len(req))
+	conflict := make(map[string]bool)
+	rawKeys := make([]string, 0, len(req))
+	for k := range req {
+		rawKeys = append(rawKeys, k)
+	}
+	sort.Strings(rawKeys)
+
+	for _, rawKey := range rawKeys {
+		s, ok := config.Lookup(rawKey)
+		if !ok {
+			errs[strings.TrimSpace(rawKey)] = errUnknownKey(rawKey).Error()
+			continue
+		}
+		text := req[rawKey]
+		prev, dup := out[s.Key]
+		if !dup {
+			out[s.Key] = text
+			continue
+		}
+		if prev != text {
+			conflict[s.Key] = true
+			errs[s.Key] = l10n.T("Received two different values for {{.Key}} in the same request, so it was not saved: {{.First}} and {{.Second}}",
+				map[string]any{"Key": s.Key, "First": prev, "Second": text})
+		}
+	}
+	for key := range conflict {
+		delete(out, key)
+	}
+	return out
+}
+
+// unsetNote 返回“这次恢复默认有什么要额外说明的”，没有就返回空串。
+//
+// 两种情况需要说明：清掉的是受管项的坏值（平时它不让在这里改），以及清掉的是一个
+// 注册表里没有的键。两者都是命令行 reset 会讲的话，面板不该少讲
+func unsetNote(plan config.UnsetPlan) string {
+	if plan.Managed {
+		s, _ := config.Lookup(plan.Key)
+		return managedResetNote(plan.Key, s.ManagedBy)
+	}
+	if !plan.Known {
+		return l10n.T("{{.Key}} is not a known setting; removed it from the config file",
+			map[string]any{"Key": plan.Key})
+	}
+	return ""
 }
 
 // writeUIJSON 输出只读端点的 JSON 响应（设置面板与仓库大小/文件清单两处共用）。

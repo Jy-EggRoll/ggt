@@ -794,7 +794,7 @@ func TestValueShapeRejectedConsistently(t *testing.T) {
 
 	// config set 收到的是文本 "true"，不是 JSON 布尔：这是字符串项里一个非法的取值，
 	// 不是类型错误。结论必须同样是拒绝，措辞点明允许范围
-	_, setErr := SetFromTextAt(path, "concurrency", "true", false)
+	_, setErr := SetFromTextAt(path, "concurrency", "true")
 	if setErr == nil {
 		t.Fatal("config set concurrency true 应被拒绝")
 	}
@@ -856,10 +856,10 @@ func TestEffectiveAtRejectsWrongShape(t *testing.T) {
 func TestSetFromTextAtKeepsBoolKindsWritable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
 
-	if _, err := SetFromTextAt(path, "ignore_submodules", "true", false); err != nil {
+	if _, err := SetFromTextAt(path, "ignore_submodules", "true"); err != nil {
 		t.Fatalf("写布尔项应成功: %v", err)
 	}
-	if _, err := SetFromTextAt(path, "concurrency", "4", false); err != nil {
+	if _, err := SetFromTextAt(path, "concurrency", "4"); err != nil {
 		t.Fatalf("写数字形态的并发数应成功: %v", err)
 	}
 

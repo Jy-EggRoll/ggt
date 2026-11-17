@@ -127,6 +127,10 @@ type uiPayload struct {
 	// 用户据此判断页面是否卡住，不必靠猜
 	GeneratedAt time.Time `json:"generatedAt"`
 	DurationMs  int64     `json:"durationMs"`
+	// ConfigError 非空表示配置文件当前无法按运行期规则加载，页面据此说明两件事：
+	// 这份仓库列表可能有缺项（坏掉的 repo_paths 只保留仍然可用的条目），
+	// 以及页面上的 git 操作会被拒绝。不说出来，用户会以为看板显示的就是全部仓库
+	ConfigError string `json:"configError,omitempty"`
 }
 
 // uiCache 缓存一次全量采集的结果。
@@ -148,27 +152,37 @@ type uiCache struct {
 	configPath string
 }
 
-// configNow 重新读一次配置文件，读失败时退回进程启动时加载的全局配置。
+// configNow 重新读一次配置文件；读不出来时返回错误，而不是退回启动时那份配置。
 //
 // 为什么每次现读：设置面板保存只写文件，进程启动时加载的全局 cfg 不会跟着变，而
 // push_tags / prune_branches 在注册表里承诺的是“立即生效”。不选“保存时顺手改全局变量”
-// 那条路，因为全局 cfg 被多个请求并发读取，运行期改写它就是数据竞争
-func (c *uiCache) configNow() *config.Config {
+// 那条路，因为全局 cfg 被多个请求并发读取，运行期改写它就是数据竞争。
+//
+// 为什么读失败不再回退：这些端点的参数来自配置（push_tags 决定是否附带 --follow-tags，
+// prune_branches 决定是否 --prune），回退到启动时那份等于替用户按默认值执行 git 操作，
+// 而同一份配置此刻在命令行上会让 ggt 直接拒绝启动。看板只在“配置坏掉时仍能启动、
+// 把问题显示出来”这一件事上与命令行不同；执行动作必须同样严格。启动时的全局配置
+// 只用于渲染看板本身（仓库列表、语言、主题），不参与这些判断
+func (c *uiCache) configNow() (*config.Config, error) {
 	cfg, err := config.LoadConfigAt(c.configPath)
 	if err != nil {
-		// 回退而不是报错：文件被外部改坏时，用户至少还能用推送、拉取这些按钮，
-		// 具体哪里坏了由设置面板与 ggt config validate 去说
-		logger.Warn(l10n.T("Failed to reload the configuration, using the values loaded at startup", nil),
-			"path", c.configPath, "err", err)
-		if fallback := GetConfig(); fallback != nil {
-			return fallback
-		}
-		// 全局配置由命令启动流程赋值，正常运行时不会为 nil；直接构造 uiCache 的测试里它是空的。
-		// 返回空结构体意味着两项都按 false 处理（不附带标签、不修剪分支），这是读不到配置时
-		// 最保守的一侧：少做副作用，而不是多做
-		return &config.Config{}
+		// 非交互参数取假：这句话是给人看的（页面上、终端里），读者在浏览器前，
+		// 提示里给不带 --yes 的那条命令更合适——它要求确认，不会一步删掉整份配置
+		return nil, config.WithRecoveryHint(err, false)
 	}
-	return cfg
+	return cfg, nil
+}
+
+// configBlockedError 把“配置文件当前不可用”渲染成写端点的拒答。
+//
+// 用 409 而不是 500：这不是服务端故障，而是“配置当前这个状态下不能执行这个动作”，
+// 与 git 自己拒绝（没有 upstream、有冲突）同一档，页面照常把原话显示出来
+func configBlockedError(err error) error {
+	return &uiParamError{
+		http.StatusConflict,
+		l10n.T("The config file has problems, so this action is refused; fix it in the settings panel first: {{.Err}}",
+			map[string]any{"Err": err}),
+	}
 }
 
 // repos 返回一份仓库状态快照，必要时重新采集。
@@ -313,7 +327,13 @@ func (c *uiCache) handleRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload := c.repos()
+	// 复制一份再补上配置状态：c.repos() 返回的是缓存里的那份快照，直接改它会让
+	// 并发请求在同一块内存上写（缓存由锁保护，这里却在锁外写）
+	payload := *c.repos()
+	if _, err := c.configNow(); err != nil {
+		payload.ConfigError = l10n.T("Git actions from the page are disabled while the config file has problems: {{.Err}}",
+			map[string]any{"Err": err})
+	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	// 状态是实时数据，任何一层缓存都不该留下副本：这条响应本身就是“当前真相”的快照，
@@ -324,7 +344,7 @@ func (c *uiCache) handleRepos(w http.ResponseWriter, r *http.Request) {
 	// 前端虽然能解析，但排查接口时看到的 JSON 会难以阅读
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(payload); err != nil {
+	if err := enc.Encode(&payload); err != nil {
 		// 响应头已发出，无法再改状态码，只能记录日志
 		logger.Error(l10n.T("Failed to encode the repository status response", nil), "error", err)
 	}
@@ -1059,7 +1079,11 @@ func pullArgs(prune bool) []string {
 // 是否附带标签由 push_tags 决定，取值现读配置文件（理由见 configNow）
 func (c *uiCache) handlePush(w http.ResponseWriter, r *http.Request) {
 	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
-		return git.RunCombinedContext(ctx, repo.Path, pushArgs(c.configNow().PushTags)...)
+		cfg, err := c.configNow()
+		if err != nil {
+			return "", configBlockedError(err)
+		}
+		return git.RunCombinedContext(ctx, repo.Path, pushArgs(cfg.PushTags)...)
 	})
 }
 
@@ -1251,7 +1275,11 @@ func (c *uiCache) handleCheckout(w http.ResponseWriter, r *http.Request) {
 // 而那正是用户需要看到的信息（要不要 rebase 还是 merge，由他决定）
 func (c *uiCache) handlePull(w http.ResponseWriter, r *http.Request) {
 	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
-		return git.RunCombinedContext(ctx, repo.Path, pullArgs(c.configNow().PruneBranches)...)
+		cfg, err := c.configNow()
+		if err != nil {
+			return "", configBlockedError(err)
+		}
+		return git.RunCombinedContext(ctx, repo.Path, pullArgs(cfg.PruneBranches)...)
 	})
 }
 
@@ -1264,7 +1292,10 @@ func (c *uiCache) handleSync(w http.ResponseWriter, r *http.Request) {
 	c.handleWrite(w, r, func(ctx context.Context, repo *uiRepo, _ uiWriteRequest) (string, error) {
 		// 配置只读一次：pull 与 push 之间文件被改的话，两步应当来自同一份判断，
 		// 否则用户看到的结果取决于保存设置的时间点
-		cfg := c.configNow()
+		cfg, err := c.configNow()
+		if err != nil {
+			return "", configBlockedError(err)
+		}
 		pullOut, err := git.RunCombinedContext(ctx, repo.Path, pullArgs(cfg.PruneBranches)...)
 		if err != nil {
 			return pullOut, err
@@ -1320,7 +1351,13 @@ func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
 	}
 	// 修剪行为在这一次行动里固定：多个仓库并发跑，各自现读配置只会读到同一份文件的多个版本，
 	// 而一次按钮点击本来就该是一个统一动作；用户改完设置再点一次即可
-	args := fetchArgs(c.configNow().PruneBranches)
+	cfg, err := c.configNow()
+	if err != nil {
+		blocked := configBlockedError(err)
+		writeUIWrite(w, statusOf(blocked, http.StatusConflict), uiWriteResult{Error: blocked.Error()})
+		return
+	}
+	args := fetchArgs(cfg.PruneBranches)
 	outcomes := worker.Map(r.Context(), repos, func(ctx context.Context, repo uiRepo) outcome {
 		// 用 RunCombinedContext：失败原因在 git 的 stderr 里，err 本身只是 "exit status N"
 		out, err := git.RunCombinedContext(ctx, repo.Path, args...)
@@ -1395,6 +1432,14 @@ Examples:
   ggt ui                 Open the dashboard and launch the browser
   ggt ui --no-open       Print the address only
   ggt ui --port 8721     Bind a fixed port`, nil),
+		// 遮蔽 root 的钩子，改用“严格失败就宽松加载”的那份入口（见 loadUIStartupConfig）：
+		// 看板是唯一能在图形界面里报告并修复配置的地方，而配置文件里只要有一项非法，
+		// 严格加载就会让 ggt ui 在启动阶段退出——面板打不开，也就无从修复。
+		// 放宽的只有启动这一步：设置面板按文件现读并逐项标出坏值，页面上的 git 写操作
+		// 在配置非法时一律拒绝（见 uiCache.configNow）
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return startCommand(cmd, loadUIStartupConfig)
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runUI(cmd, port, host, noOpen, allowHosts)
 		},

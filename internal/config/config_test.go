@@ -533,7 +533,11 @@ func TestPushTagsAndPruneBranchesDefault(t *testing.T) {
 		// 用户看到的就是“面板上开着、实际没生效”
 		dir := t.TempDir()
 		path := filepath.Join(dir, "absent.json")
-		for _, v := range SettingsViewAt(path) {
+		views, err := SettingsViewAt(path)
+		if err != nil {
+			t.Fatalf("读取视图失败: %v", err)
+		}
+		for _, v := range views {
 			if v.Key != "push_tags" && v.Key != "prune_branches" {
 				continue
 			}

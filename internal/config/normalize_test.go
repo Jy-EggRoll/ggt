@@ -378,7 +378,7 @@ func TestFourPathsAgreeOnValue(t *testing.T) {
 			// 路径项由 ggt repo 管理：set 无论取值如何都应被管理策略拒绝，
 			// 它的取值结论由上面三条路径负责
 			if s.ManagedBy != "" {
-				if _, err := SetFromTextAt(path, c.key, c.text, false); err == nil {
+				if _, err := SetFromTextAt(path, c.key, c.text); err == nil {
 					t.Error("由 ggt repo 管理的项不应能通过 config set 写入")
 				}
 				return
@@ -387,7 +387,7 @@ func TestFourPathsAgreeOnValue(t *testing.T) {
 				return
 			}
 
-			written, setErr := SetFromTextAt(path, c.key, c.text, false)
+			written, setErr := SetFromTextAt(path, c.key, c.text)
 			if (setErr != nil) != c.wantErr {
 				t.Fatalf("config set 错误 = %v，wantErr=%v", setErr, c.wantErr)
 			}
@@ -435,7 +435,7 @@ func TestJSONNumberForConcurrency(t *testing.T) {
 	}
 
 	// JSON 8 与文本 "8" 都写到同一个规范形态
-	written, err := SetFromTextAt(path, "concurrency", "8", false)
+	written, err := SetFromTextAt(path, "concurrency", "8")
 	if err != nil {
 		t.Fatalf("命令行文本 8 应能写入: %v", err)
 	}
@@ -507,7 +507,7 @@ func TestSetRejectsBlankConcurrency(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "c.json")
 		writeFile(t, path, `{}`)
 
-		if _, err := SetFromTextAt(path, "concurrency", text, false); err == nil {
+		if _, err := SetFromTextAt(path, "concurrency", text); err == nil {
 			t.Errorf("config set concurrency %q 应被拒绝", text)
 		}
 		raw, err := ReadRawAt(path)

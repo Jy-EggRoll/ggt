@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/config"
@@ -72,14 +71,18 @@ Repository paths are managed by "ggt repo" instead of "ggt config set".`, nil),
 	return c
 }
 
-// showConfig 以 JSON 格式打印当前生效配置。
+// showConfig 以纯 JSON 打印当前生效配置。
+//
+// stdout 只有那份 JSON：`ggt config show | jq` 是文档里写着的用法，而它最需要成立的时刻
+// 恰恰是“配置正好坏着、要靠输出核对文件里到底读到了什么”。因此问题清单与文件路径一律写
+// stderr——它们对交互使用照常可见，又不会混进管道
 func showConfig(cmd *cobra.Command, args []string) error {
 	// 不读全局 cfg（本子树遮蔽了 PersistentPreRunE，那是 nil），直接从文件重新加载，
 	// 语义与 get 保持一致：只看配置文件 + 补默认值。
 	//
 	// 走可恢复加载而不是严格加载：配置坏了的时候，光看一遍当前配置正是排查的第一步。
-	// 坏掉的键按默认值显示，并在打印 JSON 之前逐条说明坏在哪、怎么修（见 loadRecoverableConfig）
-	cfg, err := loadRecoverableConfig()
+	// 坏掉的键按默认值显示，并逐条说明坏在哪、怎么修
+	cfg, problems, err := recoverConfig()
 	if err != nil {
 		ErrorMsg(l10n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": err}))
 		return errSilent
@@ -90,20 +93,30 @@ func showConfig(cmd *cobra.Command, args []string) error {
 		return errors.New(l10n.T("Failed to serialize the configuration: {{.Err}}", map[string]any{"Err": err}))
 	}
 
-	Header(l10n.T("Current configuration", nil))
-	PrintRaw(string(jsonBytes))
-	pterm.Println()
-	InfoMsg(l10n.T("Config file: {{.Path}}", map[string]any{"Path": config.GetDefaultConfigPath()}))
+	printConfigProblems(cmd.ErrOrStderr(), problems)
+	// 用 fmt 而不是 PrintRaw：这里要的是“纯文本 JSON”，PrintRaw 是给带 ANSI 的 git 输出
+	// 准备的透传通道，混用会让这条命令的意图变模糊
+	fmt.Println(string(jsonBytes))
+	fmt.Fprintln(cmd.ErrOrStderr(),
+		l10n.T("Config file: {{.Path}}", map[string]any{"Path": config.GetDefaultConfigPath()}))
 	return nil
 }
 
 // newConfigShowCmd 与 configCmd 相同，提供明确的 show 子命令。
+//
+// 帮助里写明“stdout 只有 JSON”：这条命令最常见的用法是接 jq，而坏键提示恰好也在它的
+// 输出里出现过——用户需要知道提示已经让到了 stderr，管道里不会混进不是 JSON 的行
 func newConfigShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: l10n.T("Show the current configuration", nil),
-		Args:  cobra.NoArgs,
-		RunE:  showConfig,
+		Long: l10n.T(`Print the effective configuration as JSON.
+
+JSON goes to stdout, so the output can be piped (for example into jq). Anything else
+this command has to say — a value that is invalid in the file, the path of the config
+file — goes to stderr.`, nil),
+		Args: cobra.NoArgs,
+		RunE: showConfig,
 	}
 }
 
@@ -183,10 +196,10 @@ Examples:
 				return errUnknownKey(key)
 			}
 
-			// 校验与写入走 config.SetFromTextAt，与网页设置面板是同一份实现。
-			// 最后一个参数为假 = 宽松模式：命令行允许写候选之外的取值，
-			// 例如自定义主题文件的路径，候选只是“能直接点的那几个”
-			written, err := config.SetFromTextAt(config.GetDefaultConfigPath(), s.Key, value, false)
+			// 校验与写入走 config.SetFromTextAt，与网页设置面板是同一份实现：合法取值
+			// 只由注册表的 Normalize 判定，候选清单只是页面能直接点的几个（因此命令行与
+			// 面板对同一个取值不可能给出不同结论）
+			written, err := config.SetFromTextAt(config.GetDefaultConfigPath(), s.Key, value)
 			if err != nil {
 				return err
 			}
@@ -258,29 +271,40 @@ Examples:
 	return c
 }
 
-// resetOneKey 重置单个配置项。
+// resetOneKey 重置单个配置项，或清掉文件里一个未知的键。
+//
+// 能否删除由 config.PlanUnsetAt 判定，与设置面板的“恢复默认”共用同一份规则：
+// 受管项平时不许动，但它的取值非法时放行一次——受管项坏掉之后所有命令都起不来，
+// 唯一能落地的修复就是清掉它。未知键只在“文件里确实写着它”时放行，
+// 拼错键名因此当场暴露，而不是回一句“已删除”让人以为清掉了什么。
 //
 // yes 只影响“清理坏掉的仓库列表”这一条路径：列表里还有可用条目时，清掉它就等于删掉
 // 几个本来能用的仓库，必须先确认（与 reset --all 同一套处理，非交互时同样需要 --yes）。
 func resetOneKey(key string, writeDefault, yes bool) error {
-	s, ok := config.Lookup(key)
-	if !ok {
-		return resetUnknownKey(key, writeDefault)
+	plan, err := config.PlanUnsetAt(config.GetDefaultConfigPath(), key)
+	if err != nil {
+		if errors.Is(err, config.ErrUnknownKey) {
+			return errUnknownKey(key)
+		}
+		return err
 	}
 
-	if s.ManagedBy != "" {
-		bad, err := config.ValueErrorAt(config.GetDefaultConfigPath(), s.Key)
-		if err != nil {
-			// 读不出文件是另一回事：把它报成“取值非法”会让用户以为 reset 修好了配置
+	if !plan.Known {
+		if writeDefault {
+			// 未知键没有默认值可写；这里要说清该用哪一种 reset，而不是让用户以为命令没生效
+			return errors.New(l10n.T("{{.Key}} is not a known setting, so it has no default value; run {{.Command}} to remove it",
+				map[string]any{"Key": plan.Key, "Command": config.ResetCommand(plan.Key)}))
+		}
+		if err := config.UnsetKey(plan.Key); err != nil {
 			return err
 		}
-		if !bad {
-			return errors.New(l10n.T("{{.Key}} is managed by \"{{.Command}}\"; use that command to change it",
-				map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
-		}
-		// 受管约束的是“怎么设值”，不该拦住“怎么清除一个已经坏掉的值”：受管项的值非法时
-		// 所有命令都起不来（其中包括 ggt repo 自己的写入校验），唯一能落地的修复就是这个
-		// reset。因此放行一次，并说明这次是清理非法值而不是绕开 ggt repo
+		SuccessMsg(l10n.T("{{.Key}} is not a known setting; removed it from the config file",
+			map[string]any{"Key": plan.Key}))
+		return nil
+	}
+
+	s, _ := config.Lookup(plan.Key)
+	if plan.Managed {
 		proceed, err := confirmClearingBrokenList(s, yes)
 		if err != nil {
 			return err
@@ -316,8 +340,7 @@ func resetOneKey(key string, writeDefault, yes bool) error {
 // 非交互环境缺 --yes 时直接拒绝而不是卡在确认上：脚本与 CI 里没有人回答提示，
 // 这与 reset --all 的处理是同一条约定。
 func confirmClearingBrokenList(s config.Setting, yes bool) (bool, error) {
-	WarnMsg(l10n.T("{{.Key}} is normally managed by \"{{.Command}}\", but its current value is invalid, so it is cleared to recover the config file",
-		map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
+	WarnMsg(managedResetNote(s.Key, s.ManagedBy))
 
 	total, usable, err := config.PathListCounts(config.GetDefaultConfigPath(), s.Key)
 	if err != nil {
@@ -347,31 +370,13 @@ func confirmClearingBrokenList(s config.Setting, yes bool) (bool, error) {
 	return true, nil
 }
 
-// resetUnknownKey 处理“键名根本没注册”的 reset。
+// managedResetNote 说明“这次清理的是受管项里一个已经坏掉的值”。
 //
-// 为什么允许：未知键现在会让运行期加载失败（否则拼写错误会被静默忽略，用户以为配置生效了），
-// 而 reset 若不认它，用户就只剩手改文件或 reset --all——正是这次要消除的死锁。
-// 删除一个配置键不需要认识它的含义，因此只在“文件里确实写着这个键”时放行；
-// 文件里没有它时仍按未知键报错，拼写错误当场暴露，而不是回一句“已删除”让人以为清掉了什么。
-func resetUnknownKey(key string, writeDefault bool) error {
-	raw, err := config.ReadRawAt(config.GetDefaultConfigPath())
-	if err != nil {
-		return err
-	}
-	k := strings.ToLower(strings.TrimSpace(key))
-	if _, ok := raw[k]; !ok {
-		return errUnknownKey(key)
-	}
-	if writeDefault {
-		// 未知键没有默认值可写；这里要说清该用哪一种 reset，而不是让用户以为命令没生效
-		return errors.New(l10n.T("{{.Key}} is not a known setting, so it has no default value; run {{.Command}} to remove it",
-			map[string]any{"Key": k, "Command": config.ResetCommand(k)}))
-	}
-	if err := config.UnsetKey(k); err != nil {
-		return err
-	}
-	SuccessMsg(l10n.T("{{.Key}} is not a known setting; removed it from the config file", map[string]any{"Key": k}))
-	return nil
+// 命令行 reset 与设置面板共用这一句：受管约束的是“怎么设值”，不该拦住“怎么清除一个坏值”，
+// 因此这次放行要讲清楚——否则用户会以为 ggt repo 的管理规则被绕过去了
+func managedResetNote(key, command string) string {
+	return l10n.T("{{.Key}} is normally managed by \"{{.Command}}\", but its current value is invalid, so it is cleared to recover the config file",
+		map[string]any{"Key": key, "Command": command})
 }
 
 // resetAllConfig 重置整份配置：删除文件，或写入一份全默认值的文件。

@@ -176,6 +176,10 @@ const MSG = {
     applyRestart: 'Needs a ggt restart',
     settingsSavedReload: 'Saved · reloading the page to apply {{keys}}',
     settingsSavedRestart: 'Saved · restart ggt to apply {{keys}}',
+    settingsSavedRemaining: 'still invalid ({{n}}): {{keys}}',
+    settingsRaw: 'Value in the file: {{raw}}',
+    settingsRawEmpty: '(empty)',
+    settingsInvalidHint: 'This value cannot be used, so the default shown above applies until it is fixed',
     filterPlaceholder: 'Filter repositories…',
     filterRegex: 'Regex',
     filterCount: '{{shown}} of {{total}} repositories',
@@ -315,6 +319,10 @@ const MSG = {
     applyRestart: '需重启 ggt',
     settingsSavedReload: '已保存 · 页面即将刷新以应用 {{keys}}',
     settingsSavedRestart: '已保存 · 需重启 ggt 后生效 {{keys}}',
+    settingsSavedRemaining: '仍然无效（{{n}} 项）：{{keys}}',
+    settingsRaw: '文件里的值：{{raw}}',
+    settingsRawEmpty: '（空）',
+    settingsInvalidHint: '这个取值不能用，修复之前运行期按上面显示的默认值处理',
     filterPlaceholder: '按仓库名或路径筛选…',
     filterRegex: '正则',
     filterCount: '{{shown}} / {{total}} 个仓库',
@@ -2375,6 +2383,9 @@ function settingsRow(item) {
   const row = document.createElement('div');
   row.className = 'setting-row';
   row.dataset.key = item.key;
+  // 文件里这一项的取值非法时整行标红：它与“服务端刚拒了这一项”共用同一个样式，
+  // 因为对用户来说两者的意思相同——这一项目前不可用
+  if (item.invalid) row.classList.add('invalid');
 
   const head = document.createElement('div');
   head.className = 'setting-head';
@@ -2396,20 +2407,27 @@ function settingsRow(item) {
 
   // “恢复默认”只在这一项确实偏离默认值时出现：无条件画在每一项上，等于宣告所有项都被改过，
   // 真正改过的那几项反而认不出来——而这个按钮存在的意义正是把改过的那几项标出来。
-  // 判据是当前值与 item.default 的比较，未保存的改动也算：改回默认值，按钮随之消失
+  // 判据是当前值与 item.default 的比较，未保存的改动也算：改回默认值，按钮随之消失。
+  //
+  // 坏掉的项无条件给这个按钮：此时控件里显示的是默认值（item.value === item.default），
+  // 只看“值等于默认值”就判断“没改过”，按钮会藏起来——而“把这一项从文件里删掉”正是
+  // 修掉一个坏值最直接的动作，藏起来等于让用户没有下手的入口
+  const resetVisible = () => item.invalid || ctlValue() !== item.default;
+  let ctl = null;
+  const ctlValue = () => (ctl ? ctl.get() : item.value);
   let reset = null;
   if (!item.managedBy) {
     reset = document.createElement('button');
     reset.type = 'button';
     reset.className = 'btn btn--secondary setting-reset';
     reset.textContent = t('settingsReset');
-    reset.hidden = item.value === item.default;
+    reset.hidden = !resetVisible();
     reset.addEventListener('click', () => resetSetting(item.key));
     head.appendChild(reset);
   }
   row.appendChild(head);
 
-  const ctl = settingsControlFor(item);
+  ctl = settingsControlFor(item);
   settingsControls.set(item.key, ctl);
   ctl.el.classList.add('setting-control');
   if (!ctl.readOnly) {
@@ -2427,7 +2445,8 @@ function settingsRow(item) {
       else settingsDirty.add(item.key);
       row.classList.toggle('dirty', settingsDirty.has(item.key));
       // 恢复默认按钮跟着当前值走：改到与默认值不同就出现，改回默认值就消失
-      if (reset) reset.hidden = ctl.get() === item.default;
+      // （坏掉的项例外，见 resetVisible）
+      if (reset) reset.hidden = !resetVisible();
       updateSaveButton();
     };
     ctl.el.addEventListener('input', onChange);
@@ -2441,9 +2460,22 @@ function settingsRow(item) {
   hint.textContent = item.managedBy ? t('settingManaged', { cmd: item.managedBy }) : item.expected || '';
   row.appendChild(hint);
 
+  // 坏掉的项：文件里原本写的是什么、为什么不行，都要摆出来。
+  // 控件里显示的是默认值（它得能显示一个能看的值），只说“这一项不对”会让用户以为
+  // 文件里就是默认值，而真正要删掉的那串东西反而看不见
+  if (item.invalid) {
+    const raw = document.createElement('p');
+    raw.className = 'setting-raw';
+    raw.textContent = t('settingsRaw', { raw: item.raw === '' ? t('settingsRawEmpty') : item.raw });
+    row.appendChild(raw);
+  }
+
   const err = document.createElement('p');
   err.className = 'setting-error';
-  err.hidden = true;
+  // 文件里这一项坏了：原因随视图一起来（与命令行加载失败、config validate 共用同一句）。
+  // 服务端刚拒绝本次保存时另有分支把它贴到同一行（见 saveSettings）
+  err.textContent = item.invalid ? item.error + ' · ' + t('settingsInvalidHint') : '';
+  err.hidden = !item.invalid;
   row.appendChild(err);
   return row;
 }
@@ -2482,11 +2514,11 @@ async function loadSettings() {
   // 用户在响应到达之前关掉了面板（或又打开了一次）就把这次结果丢掉，
   // 否则会出现“已经回到看板却又被旧结果写了一次”
   if (!settingsOpen) return;
-  if (out.error) {
-    setSettingsOp(t('loadFailed', { err: out.error }), true);
-    return;
-  }
+  // 取数出错时照样把这份视图画出来：整份配置文件读不出来时，服务端仍然逐项给出
+  // 默认值（见 cmd/ui_settings.go），面板因此还能显示配置表与各控件，只是顶部多一句
+  // 文件坏在哪。此前这里直接 return，用户打开面板看到的是上一次留下的内容或一片空白
   renderSettings(out);
+  if (out.error) setSettingsOp(t('loadFailed', { err: out.error }), true);
   // 这一份已经画上去了，把指纹记到设置源上：紧接着的那轮心跳不必再重画一次。
   // 与 diff 源同样的理由，见 loadDiff 末尾那行
   settingsSource.fingerprint = JSON.stringify(out);
@@ -2530,6 +2562,8 @@ async function saveSettings() {
   }
 
   const failed = Object.keys(out.errors || {});
+  const remaining = out.remaining || {};
+  const remainingKeys = Object.keys(remaining).sort();
   if (failed.length > 0) {
     // 逐项贴回它自己那一行：用户不必猜是哪一项被拒了
     for (const key of failed) {
@@ -2547,7 +2581,16 @@ async function saveSettings() {
 
   // 按生效时机把本批改动分组，分别说清“现在生效了 / 要刷新 / 要重启 ggt”。
   // 只靠后端那句 notes 不够：它只覆盖“需重启”一档，而用户真正想知道的是每一项何时生效
-  const text = settingsSavedText(out.applied || []);
+  let text = settingsSavedText(out.applied || []);
+  // 这一次只写了用户改过的那几项，文件里别的坏值（或拼错的未知键）仍会让下一次启动失败。
+  // 后端在写完之后对整份文件复检了一次并把结果放在 remaining 里，这里必须说出来——
+  // 只说“已保存”，用户会以为配置已经好了。键名一并列出：未知键在面板上没有对应的行，
+  // 只报个数的话用户根本不知道要清掉什么
+  if (remainingKeys.length > 0) {
+    // 这句拼在“已保存 · …”之后，因此自己不再带一次 Saved；数目用括号与键名并列，
+    // 避开英文单复数（"1 other entries" 这种写法读起来就是错的）
+    text += ' · ' + t('settingsSavedRemaining', { n: remainingKeys.length, keys: remainingKeys.join(LIST_SEP) });
+  }
   // 结果写在面板自己那一行，而不是发成通知：通知堆叠区就在右下角，恰好压在面板页脚那颗
   // 保存按钮上（通知的层级高于浮层），保存一次之后想再点一次就会被它挡住。
   // 这也是 #diff-op / #graph-op 一直以来的做法——动作发生在这个面里，结果就写在这个面里；
@@ -2557,7 +2600,8 @@ async function saveSettings() {
   // 但刷新会把上面那句提示一起冲掉：若本批还含“需重启”的项，先把它存进 sessionStorage，
   // 由下次加载补显一次，避免那条最容易被忽略的提示（重启 ggt）被刷新吞掉
   if (out.reload) {
-    persistSettingsNote(out.applied || []);
+    // 整句都存下来：其中既有“需重启 ggt”那一档，也可能有“另有 N 项仍然无效”
+    persistSettingsNote(text);
     location.reload();
     return;
   }
@@ -2589,14 +2633,15 @@ function settingsSavedText(keys) {
   return parts.join(' · ');
 }
 
-// persistSettingsNote 在刷新页面之前，把“需重启 ggt”的提示暂存起来（若有）。
-// 只有这一档值得跨刷新保留：需刷新的项刷新后就生效了，无需再提示；而重启这一档恰恰最容易被
-// 刷新吞掉、也最容易被用户忽略。这里只做暂存，补显在页面加载时的那段（见 consumeSettingsNote）
-function persistSettingsNote(keys) {
-  const restart = settingsAppliedGroups(keys).restart;
-  if (restart.length === 0) return;
+// persistSettingsNote 在刷新页面之前，把这一轮还没看完的提示暂存起来。
+//
+// 只存“刷新后仍然成立”的内容：需刷新的项刷新后就生效了，不必再提；而“需重启 ggt”与
+// “另有 N 项仍然无效”两句话会被刷新吞掉，且都不是刷新能解决的。这里只做暂存，
+// 补显在页面加载时的那段（见 consumeSettingsNote）
+function persistSettingsNote(text) {
+  if (!text) return;
   try {
-    sessionStorage.setItem(SETTINGS_NOTE_KEY, t('settingsSavedRestart', { keys: restart.join(LIST_SEP) }));
+    sessionStorage.setItem(SETTINGS_NOTE_KEY, text);
   } catch (e) {
     // 隐私模式等场景下 sessionStorage 不可用：宁可丢这句提示，也不要让保存流程在这里中断
   }
@@ -2616,7 +2661,8 @@ async function resetSetting(key) {
   }
   if (out.reload) {
     // 恢复默认同样可能动到“需重启”的项（例如把语言重置回默认）：刷新前也要留住那句提示
-    persistSettingsNote(out.applied || [key]);
+    const restart = settingsAppliedGroups(out.applied || [key]).restart;
+    persistSettingsNote(restart.length > 0 ? t('settingsSavedRestart', { keys: restart.join(LIST_SEP) }) : '');
     location.reload();
     return;
   }
@@ -3203,6 +3249,24 @@ const sources = [];
 //   fetch   取数，失败时抛错
 //   apply   拿到数据后重绘
 //   onError 取数失败时的提示；缺省表示保留页面上的旧内容，交给对应的状态行去说
+// configNotice 记住当前显示在结果行里的「配置文件有问题」提示。
+//
+// 记住它有两个用处：同一句话不必每轮心跳都重写一次 DOM；配置修好之后也才分得清
+// 结果行里那句话是不是自己写的——是就清掉，不是就别去动别人刚做完的动作结果
+const configNotice = { shown: '' };
+
+function syncConfigNotice(text) {
+  const next = text || '';
+  if (next === configNotice.shown) return;
+  const prev = configNotice.shown;
+  configNotice.shown = next;
+  if (next) {
+    setBoardOp(next, true);
+    return;
+  }
+  if (prev && boardOpEl.textContent === prev) setBoardOp('', false);
+}
+
 function registerSource(source) {
   const entry = { ...source, fingerprint: null, seq: 0 };
   sources.push(entry);
@@ -3246,6 +3310,10 @@ registerSource({
     // 时间走 clockTime：24 小时制，且不随系统语言变成 AM/PM。
     // 耗时不再显示——它本是给排障用的，对看板用户没有信息量，要查的时候看日志
     statusEl.textContent = t('updated', { time: clockTime(payload.generatedAt) });
+    // 配置文件坏掉时看板照常显示（只读数据仍然有用），但必须说清两件事：仓库列表可能
+    // 缺项（坏掉的 repo_paths 只保留仍然可用的条目），以及页面上的 git 操作会被拒绝。
+    // 不说出来，用户会以为看板显示的就是全部仓库，也会在点推送后收到一个莫名其妙的拒绝
+    syncConfigNotice(payload.configError);
   },
   // 失败时保留上一次的行不动（旧数据好过空白），只在角落里说明状态，
   // 避免网络抖动就让整屏内容消失
@@ -3291,12 +3359,10 @@ const settingsSource = registerSource({
   open: () => settingsOpen && settingsDirty.size === 0,
   fetch: fetchSettingsView,
   apply: (out) => {
-    // 取数出错时保留面板上已有的内容，只在面板的状态行说明原因
-    if (out.error) {
-      setSettingsOp(t('loadFailed', { err: out.error }), true);
-      return;
-    }
+    // 取数出错时服务端仍会给出逐项视图（默认值），因此照样重画，只在状态行补一句原因。
+    // 面板开着且没有未保存改动时才会走到这里（见 open），重画不会冲掉用户正在编辑的内容
     renderSettings(out);
+    if (out.error) setSettingsOp(t('loadFailed', { err: out.error }), true);
   },
 });
 

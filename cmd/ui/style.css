@@ -1393,6 +1393,15 @@ body {
 .setting-hint,
 .setting-error { margin: var(--sp-1) 0 0; font-size: var(--fs-xs); color: var(--text-dim); }
 .setting-error { color: var(--git-conflicting); }
+/* 文件里那一项原本写下的值：等宽显示，因为用户要照着它去命令行或配置文件里找。
+   长路径与 JSON 片段都可能很长，break-all 让它在面板里折行，而不是把面板撑出横向滚动 */
+.setting-raw {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--git-conflicting);
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
 
 /* 页脚：左边是配置文件的路径（用户要知道改的是哪个文件），右边是保存。
    路径可能很长，省略号截断而不折行——它是一行元信息，不该把页脚撑成两行 */
@@ -1422,6 +1431,10 @@ body {
   margin: 0;
   padding: var(--sp-2) var(--settings-pad-x) 0;
   font-size: var(--fs-xs);
+  /* 保留换行并按面板宽度折行：这句话可能是“原因”加一条修复命令两行（见 cmd/ui_settings.go
+     的 WithRecoveryHint），折成一行会被截断，用户就看不到下一步该敲什么 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 #settings-op:empty { display: none; }
 #settings-op.error { color: var(--git-conflicting); }

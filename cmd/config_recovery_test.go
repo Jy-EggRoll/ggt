@@ -259,3 +259,63 @@ func TestResetUnknownKeyRemovesOnlyWhenPresent(t *testing.T) {
 		}
 	})
 }
+
+// TestLoadUIStartupConfigAllowsBrokenConfig 断言看板在配置坏掉时仍能起来，
+// 但坏掉的项只按默认值处理，并且这条事实被逐条打印出来。
+//
+// 看板是唯一能在图形界面里报告并修复配置的入口，而它此前走严格加载：配置文件里有一项
+// 非法，ggt ui 就在启动阶段退出——面板打不开，也就修不了。放宽的只有“启动”这一步：
+// 坏值仍然点名、给出修复命令，页面上的 git 写操作另有 configNow 把关
+func TestLoadUIStartupConfigAllowsBrokenConfig(t *testing.T) {
+	initL10n(t, "en")
+	brokenConfig(t, `{"log_level":"trace","repo_paths":["/tmp/keep-me"]}`)
+
+	// 严格加载必须失败，否则这条路径根本没被走到
+	if _, err := config.LoadConfig(); err == nil {
+		t.Fatal("严格加载应拒绝这份配置")
+	}
+
+	buf := capturePtermOutput(t)
+	got, err := loadUIStartupConfig()
+	if err != nil {
+		t.Fatalf("配置单项非法时看板应仍能启动，实得 %v", err)
+	}
+	if got.LogLevel != "warn" {
+		t.Errorf("非法 log_level 应按默认值 warn 处理，实得 %q", got.LogLevel)
+	}
+	if len(got.RepoPaths) != 1 || got.RepoPaths[0] != "/tmp/keep-me" {
+		t.Errorf("仍然可用的仓库条目应保留，实得 %#v", got.RepoPaths)
+	}
+
+	out := buf.String()
+	// 修复命令从 config.ResetCommand 取，而不是在这里再拼一遍：键名的 shell 引用规则
+	// 只有一个来源（见 cmd/config.go 的 reset 提示）
+	for _, want := range []string{config.ResetCommand("log_level"), "git actions"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("提示里应出现 %q（坏在哪、页面上的写操作会停用），实得 %q", want, out)
+		}
+	}
+}
+
+// TestLoadUIStartupConfigStartsWithDefaultsOnBrokenJSON 断言连 JSON 都读不出来时，
+// 看板以默认配置起服务——否则设置面板没有机会把“文件读不出来”显示给用户。
+func TestLoadUIStartupConfigStartsWithDefaultsOnBrokenJSON(t *testing.T) {
+	initL10n(t, "en")
+	brokenConfig(t, `{not json`)
+
+	if _, err := config.LoadConfig(); err == nil {
+		t.Fatal("严格加载应拒绝这份配置")
+	}
+
+	buf := capturePtermOutput(t)
+	got, err := loadUIStartupConfig()
+	if err != nil {
+		t.Fatalf("JSON 读不出来时看板仍应以默认配置启动，实得 %v", err)
+	}
+	if got.Concurrency != config.DefaultConcurrency || len(got.RepoPaths) != 0 {
+		t.Errorf("应以全默认配置启动，实得 %+v", got)
+	}
+	if out := buf.String(); !strings.Contains(out, "cannot be read") {
+		t.Errorf("应说明文件读不出来，实得 %q", out)
+	}
+}
