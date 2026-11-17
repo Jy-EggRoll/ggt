@@ -202,7 +202,7 @@ func collectUIPayload(ctx context.Context) *uiPayload {
 	started := time.Now()
 	entries := ExpandRepos(ctx, GetRepoList())
 
-	repos := worker.Map(ctx, entries, Concurrency(), func(ctx context.Context, e RepoEntry) uiRepo {
+	repos := worker.Map(ctx, entries, func(ctx context.Context, e RepoEntry) uiRepo {
 		r := uiRepo{
 			Name:          e.Name,
 			Path:          e.Path,
@@ -1283,8 +1283,11 @@ func (c *uiCache) handleSync(w http.ResponseWriter, r *http.Request) {
 // 一个端点两种范围，而不是两个端点：命令、并发方式与响应形状完全一样，差别只在“对哪些仓库跑”，
 // 分成两个端点等于把这段逻辑抄两遍
 //
-// 并发跑：与 ggt sync 共用 worker.Map 与同一个并发度设置。串行做几十个远程仓库要等到
-// 地老天荒，并发下总耗时约等于最慢的那一个
+// 并发跑：与 ggt sync 共用 worker.Map 与同一份进程级信号量。串行做几十个远程仓库要等到
+// 地老天荒，并发下总耗时约等于最慢的那一个。
+//
+// 信号量来自 worker.Init 装好的那一份，本端点不再按请求自建：否则多个标签页或脚本同时点
+// “获取”时，总并发会变成“请求数 × 并发数”，本机保护直接被抵消
 //
 // 不复用 handleWrite 那套流程：那个是“针对某一个仓库、且仓库必填”的（要从请求里取 repo、
 // 校验文件），而这里允许对全部仓库跑，生搬硬套会让它多出一个“仓库为空即全部”的隐式约定
@@ -1318,7 +1321,7 @@ func (c *uiCache) handleFetch(w http.ResponseWriter, r *http.Request) {
 	// 修剪行为在这一次行动里固定：多个仓库并发跑，各自现读配置只会读到同一份文件的多个版本，
 	// 而一次按钮点击本来就该是一个统一动作；用户改完设置再点一次即可
 	args := fetchArgs(c.configNow().PruneBranches)
-	outcomes := worker.Map(r.Context(), repos, Concurrency(), func(ctx context.Context, repo uiRepo) outcome {
+	outcomes := worker.Map(r.Context(), repos, func(ctx context.Context, repo uiRepo) outcome {
 		// 用 RunCombinedContext：失败原因在 git 的 stderr 里，err 本身只是 "exit status N"
 		out, err := git.RunCombinedContext(ctx, repo.Path, args...)
 		if err != nil {

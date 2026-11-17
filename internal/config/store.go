@@ -265,6 +265,13 @@ func EffectiveAt(path, key string) (any, error) {
 			return l10n.Normalize(text, locales.Supported(), locales.Default), nil
 		}
 	}
+	// concurrency 的旧语义值同理：运行期按 auto 处理（见 migrateDeprecatedConcurrency），
+	// get 若原样打出 CPUFull，脚本会以为这个值仍然有效
+	if s.Key == "concurrency" {
+		if text, isStr := v.(string); isStr && isDeprecatedConcurrencyValue(text) {
+			return DefaultConcurrency, nil
+		}
+	}
 	return v, nil
 }
 

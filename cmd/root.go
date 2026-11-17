@@ -56,10 +56,21 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 				return fmt.Errorf("%s: %w", l10n.T("Failed to load the configuration", nil), err)
 			}
 
-			// 命令行的 -c 参数优先级高于配置文件；-c 传的是具体数字，
-			// 覆盖为数字串（如 "8"），语义串常量（CPUHalf 等）仅在配置文件未显式设置时生效。
-			if concurrency > 0 {
+			// 命令行的 -c 只在显式给出时才覆盖配置：默认值 0 必须与“用户写了 -c 0”
+			// 区分开，否则 -c 0 会被当成没写而静默忽略。cobra 的 Changed 正是这个区分。
+			if cmd.Flags().Changed("concurrency") {
 				cfg.Concurrency = strconv.Itoa(concurrency)
+			}
+
+			// 并发数在这里一次性解析并装进 worker 的共享信号量。放在启动流程而不是各命令里，
+			// 是因为它同时是“上限校验”的唯一入口：-c 与配置文件两条来源都在此汇合，
+			// 越界时让命令以非 0 退出码失败，而不是截断成上限继续跑。
+			n, err := cfg.ConcurrencyValue()
+			if err != nil {
+				return err
+			}
+			if err := worker.Init(n); err != nil {
+				return err
 			}
 
 			// 日志必须在读完配置之后、任何业务代码之前建立：级别要由配置与 -v/-vv 共同决定，
@@ -70,11 +81,11 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 		},
 	}
 
-	// -c 的默认值为 0，表示“未显式指定”；在 PersistentPreRunE 中仅当 >0 时才
-	// 覆盖配置文件里的并发数。真正生效的默认值（CPU 核心数的一半）由
-	// config 包的 resolveConcurrency 统一计算，避免出现两处默认值逻辑不一致。
+	// -c 的默认值 0 只是占位，是否生效由 cobra 的 Changed 判定（见 PersistentPreRunE）。
+	// 它没有 auto 形态：要跟着核数走就别写 -c，交给配置项的 auto 默认值。
+	// 取值边界（1 到 64）与配置文件共用同一份解析与报错，见 config.resolveConcurrency。
 	root.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0,
-		l10n.T("Concurrency (defaults to the concurrency config value; when unset uses the CPUHalf semantic value, i.e. half of the CPU cores; CPUFull/CPUQuarter or an explicit number are also accepted)", nil))
+		l10n.T("Concurrency: an integer from 1 to 64 (overrides the concurrency setting; the setting defaults to auto, i.e. half of the CPU cores capped at 8)", nil))
 	// -v/--verbose 是可累加的持久化 flag：-v 提到 info（含各阶段耗时），-vv 及以上到 debug。
 	// 与 flk 保持一致（两个工具的日志入口是同一套），默认级别由配置项 log_level 决定
 	root.PersistentFlags().CountVarP(&verboseCount, "verbose", "v",
@@ -196,10 +207,11 @@ func GetConfig() *config.Config {
 	return cfg
 }
 
-// Concurrency 返回当前生效的并发数（已把配置里的语义串解析为具体整数）。
-// 各命令启动 worker 时统一调用它，避免每处都写 GetConfig().ConcurrencyValue()。
+// Concurrency 返回当前生效的并发数。
+// 唯一真相在 worker 的共享信号量里（启动时由 PersistentPreRunE 装入），这里只做转发：
+// 若改成每次重新解析配置，看板重读配置之后就与正在生效的限流值对不上号了。
 func Concurrency() int {
-	return GetConfig().ConcurrencyValue()
+	return worker.Concurrency()
 }
 
 // initLogger 建立分级日志，级别来源链：命令行 -v/-vv > 配置项 log_level > 内置默认（warn）。
@@ -293,7 +305,7 @@ func gather[T any](ctx context.Context, label string, repos []RepoEntry, fn func
 		tasks[i] = gatherTask{idx: i, repo: e}
 	}
 
-	results := worker.Map(ctx, tasks, Concurrency(), func(ctx context.Context, task gatherTask) T {
+	results := worker.Map(ctx, tasks, func(ctx context.Context, task gatherTask) T {
 		var zero T
 		// worker.Map 只在“派生下一个任务”之前看 ctx：已经派生、正排在信号量上等位的
 		// goroutine 在取消之后仍会执行 fn。这里再拦一道，取消后不再启动任何新任务——

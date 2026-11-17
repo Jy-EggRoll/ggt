@@ -5,8 +5,8 @@
 // 配置项：
 //   - repo_paths: 直接添加的仓库路径列表
 //   - parent_paths: 父目录列表（自动扫描其中的 git 仓库）
-//   - concurrency: 并发数，存为语义串（如 "CPUHalf"）或显式数字串（如 "8"），
-//     未设置时默认 "CPUHalf"（CPU 逻辑核数的一半），详见 resolveConcurrency
+//   - concurrency: 并发数，只接受 auto（运行时按 CPU 逻辑核数算，最多 8）
+//     或 1 到 64 的整数串（如 "8"），默认 auto，详见 resolveConcurrency
 //   - ignore_submodules: 是否在所有功能中忽略子模块，默认 false（即默认包含子模块）
 //   - size_bucket_low_mb: size 命令分桶的下界阈值（MB），默认 500
 //   - size_bucket_high_mb: size 命令分桶的上界阈值（MB），默认 800
@@ -22,20 +22,29 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/eggokit/logger"
 	"github.com/pterm/pterm"
 )
 
-// DefaultConcurrency 是并发数的默认语义值：取 CPU 逻辑核数的一半。
-// 配置文件中未显式设置 concurrency 时，存储该语义串而非具体数字。
-const DefaultConcurrency = "CPUHalf"
+// DefaultConcurrency 是并发数的默认值：auto。
+// 配置里存的是这个词而不是某个具体数字——一旦落盘成数字，同一份 dotfiles 换到
+// 另一台机器上就会带上原来那台机器的核数假设，而那台机器有几个核与这台无关。
+const DefaultConcurrency = "auto"
+
+// autoConcurrencyCeiling 是 auto 换算结果的上限。
+// 核数再多也不提高默认并发：超过这个数之后，瓶颈已经从 CPU 转到磁盘与内存带宽，
+// 再多的子进程只会互相争抢 I/O，对本地响应没有帮助，反而让机器更热。
+const autoConcurrencyCeiling = 8
 
 // Config 是 ggt 配置文件的 Go 结构体映射。
 // 字段标签同时兼容 viper (mapstructure) 和 JSON 序列化。
@@ -196,6 +205,10 @@ func decodeConfig(raw map[string]any) (*Config, error) {
 
 	// 文件里写了非法值（如 size_bucket_low_mb: 0、空串的语言）时的回退。
 	// 这些值由 ggt config validate 作为问题报出，本函数只保证“报出之前程序仍然可用”
+	//
+	// concurrency 另有一道旧值迁移：旧版存的是 CPUHalf 这类语义串，读到就按 auto
+	// 处理并提示一次，见 migrateDeprecatedConcurrency
+	migrateDeprecatedConcurrency(&cfg)
 	applyConfigDefaults(&cfg)
 
 	return &cfg, nil
@@ -216,7 +229,7 @@ func defaultConfig() *Config {
 }
 
 // applyConfigDefaults 对“未设置或非法”的字段补上 settings 里登记的默认值：
-//   - concurrency 为空 → "CPUHalf"（语义串，而非具体数字）
+//   - concurrency 为空 → "auto"（语义值，运行时才按核数换算成具体数字）
 //   - size_bucket_low_mb / size_bucket_high_mb <= 0 → 500 / 800
 //   - size_unit 为空 → "decimal"
 //   - language 为空 → locales.Default（"en"）
@@ -287,33 +300,85 @@ func defaultIntOf(key string) int {
 // 需要落盘时一律走 store.go 的单键写入（SetKeyAt / UnsetKeyAt），只动调用方真正
 // 关心的那个键，文件里其他内容（含用户手写的未知键）原样保留。
 
-// resolveConcurrency 把配置里读到的并发语义串解析为可直接用于 worker 的实际并发数。
-// 支持三种 CPU 相对语义（官方信源：https://pkg.go.dev/runtime#NumCPU）：
-//   - "CPUHalf"   （默认）CPU 逻辑核数的一半
-//   - "CPUFull"   全部 CPU 逻辑核数
-//   - "CPUQuarter" CPU 逻辑核数四分之一
+// resolveConcurrency 把配置里的并发数解析成可直接交给 worker 的实际并发数。
 //
-// 也支持直接写正整数串（如 "8"）；空串或不合法串回退到 CPUHalf 语义。
-// 解析结果至少为 1，避免 0 或负数导致 worker 无法启动。
-// 官方信源：https://pkg.go.dev/builtin#max
-func resolveConcurrency(raw string) int {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "cpuhalf":
-		return max(1, runtime.NumCPU()/2)
-	case "cpufull":
-		return max(1, runtime.NumCPU())
-	case "cpuquarter":
-		return max(1, runtime.NumCPU()/4)
-	default:
-		if n, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && n > 0 {
-			return n
-		}
-		return max(1, runtime.NumCPU()/2)
+// 只接受两种形态（大小写不敏感、去首尾空白）：auto，或 1 到 maxConcurrency 的整数。
+// 空串按 auto 处理：缺键与“手工构造的零值 Config”都会走到这里，若在这里另设一套
+// 默认值，auto 的含义就有了第二份实现，两处迟早会对不上。
+//
+// 越界与无法解析一律返回 error 而不是回退默认值：并发数是本机资源保护参数，
+// 静默回退会让用户以为 -c 200 生效了，实际跑的却是另一个数字。
+// 官方信源：https://pkg.go.dev/runtime#NumCPU 与 https://pkg.go.dev/builtin#max
+func resolveConcurrency(raw string) (int, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" || strings.EqualFold(v, DefaultConcurrency) {
+		return autoConcurrency(), nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > maxConcurrency {
+		return 0, invalidConcurrencyError(raw)
+	}
+	return n, nil
+}
+
+// autoConcurrency 按本机逻辑核数计算 auto 的取值。
+func autoConcurrency() int {
+	return autoConcurrencyFor(runtime.NumCPU())
+}
+
+// autoConcurrencyFor 把核数换算成 auto 的取值。
+// 单列出来是为了让测试用固定核数断言“至少为 1”与“封顶 8”这两条边界，
+// 不必依赖跑测试的机器有几个核。
+func autoConcurrencyFor(ncpu int) int {
+	return min(max(1, ncpu/2), autoConcurrencyCeiling)
+}
+
+// invalidConcurrencyError 生成并发数越界或无法解析时的报错。
+// 必须同时给出实际值与允许范围：只说“取值非法”时，用户分不清是 -c 写错了，
+// 还是配置文件里那份旧值没改。来源也点出来，因为运行期只有这两个入口。
+func invalidConcurrencyError(raw string) error {
+	return fmt.Errorf("%s", l10n.T("Invalid concurrency value {{.Value}}: expected auto or an integer from 1 to {{.Max}} (set with -c or the concurrency setting)",
+		map[string]any{"Value": strings.TrimSpace(raw), "Max": maxConcurrency}))
+}
+
+// deprecatedConcurrencyValues 是旧版支持的 CPU 相对语义。
+// 保留这份清单只为识别旧配置：它们的含义已并入 auto，新版永远不会写入这些词。
+var deprecatedConcurrencyValues = map[string]bool{
+	"cpuhalf":    true,
+	"cpufull":    true,
+	"cpuquarter": true,
+}
+
+// isDeprecatedConcurrencyValue 判断取值是否落在旧语义清单里。
+// 迁移、体检分级与 config get 的归一化都走这一处，三处各写一份大小写处理迟早会分叉。
+func isDeprecatedConcurrencyValue(raw string) bool {
+	return deprecatedConcurrencyValues[strings.ToLower(strings.TrimSpace(raw))]
+}
+
+// deprecatedConcurrencyWarned 让迁移提示每个进程只出现一次。
+// 看板会周期性重读配置（见 cmd/ui.go 的 configNow），每读一次提示一遍会把终端刷满，
+// 而用户只需要知道“旧值要改写”这一件事。
+var deprecatedConcurrencyWarned atomic.Bool
+
+// migrateDeprecatedConcurrency 把旧语义值改写成 auto，并在首次遇到时提示。
+//
+// 刻意不换算成某个数字：CPUFull 原本表示“全部核数”，换算成今天这台机器的核数
+// 再落盘，换机器后就是错的；auto 保持了“跟着本机走”的原意。
+func migrateDeprecatedConcurrency(cfg *Config) {
+	raw := strings.TrimSpace(cfg.Concurrency)
+	if !isDeprecatedConcurrencyValue(raw) {
+		return
+	}
+	cfg.Concurrency = DefaultConcurrency
+	if deprecatedConcurrencyWarned.CompareAndSwap(false, true) {
+		logger.Warn(l10n.T("The concurrency value {{.Value}} is deprecated and now behaves like auto; change it to auto or an integer",
+			map[string]any{"Value": raw}))
 	}
 }
 
-// ConcurrencyValue 返回配置当前生效的实际并发数（已解析为 int）。
-// 各命令在启动 worker 时应统一调用本方法，而非自行读取 Concurrency 字符串。
-func (c *Config) ConcurrencyValue() int {
+// ConcurrencyValue 返回配置当前生效的实际并发数（auto 已按本机核数换算）。
+// 各命令在启动 worker 前统一调用本方法，自行读取 Concurrency 字符串会漏掉上限校验；
+// 返回 error 而不是回退默认值，越界的并发数必须让命令以非 0 退出码失败。
+func (c *Config) ConcurrencyValue() (int, error) {
 	return resolveConcurrency(c.Concurrency)
 }

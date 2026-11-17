@@ -315,6 +315,7 @@ func TestSettingsViewApplyAtIsConcrete(t *testing.T) {
 // 顺带确认派生清单与标注一致——它一旦与注册表分叉，页面就会对错项的提示
 func TestApplyAtDeclaredForDeferredKeys(t *testing.T) {
 	want := map[string]ApplyAt{
+		"concurrency":    ApplyRestart,
 		"language":       ApplyRestart,
 		"log_level":      ApplyRestart,
 		"theme":          ApplyReload,
@@ -343,8 +344,10 @@ func TestApplyAtDeclaredForDeferredKeys(t *testing.T) {
 	if len(reload) != 6 {
 		t.Errorf("ApplyReload 档应有 6 项，实得 %d：%v", len(reload), reload)
 	}
+	// concurrency 也属于重启档：它在启动时被装进 worker 的共享信号量，
+	// 运行中改配置换不掉那份信号量（见 worker.Init）
 	restart := KeysWithApplyAt(ApplyRestart)
-	if len(restart) != 2 || restart[0] != "language" || restart[1] != "log_level" {
-		t.Errorf("ApplyRestart 档应为 language 与 log_level（按注册表顺序），实得 %v", restart)
+	if strings.Join(restart, ",") != "concurrency,language,log_level" {
+		t.Errorf("ApplyRestart 档应为 concurrency、language 与 log_level（按注册表顺序），实得 %v", restart)
 	}
 }

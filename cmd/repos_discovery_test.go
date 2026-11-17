@@ -12,9 +12,9 @@
 // 三个函数都会读包级全局 cfg（经 GetConfig()），所以每个用例都必须显式替换并在结束时还原，
 // 否则状态会泄漏给同包其他测试文件——cfg 是单例，即使测试串行执行也会互相污染
 //
-// expand 内部会调用 Concurrency()，它要求 cfg 非 nil 且 concurrency 是有效语义串，
-// 因此本文件里给 cfg 的 concurrency 一律写死 "2"，不依赖本机 CPU 核数——
-// 默认的 CPUHalf 会让并发数随机器变化，从而使测试结果不可复现
+// expand 内部依赖 worker 的进程级共享信号量，因此每次替换配置后必须重新 Init；
+// 本文件里给 cfg 的 concurrency 一律写死 "2"，不依赖本机 CPU 核数——
+// 默认的 auto 会让并发数随机器变化，从而使测试结果不可复现
 //
 // 所有文件系统场景一律用 t.TempDir() 搭建，跑完由测试框架自动清理，不在代码目录留垃圾
 package cmd
@@ -26,17 +26,41 @@ import (
 	"testing"
 
 	"github.com/jy-eggroll/ggt/internal/config"
+	"github.com/jy-eggroll/ggt/internal/worker"
 )
 
 // withConfig 在本用例期间把包级全局 cfg 换成指定配置，用例结束时还原原值
-// 必须还原的原因：GetConfig()/Concurrency() 读的都是这一个全局指针，
+// 必须还原的原因：GetConfig() 读的是这一个全局指针，
 // 用例跑完若留着被改过的配置，后续任何依赖配置的测试都会拿到脏数据而随机失败
 // 用 t.Cleanup 而不是直接写 defer，是为了让表驱动里的每个 t.Run 子用例各自负责自己的还原
+//
+// 同时按配置里的值重新初始化 worker：Map 用的是进程级共享信号量，不先 Init 会按约定 panic。
+// 换算交给被测的 ConcurrencyValue，测试不另写一套默认值，免得与真实解析分叉。
+//
+// worker 的并发数也要还原：它同样是包级状态，不还原就会让后续用例继承本用例的上限。
+// 进程启动前的那份“未初始化”状态无法用公开 API 恢复（Init 只收正数），因此只在
+// 原值大于 0 时还原——那已经是本包测试会遇到的唯一真实前态
 func withConfig(t *testing.T, c *config.Config) {
 	t.Helper()
 	old := cfg
+	oldConcurrency := worker.Concurrency()
 	cfg = c
-	t.Cleanup(func() { cfg = old })
+	t.Cleanup(func() {
+		cfg = old
+		if oldConcurrency > 0 {
+			if err := worker.Init(oldConcurrency); err != nil {
+				t.Errorf("还原 worker 并发数失败: %v", err)
+			}
+		}
+	})
+
+	n, err := c.ConcurrencyValue()
+	if err != nil {
+		t.Fatalf("测试配置的 concurrency 非法: %v", err)
+	}
+	if err := worker.Init(n); err != nil {
+		t.Fatalf("初始化 worker 失败: %v", err)
+	}
 }
 
 // writeTestFile 写文件并自动补齐父目录，省去每个用例重复 MkdirAll
@@ -256,8 +280,8 @@ func TestDiscoverSubmodules(t *testing.T) {
 //   - 顶层条目全部在前，子模块按父仓库的配置顺序依次追加
 //   - 子模块的 Path 为父仓库路径与相对路径拼接的结果
 //
-// 每个用例显式给 cfg 设 concurrency="2"：expand 会调用 Concurrency() 读取 cfg，
-// 若沿用本机默认的 CPUHalf，并发数会随机器变化，一旦并发路径有问题就难以复现
+// 每个用例显式给 cfg 设 concurrency="2"：expand 依赖 worker 的并发上限，
+// 若沿用默认的 auto，并发数会随机器变化，一旦并发路径有问题就难以复现
 func TestExpand(t *testing.T) {
 	cases := []struct {
 		name string

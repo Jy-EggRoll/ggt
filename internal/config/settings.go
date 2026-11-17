@@ -34,6 +34,13 @@ import (
 // 用户可见文案的数量会随校验规则数线性增长，中英双语都得跟着维护。
 var ErrInvalidValue = errors.New("invalid value")
 
+// errDeprecatedConcurrency 表示写入的是旧版并发语义值（CPUHalf 等）。
+//
+// 单独成一个错误类别，是为了让两条路径给出符合事实的结论：config validate 把它报成
+// 警告——运行期确实会按 auto 继续跑；config set 仍按普通非法值拒绝——用户正在显式
+// 写一个新值，没有理由再把废弃词写回文件。
+var errDeprecatedConcurrency = errors.New("deprecated concurrency value")
+
 // Kind 描述配置项的取值类型。
 type Kind string
 
@@ -76,19 +83,22 @@ func (a ApplyAt) normalized() ApplyAt {
 	return a
 }
 
-// 数值上限不是洁癖，而是跨平台安全边界：
-//   - concurrency 会一路传到 worker.Map 的 make(chan struct{}, concurrency)，
-//     本项目发布 386 目标，若允许填 20 亿就会直接 OOM
+// 数值上限是给“误填”准备的跨平台安全边界，不是平台限流建议：
+//   - concurrency 决定同时在跑的 git 子进程数。填得过大时信号量就失去了作用，
+//     在跑的进程数趋近仓库数，先被耗尽的是进程数与文件描述符
+//     （不是内存：chan struct{} 的占用与容量无关，实测一个容量 20 亿的 struct{} 通道只占约 112 字节（amd64））
 //   - 分桶阈值若超过 2^31-1，64 位机器能写进去，386 二进制却解码失败，
 //     会导致该平台上所有命令不可用
 //
-// maxConcurrency 只是内存安全边界，不是托管平台的限流建议。
-// GitHub 官方公布过的并发上限（不超过 100）针对的是 REST 与 GraphQL API；git 协议
-// （clone/fetch）的并发数值官方没有给出，社区经验是控制在 10 以内。这里刻意不按这类
-// 经验值收窄默认行为：ggt 的并发是“对不同仓库各发一次 fetch”，与“对同一服务反复发
-// 请求”的场景不同，取多少应当由使用者按仓库数量与平台自行权衡
+// maxConcurrency 与默认值上限 autoConcurrencyCeiling（见 config.go）是两个概念：
+// 后者是默认保护值，保护本机响应与发热；前者是显式调高的安全边界，防止误填。
+// 之所以留到 64 而不是更小：自建镜像与 GitHub 企业版的仓库规模、网络条件各不相同，
+// 需要给“确实要调高”的人留出余量。
+// GitHub 并未公布 git 协议（clone/fetch）的并发上限；其仓库限制文档只建议单个仓库的
+// 读操作不超过每秒 15 次，而 ggt 的并发是“对不同仓库各发一次请求”，两者不是一回事，
+// 因此不按那个数字收窄默认行为
 const (
-	maxConcurrency = 1024
+	maxConcurrency = 64
 	maxBucketMB    = 1_000_000
 	// maxNotifyTimeout 是通知自动消失时长的上界（秒）。
 	// 它没有内存安全的理由，纯是“别让用户填一个等于永不消失的数”——那种意图应当直接填 0
@@ -137,6 +147,8 @@ type Setting struct {
 	Expected string
 	// Parse 把命令行字符串转成待写入的 JSON 值，失败时返回 ErrInvalidValue。
 	// 它同时是 set 的校验器与 validate 的校验器。
+	// 唯一的例外是并发数的旧语义值：它返回 errDeprecatedConcurrency，让 validate 能把
+	// “运行期还能跑、但该改写”与真正的非法值分成两个级别（见 validateKeys）。
 	Parse func(string) (any, error)
 	// ManagedBy 非空表示该项由别的命令管理：get 可读，set/reset 拒绝。
 	// 仓库列表就属于这种——增删要走 ggt repo，那里有去重、git 仓库校验、路径规范化。
@@ -154,7 +166,7 @@ type Setting struct {
 	// 代价只是每次生成页面时求值一遍
 	Options func() []Option
 	// AllowCustom 表示候选取值之外还接受别的写法。
-	// concurrency 就是这种：既能点选 CPUHalf 这类语义串，也能直接写具体数字。
+	// concurrency 就是这种：候选是 auto 与几个常用档位，1 到 64 的任意整数也合法。
 	// 页面据此把控件渲染成“输入框 + 候选”而不是纯下拉
 	AllowCustom bool
 	// Min / Max 是整数项的取值边界，nil 表示这一侧不设限。仅对 KindInt 有意义。
@@ -174,16 +186,21 @@ type Setting struct {
 // 此处求值只能拿到英文原文，所以不要假定这个字段已经翻译过——要用它的地方现查一次
 var settings = []Setting{
 	{
-		Key:      "concurrency",
-		Title:    l10n.T("Concurrency", nil),
-		Kind:     KindString,
-		Default:  DefaultConcurrency,
-		Expected: l10n.T("CPUHalf, CPUFull, CPUQuarter, or a positive integer (max 1024)", nil),
+		Key:     "concurrency",
+		Title:   l10n.T("Concurrency", nil),
+		Kind:    KindString,
+		Default: DefaultConcurrency,
+		// 这句文案里的 64 必须与 maxConcurrency 一起改：它是给用户看的允许范围，
+		// 而提取器要求消息首参是字面量，没法在文案里插常量
+		Expected: l10n.T("auto or an integer from 1 to 64", nil),
 		Parse:    parseConcurrency,
-		// 三个语义串之外还接受任意正整数，因此候选只是“能直接点的几个”，
+		// auto 之外还接受 1 到 64 的任意整数，因此候选只是“能直接点的几个”，
 		// 不是全部合法取值
 		Options:     concurrencyOptions,
 		AllowCustom: true,
+		// 并发数在进程启动时一次性装进 worker 的共享信号量（见 worker.Init），
+		// 运行中改配置换不掉它；标成“需重启”而不是让面板提示一个不会发生的“立即生效”
+		ApplyAt: ApplyRestart,
 	},
 	{
 		Key:      "ignore_submodules",
@@ -411,20 +428,22 @@ func KeysWithApplyAt(at ApplyAt) []string {
 	return out
 }
 
-// parseConcurrency 解析并发数：三种 CPU 相对语义（大小写不敏感）或正整数。
-// 语义串统一存成规范大小写，避免文件里出现 cpuhalf/CPUHALF 这类同义异形写法。
+// parseConcurrency 解析并发数：语义值 auto（大小写不敏感）或 1 到 maxConcurrency 的整数。
+// auto 统一存成小写规范形态，避免文件里出现 AUTO/Auto 这类同义异形写法。
+// 空串按 auto 处理：显式写空串等于没设，与缺键走同一条路径，不另立一套默认值。
+//
+// 旧语义值返回 errDeprecatedConcurrency 而不是 ErrInvalidValue：调用方据此区分
+// “运行期还能继续跑的废弃值”与“真正的非法值”（见 validate.go 的告警分级）。
 func parseConcurrency(s string) (any, error) {
 	v := strings.TrimSpace(s)
-	switch strings.ToLower(v) {
-	case "cpuhalf":
-		return "CPUHalf", nil
-	case "cpufull":
-		return "CPUFull", nil
-	case "cpuquarter":
-		return "CPUQuarter", nil
+	if v == "" || strings.EqualFold(v, DefaultConcurrency) {
+		return DefaultConcurrency, nil
+	}
+	if isDeprecatedConcurrencyValue(v) {
+		return nil, errDeprecatedConcurrency
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 || n > maxConcurrency {
+	if err != nil || n < 1 || n > maxConcurrency {
 		return nil, ErrInvalidValue
 	}
 	return strconv.Itoa(n), nil
@@ -481,13 +500,16 @@ func enumParser(options func() []Option) func(string) (any, error) {
 // intPtr 返回整数的地址，用于表达“这一侧不设边界”（nil）与“边界就是 0”的区别
 func intPtr(n int) *int { return &n }
 
-// concurrencyOptions 返回并发数能直接点选的三个语义值。
-// 具体数字（如 "8"）也合法，但那属于自由输入，由 AllowCustom 表达，不列进候选
+// concurrencyOptions 返回设置面板能直接点选的档位：auto 与几个常用数字。
+// 1 到 64 之间的任意整数同样合法，那属于自由输入，由 AllowCustom 表达，不逐一列出。
+// auto 排在第一位，与默认值一致，面板打开时选中的就是它
 func concurrencyOptions() []Option {
 	return []Option{
-		{Value: "CPUHalf"},
-		{Value: "CPUFull"},
-		{Value: "CPUQuarter"},
+		{Value: DefaultConcurrency},
+		{Value: "4"},
+		{Value: "8"},
+		{Value: "16"},
+		{Value: "32"},
 	}
 }
 

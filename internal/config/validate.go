@@ -8,6 +8,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -128,7 +129,9 @@ func validateKeys(raw map[string]any) []Issue {
 				Message: l10n.T("Unexpected type for {{.Key}}: got {{.Type}}, expected {{.Kind}}; it still works but is better written as the expected type",
 					map[string]any{"Key": s.Key, "Type": jsonTypeName(v), "Kind": string(s.Kind)}),
 			})
-			continue
+			// 刻意不 continue：类型不规范不等于取值合法。运行期会把数字 65 弱转成
+			// "65" 再解析，而 65 超出并发上限时命令会直接失败——若这里跳过解析，
+			// 体检就只会说“类型不规范”，与实际运行结果形成分叉
 		}
 
 		if s.Parse == nil {
@@ -136,6 +139,16 @@ func validateKeys(raw map[string]any) []Issue {
 		}
 		text := ValueText(v)
 		if _, err := s.Parse(text); err != nil {
+			// 废弃的旧语义值是“运行期会被替换成默认值”的一类，但它并不阻断命令：
+			// 报成 error 会让升级后的第一次 validate 直接失败，与运行期实际能跑的事实不符
+			if errors.Is(err, errDeprecatedConcurrency) {
+				issues = append(issues, Issue{
+					Level: LevelWarning,
+					Message: l10n.T("The concurrency value {{.Value}} is deprecated and now behaves like auto; change it to auto or an integer",
+						map[string]any{"Value": text}),
+				})
+				continue
+			}
 			issues = append(issues, Issue{
 				Level: LevelError,
 				Message: l10n.T("Invalid value for {{.Key}}: {{.Value}} (expected {{.Expected}})",

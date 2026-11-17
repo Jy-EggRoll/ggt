@@ -102,7 +102,7 @@ ggt config validate            # 体检配置文件
 | --- | --- | --- | --- |
 | `repo_paths` | string[] | 空 | 直接登记的仓库绝对路径列表 |
 | `parent_paths` | string[] | 空 | 父目录列表，运行时扫描其中的 git 仓库 |
-| `concurrency` | string | `CPUHalf` | 并发数。可取语义值 `CPUHalf`/`CPUFull`/`CPUQuarter`，或显式数字串（如 `"8"`）。命令行 `-c` 仅当大于 0 时覆盖此项。上限 1024 只是内存安全边界，不是平台限流值：GitHub 并未公布 git 协议的并发限制，社区经验是控制在 10 以内，仓库很多时自行下调 |
+| `concurrency` | string | `auto` | 并发数。`auto` 表示按本机 CPU 逻辑核数取一半，最多 8：核数再多也不提高默认值，因为瓶颈已经从 CPU 转到磁盘与内存带宽，更高的并发只会让子进程互相争抢 I/O，对本地响应没有帮助。也可以写 1 到 64 的整数。上限 64 是防误填的安全边界，不是平台限流值——填得过大时信号量失去作用，同时在跑的 git 子进程数趋近仓库数，先被耗尽的是进程数与文件描述符；留到 64 是给自建镜像与企业版留出调高的余量。命令行 `-c` 只能写 1 到 64 的整数，写了就覆盖此项，`-c 0`、负数与超过 64 都直接报错退出。GitHub 并未公布 git 协议的并发限制；其仓库限制文档只建议单个仓库的读操作（fetch / clone）不超过每秒 15 次，而 ggt 的并发是对不同仓库各发一次请求，不受这条建议直接约束，仓库很多时仍可自行下调 |
 | `ignore_submodules` | bool | `false` | 为 `true` 时在所有功能中忽略子模块；默认 `false`（包含子模块） |
 | `size_bucket_low_mb` | int | `500` | `size` 命令分桶的下界阈值（MB） |
 | `size_bucket_high_mb` | int | `800` | `size` 命令分桶的上界阈值（MB） |
@@ -124,7 +124,7 @@ ggt config validate            # 体检配置文件
 {
   "repo_paths": ["/home/user/GitRepo/my-project"],
   "parent_paths": ["/home/user/GitRepo"],
-  "concurrency": "CPUHalf",
+  "concurrency": "auto",
   "ignore_submodules": false,
   "size_bucket_low_mb": 500,
   "size_bucket_high_mb": 800,
@@ -134,7 +134,7 @@ ggt config validate            # 体检配置文件
 }
 ```
 
-`concurrency` 同时兼容旧版的数字写法（如 `"36"`），加载时会自动按字符串处理。
+`concurrency` 在文件里写成 JSON 数字（如 `8`）也能读，加载时会自动转成字符串；推荐写成字符串 `"8"` 或 `"auto"`，与 `ggt config set` 写出的形态一致。
 
 ## 语言
 

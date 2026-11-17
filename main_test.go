@@ -521,3 +521,92 @@ func TestCLIInvalidLogLevelWarning(t *testing.T) {
 		t.Fatalf("应给出忽略非法 log_level 的告警: stdout=%q stderr=%q", result.stdout, result.stderr)
 	}
 }
+
+// TestCLIConcurrencyContract 验证并发数的四条入口共用同一套边界：-c、配置文件加载、
+// config set、config validate。
+//
+// 改造前只有 config set 与 validate 会拦越界值，-c 0 被当成“没写”静默忽略，
+// 而配置文件里的越界值要到 worker 内部才炸（甚至只是让命令卡住）。这里按入口逐条断言
+// 真实的退出码与报错文案——只在单元测试里断言 error 非 nil，证明不了用户会看到非 0 退出码。
+func TestCLIConcurrencyContract(t *testing.T) {
+	home := t.TempDir()
+
+	// 1. -c 的边界：0、负数、超过 64 都报错退出，错误信息写明实际值与允许范围
+	for _, value := range []string{"0", "-1", "65"} {
+		result := runCLIWithEnv(t, home, "-c", value, "version")
+		if result.exitCode == 0 {
+			t.Errorf("-c %s 应以非 0 退出，实际 0：stdout=%q", value, result.stdout)
+			continue
+		}
+		if !strings.Contains(result.stderr, "1 to 64") {
+			t.Errorf("-c %s 的报错应写明允许范围 1 到 64：stderr=%q", value, result.stderr)
+		}
+		if !strings.Contains(result.stderr, value) {
+			t.Errorf("-c %s 的报错应写明实际值：stderr=%q", value, result.stderr)
+		}
+	}
+	if ok := runCLIWithEnv(t, home, "-c", "64", "version"); ok.exitCode != 0 {
+		t.Fatalf("-c 64 应成功: exit=%d stderr=%q", ok.exitCode, ok.stderr)
+	}
+
+	// 1b. config 子树遮蔽了 root 的钩子，-c 也必须在这里单独校验，否则它是唯一
+	// 能把 -c 0 静默吞掉的地方（config 命令不跑并发任务，合法值不产生副作用）
+	if result := runCLIWithEnv(t, home, "-c", "0", "config", "validate"); result.exitCode == 0 {
+		t.Errorf("-c 0 config validate 应以非 0 退出：stdout=%q", result.stdout)
+	}
+	if result := runCLIWithEnv(t, home, "-c", "65", "config", "set", "concurrency", "8"); result.exitCode == 0 {
+		t.Errorf("-c 65 config set 应以非 0 退出：stdout=%q", result.stdout)
+	}
+
+	// 2. 配置文件里的越界值必须在加载期就失败，而不是带病跑到 worker
+	configPath := configFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("创建配置目录失败: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"concurrency": 65}`), 0o644); err != nil {
+		t.Fatalf("写入越界并发数失败: %v", err)
+	}
+	if result := runCLIWithEnv(t, home, "version"); result.exitCode == 0 {
+		t.Errorf("配置文件里的越界并发数应以非 0 退出：stdout=%q", result.stdout)
+	}
+
+	// 3. config set 拒绝旧语义值与越界值，并接受 auto
+	if result := runCLIWithEnv(t, home, "config", "set", "concurrency", "CPUFull"); result.exitCode == 0 {
+		t.Errorf("config set concurrency CPUFull 应被拒绝，实际成功：stdout=%q", result.stdout)
+	}
+	if result := runCLIWithEnv(t, home, "config", "set", "concurrency", "65"); result.exitCode == 0 {
+		t.Errorf("config set concurrency 65 应被拒绝，实际成功：stdout=%q", result.stdout)
+	}
+	if result := runCLIWithEnv(t, home, "config", "set", "concurrency", "auto"); result.exitCode != 0 {
+		t.Fatalf("config set concurrency auto 应成功: exit=%d stderr=%q", result.exitCode, result.stderr)
+	}
+
+	// 4. config validate 把越界值当 error 报出，并以 1 退出（面向脚本的契约）
+	if err := os.WriteFile(configPath, []byte(`{"concurrency": 65}`), 0o644); err != nil {
+		t.Fatalf("写入越界并发数失败: %v", err)
+	}
+	validate := runCLIWithEnv(t, home, "config", "validate")
+	if validate.exitCode == 0 {
+		t.Errorf("validate 遇到越界并发数应以非 0 退出：stdout=%q", validate.stdout)
+	}
+	if !strings.Contains(validate.stdout, "concurrency") {
+		t.Errorf("validate 应点名 concurrency：stdout=%q", validate.stdout)
+	}
+
+	// 5. 旧语义值：运行期按 auto 跑，get 显示 auto，validate 只给警告而不判失败。
+	// 三处口径必须一致，否则升级后 CI 会因为一份“其实能跑”的配置直接红掉
+	if err := os.WriteFile(configPath, []byte(`{"concurrency": "CPUFull"}`), 0o644); err != nil {
+		t.Fatalf("写入旧语义值失败: %v", err)
+	}
+	get := runCLIWithEnv(t, home, "config", "get", "concurrency")
+	if got := strings.TrimSpace(get.stdout); got != "auto" {
+		t.Errorf("config get concurrency = %q，期望运行期实际使用的 auto", got)
+	}
+	legacy := runCLIWithEnv(t, home, "config", "validate")
+	if legacy.exitCode != 0 {
+		t.Errorf("旧语义值不应让 validate 失败: exit=%d stdout=%q", legacy.exitCode, legacy.stdout)
+	}
+	if !strings.Contains(legacy.stdout, "CPUFull") {
+		t.Errorf("validate 应点名旧语义值：stdout=%q", legacy.stdout)
+	}
+}

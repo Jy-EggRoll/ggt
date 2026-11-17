@@ -1,52 +1,145 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jy-eggroll/eggokit/logger"
 )
 
-// TestConcurrencyValue 验证语义串解析为实际并发数的各种分支：
-// CPUHalf / CPUFull / CPUQuarter / 正整数串 / 空串 / 非法串回退。
-// 官方信源：https://pkg.go.dev/runtime#NumCPU 与 https://pkg.go.dev/builtin#max
-func TestConcurrencyValue(t *testing.T) {
-	ncpu := runtime.NumCPU()
-	half := max(1, ncpu/2)
-	quarter := max(1, ncpu/4)
-
+// TestAutoConcurrencyFor 用固定核数验证 auto 的两条边界：至少为 1、封顶 8。
+//
+// 刻意不拿 runtime.NumCPU() 当期望值：那样只是把实现抄一遍，换一台核数不同的机器
+// 就得到不同答案，也测不出“封顶”这条规则。官方信源：https://pkg.go.dev/runtime#NumCPU
+func TestAutoConcurrencyFor(t *testing.T) {
 	cases := []struct {
-		raw  string
+		ncpu int
 		want int
 	}{
-		{"", half},
-		{"CPUHalf", half},
-		{"cpuhalf", half}, // 大小写不敏感
-		{"CPUFull", ncpu},
-		{"CPUQuarter", quarter},
-		{"8", 8},
-		{"  8  ", 8},  // 容忍空白
-		{"abc", half}, // 非法串回退到 CPUHalf
-		{"0", half},   // 非正整数回退
-		{"-3", half},
+		{0, 1},    // 极端值兜底，防止 max(1, ...) 被删掉
+		{1, 1},    // 单核的一半是 0，必须抬到 1
+		{2, 1},    // 2/2=1
+		{4, 2},    // 4/2=2
+		{15, 7},   // 15/2=7，尚未封顶
+		{16, 8},   // 16/2=8，正好到顶
+		{17, 8},   // 从 17 核起 17/2=8，仍然等于上限
+		{32, 8},   // 32/2=16，被压到 8
+		{1024, 8}, // 核数再多也停在 8
 	}
-
 	for _, c := range cases {
-		cfg := &Config{Concurrency: c.raw}
-		if got := cfg.ConcurrencyValue(); got != c.want {
-			t.Errorf("ConcurrencyValue(%q) = %d, want %d", c.raw, got, c.want)
+		if got := autoConcurrencyFor(c.ncpu); got != c.want {
+			t.Errorf("autoConcurrencyFor(%d) = %d, want %d", c.ncpu, got, c.want)
 		}
 	}
 }
 
-// TestDefaultConfigConcurrency 验证默认配置文件（未设置 concurrency）时，
-// 落盘/内存中的值是语义串 "CPUHalf" 而非具体数字。
+// TestConcurrencyValue 验证 auto、显式数字与空串的解析结果，以及越界一律报错。
+//
+// 空串与 auto 必须落到同一处：缺键、空串、零值 Config 都会走到这里，
+// 若空串另有一套默认值，auto 的含义就有了第二份实现。
+func TestConcurrencyValue(t *testing.T) {
+	// auto 一族只断言落在 [1, 8] 内，不拿本机核数算出一个具体值当期望：
+	// 后者等于把实现抄进测试，换台机器就得到不同答案。具体边界由 TestAutoConcurrencyFor 固定
+	for _, raw := range []string{"", "auto", "AUTO", " Auto "} {
+		cfg := &Config{Concurrency: raw}
+		got, err := cfg.ConcurrencyValue()
+		if err != nil {
+			t.Errorf("ConcurrencyValue(%q) 返回错误: %v", raw, err)
+			continue
+		}
+		if got < 1 || got > autoConcurrencyCeiling {
+			t.Errorf("ConcurrencyValue(%q) = %d，超出 [1, %d]", raw, got, autoConcurrencyCeiling)
+		}
+	}
+
+	// 显式数字原样生效，上限本身合法
+	valid := []struct {
+		raw  string
+		want int
+	}{
+		{"1", 1},
+		{"8", 8},
+		{"  8  ", 8},
+		{"64", maxConcurrency},
+	}
+	for _, c := range valid {
+		cfg := &Config{Concurrency: c.raw}
+		got, err := cfg.ConcurrencyValue()
+		if err != nil {
+			t.Errorf("ConcurrencyValue(%q) 返回错误: %v", c.raw, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("ConcurrencyValue(%q) = %d, want %d", c.raw, got, c.want)
+		}
+	}
+
+	// 越界与旧语义值都不得静默回退：并发数是本机保护参数，写错了必须让命令失败
+	for _, raw := range []string{"0", "-3", "65", "1024", "2000000000", "abc", "CPUHalf", "CPUFull", "CPUQuarter"} {
+		cfg := &Config{Concurrency: raw}
+		if _, err := cfg.ConcurrencyValue(); err == nil {
+			t.Errorf("ConcurrencyValue(%q) 应当报错，实际通过", raw)
+		}
+	}
+}
+
+// TestConcurrencyValueErrorNamesValueAndRange 断言报错信息同时写明实际值与允许范围。
+// 只说“取值非法”时，用户分不清是 -c 写错了，还是配置文件里那份旧值没改。
+func TestConcurrencyValueErrorNamesValueAndRange(t *testing.T) {
+	_, err := (&Config{Concurrency: "128"}).ConcurrencyValue()
+	if err == nil {
+		t.Fatal("越界值应报错")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "128") || !strings.Contains(msg, "64") {
+		t.Errorf("报错信息应写明实际值 128 与上限 64，实际 %q", msg)
+	}
+}
+
+// TestDefaultConfigConcurrency 验证默认配置存的是 auto，且它能解析成具体数字。
+// 断言解析结果落在 [1, 8] 而不是等于某个固定值：默认值本来就跟着本机核数走。
 func TestDefaultConfigConcurrency(t *testing.T) {
 	cfg := defaultConfig()
 	if cfg.Concurrency != DefaultConcurrency {
 		t.Errorf("默认 concurrency 应为 %q，实际 %q", DefaultConcurrency, cfg.Concurrency)
+	}
+	got, err := cfg.ConcurrencyValue()
+	if err != nil {
+		t.Fatalf("默认值解析失败: %v", err)
+	}
+	if got < 1 || got > autoConcurrencyCeiling {
+		t.Errorf("默认并发数 %d 超出 [1, %d]", got, autoConcurrencyCeiling)
+	}
+}
+
+// TestDeprecatedConcurrencyFallsBackToAuto 验证旧语义值不是被换算成某个数字，
+// 而是按 auto 处理——换算会把“跟着本机核数走”变成“跟着写下这行那天的那台机器走”。
+// 同时断言迁移提示每个进程只出现一次：看板会周期性重读配置，每次重读都提示一遍会刷屏。
+func TestDeprecatedConcurrencyFallsBackToAuto(t *testing.T) {
+	var buf bytes.Buffer
+	logger.Init(&logger.Config{Level: slog.LevelWarn, Writer: &buf})
+	t.Cleanup(func() { logger.Init(logger.DefaultConfig()) })
+	// 别的用例可能已经触发过同一条提示，这里显式复位，断言才不依赖测试执行顺序
+	deprecatedConcurrencyWarned.Store(false)
+
+	path := filepath.Join(t.TempDir(), "c.json")
+	writeFile(t, path, `{"concurrency": "CPUFull"}`)
+
+	for i := 0; i < 2; i++ {
+		cfg, err := LoadConfigAt(path)
+		if err != nil {
+			t.Fatalf("第 %d 次读取失败: %v", i+1, err)
+		}
+		if cfg.Concurrency != DefaultConcurrency {
+			t.Errorf("旧语义值应回落成 %q，实际 %q", DefaultConcurrency, cfg.Concurrency)
+		}
+	}
+	if n := strings.Count(buf.String(), "CPUFull"); n != 1 {
+		t.Errorf("迁移提示应只出现一次，实际 %d 次：%s", n, buf.String())
 	}
 }
 
@@ -197,7 +290,7 @@ func TestLoadConfigAt(t *testing.T) {
 		writeFile(t, path, `{
 		  "repo_paths": ["/tmp/a"],
 		  "parent_paths": ["/tmp/b"],
-		  "concurrency": "CPUFull",
+		  "concurrency": "8",
 		  "ignore_submodules": true,
 		  "size_bucket_low_mb": 200,
 		  "size_bucket_high_mb": 600,
@@ -215,7 +308,7 @@ func TestLoadConfigAt(t *testing.T) {
 		if len(cfg.ParentPaths) != 1 || cfg.ParentPaths[0] != "/tmp/b" {
 			t.Errorf("parent_paths = %#v", cfg.ParentPaths)
 		}
-		if cfg.Concurrency != "CPUFull" || !cfg.IgnoreSubmodules {
+		if cfg.Concurrency != "8" || !cfg.IgnoreSubmodules {
 			t.Errorf("标量键不正确: %#v", cfg)
 		}
 		if cfg.SizeBucketLowMB != 200 || cfg.SizeBucketHighMB != 600 || cfg.SizeUnit != "binary" {
@@ -235,7 +328,11 @@ func TestLoadConfigAt(t *testing.T) {
 		if cfg.Concurrency != "8" {
 			t.Errorf("concurrency = %q, want \"8\"", cfg.Concurrency)
 		}
-		if got := cfg.ConcurrencyValue(); got != 8 {
+		got, err := cfg.ConcurrencyValue()
+		if err != nil {
+			t.Fatalf("ConcurrencyValue() 返回错误: %v", err)
+		}
+		if got != 8 {
 			t.Errorf("ConcurrencyValue() = %d, want 8", got)
 		}
 	})

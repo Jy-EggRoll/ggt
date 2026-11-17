@@ -79,7 +79,7 @@ func TestReadRawAtNullContent(t *testing.T) {
 		t.Errorf("应为空 map，实得 %v", raw)
 	}
 	// 真正会暴露 nil map 的是写入
-	if err := SetKeyAt(path, "concurrency", "CPUFull"); err != nil {
+	if err := SetKeyAt(path, "concurrency", "8"); err != nil {
 		t.Fatalf("在 null 文件上写入失败: %v", err)
 	}
 }
@@ -117,7 +117,7 @@ func TestReadRawAtRejectsCaseVariantKeys(t *testing.T) {
 // TestSetKeyNormalizesKeyCase 断言写入的键统一小写，与 viper 的读行为对齐。
 func TestSetKeyNormalizesKeyCase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
-	if err := SetKeyAt(path, "CONCURRENCY", "CPUFull"); err != nil {
+	if err := SetKeyAt(path, "CONCURRENCY", "8"); err != nil {
 		t.Fatalf("写入失败: %v", err)
 	}
 
@@ -140,7 +140,7 @@ func TestSetKeyRefusesToTouchACorruptFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SetKeyAt(path, "concurrency", "CPUFull"); err == nil {
+	if err := SetKeyAt(path, "concurrency", "8"); err == nil {
 		t.Fatal("损坏的文件应拒绝写入")
 	}
 
@@ -156,7 +156,7 @@ func TestSetKeyRefusesToTouchACorruptFile(t *testing.T) {
 // TestWriteRawAtPreservesUnknownKeys 断言写入不会丢掉 ggt 不认识的键。
 func TestWriteRawAtPreservesUnknownKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
-	writeFile(t, path, `{"my_custom_key": "keep me", "concurrency": "CPUHalf"}`)
+	writeFile(t, path, `{"my_custom_key": "keep me", "concurrency": "auto"}`)
 
 	if err := SetKeyAt(path, "size_unit", "binary"); err != nil {
 		t.Fatalf("写入失败: %v", err)
@@ -169,7 +169,7 @@ func TestWriteRawAtPreservesUnknownKeys(t *testing.T) {
 	if raw["my_custom_key"] != "keep me" {
 		t.Errorf("未知键被丢掉了: %v", raw)
 	}
-	if raw["concurrency"] != "CPUHalf" || raw["size_unit"] != "binary" {
+	if raw["concurrency"] != "auto" || raw["size_unit"] != "binary" {
 		t.Errorf("已知键不正确: %v", raw)
 	}
 }
@@ -183,7 +183,7 @@ func TestWriteRawAtKeepsPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SetKeyAt(path, "concurrency", "CPUFull"); err != nil {
+	if err := SetKeyAt(path, "concurrency", "8"); err != nil {
 		t.Fatalf("写入失败: %v", err)
 	}
 
@@ -201,7 +201,7 @@ func TestWriteRawAtLeavesNoTempFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c.json")
 
-	if err := SetKeyAt(path, "concurrency", "CPUFull"); err != nil {
+	if err := SetKeyAt(path, "concurrency", "8"); err != nil {
 		t.Fatalf("写入失败: %v", err)
 	}
 
@@ -316,7 +316,7 @@ func TestValidateAtReportsProblems(t *testing.T) {
 // Windows 记事本“另存为 UTF-8”默认会写 BOM，而报错信息完全看不出是它引起的。
 func TestValidateAtDetectsBOM(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
-	content := append([]byte{0xEF, 0xBB, 0xBF}, []byte(`{"concurrency": "CPUFull"}`)...)
+	content := append([]byte{0xEF, 0xBB, 0xBF}, []byte(`{"concurrency": "8"}`)...)
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -348,13 +348,18 @@ func TestSettingParse(t *testing.T) {
 		value   string
 		wantErr bool
 	}{
-		{"concurrency", "CPUFull", false},
-		{"concurrency", "cpuhalf", false},
+		{"concurrency", "auto", false},
+		{"concurrency", "AUTO", false}, // 大小写不敏感
+		{"concurrency", " Auto ", false},
+		{"concurrency", "1", false},
 		{"concurrency", "8", false},
+		{"concurrency", "64", false}, // 上限本身合法
 		{"concurrency", "0", true},
 		{"concurrency", "-3", true},
+		{"concurrency", "65", true}, // 上限外一号：显式调高最多 64
 		{"concurrency", "abc", true},
-		{"concurrency", "2000000000", true}, // 超上限：会一路传到 make(chan, N)
+		{"concurrency", "2000000000", true}, // 超上限：填这么大等于让信号量失去作用
+		{"concurrency", "CPUFull", true},    // 旧语义值已移除，迁移在加载期完成
 		{"size_bucket_low_mb", "100", false},
 		{"size_bucket_low_mb", "0", true},
 		{"size_bucket_low_mb", "100000000", true}, // 超上限：32 位平台会解码失败
@@ -386,14 +391,15 @@ func TestSettingParse(t *testing.T) {
 	}
 }
 
-// TestSettingParseStoresCanonicalForm 断言语义串与语言存的是规范形态，
-// 避免文件里出现 cpuhalf/CPUHALF、zh/zh-Hans 这类同义异形写法。
+// TestSettingParseStoresCanonicalForm 断言 auto 与语言存的是规范形态，
+// 避免文件里出现 AUTO/Auto、zh/zh-Hans 这类同义异形写法。
 func TestSettingParseStoresCanonicalForm(t *testing.T) {
 	cases := []struct {
 		key, value, want string
 	}{
-		{"concurrency", "cpuhalf", "CPUHalf"},
-		{"concurrency", "cpuquarter", "CPUQuarter"},
+		{"concurrency", " AUTO ", "auto"},
+		{"concurrency", "Auto", "auto"},
+		{"concurrency", " 8 ", "8"},
 		{"size_unit", "BINARY", "binary"},
 		{"language", "zh", "zh-CN"},
 		{"language", "zh-Hans", "zh-CN"},
@@ -595,7 +601,7 @@ func TestConcurrentKeyWritesKeepEveryKey(t *testing.T) {
 
 	// 挑类型各不相同的几个键：字符串、布尔、整数都覆盖到
 	writes := map[string]any{
-		"concurrency":        "CPUFull",
+		"concurrency":        "8",
 		"log_level":          "debug",
 		"size_unit":          "binary",
 		"language":           "zh-CN",
@@ -630,5 +636,68 @@ func TestConcurrentKeyWritesKeepEveryKey(t *testing.T) {
 		if ValueText(got) != ValueText(want) {
 			t.Errorf("%s 的值是 %q，应为 %q", key, ValueText(got), ValueText(want))
 		}
+	}
+}
+
+// TestConcurrencyOptionsMatchPanel 断言设置面板能直接点选的档位就是约定的五个。
+//
+// 页面只按注册表渲染候选，服务端不写死任何一项；候选一旦变动（例如又冒出 CPUHalf），
+// 这里会立刻失败，而不是等到用户打开面板看见一个不存在的取值。
+func TestConcurrencyOptionsMatchPanel(t *testing.T) {
+	s, ok := Lookup("concurrency")
+	if !ok || s.Options == nil {
+		t.Fatalf("concurrency 应有候选清单")
+	}
+
+	values := make([]string, 0, 5)
+	for _, o := range s.Options() {
+		values = append(values, o.Value)
+	}
+	if got := strings.Join(values, ","); got != "auto,4,8,16,32" {
+		t.Errorf("候选档位 = %q，期望 auto,4,8,16,32", got)
+	}
+	// 默认值必须就在候选里，页面才能把它显示成选中项
+	if s.Default != "auto" || values[0] != s.Default {
+		t.Errorf("默认值 %v 应是候选里的第一项 auto", s.Default)
+	}
+}
+
+// TestValidateAtDeprecatedConcurrencyIsWarning 断言旧语义值只报警告。
+//
+// 运行期会把这些值当 auto 继续跑（并提示改写），若体检报成 error，升级后第一次
+// validate 就会失败，与“命令其实能跑”的事实相矛盾。真正非法的值（0、65、乱码）
+// 仍必须是 error，那条由 TestValidateAtReportsProblems 与 TestSettingParse 守着。
+func TestValidateAtDeprecatedConcurrencyIsWarning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	writeFile(t, path, `{"concurrency": "CPUFull"}`)
+
+	issues, err := ValidateAt(path)
+	if err != nil {
+		t.Fatalf("体检失败: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("应只有 1 条问题，实得 %+v", issues)
+	}
+	if issues[0].Level != LevelWarning {
+		t.Errorf("旧语义值应报 warning，实得 %s：%s", issues[0].Level, issues[0].Message)
+	}
+	// 文案随当前语言变化，只断言值本身出现在提示里（两种语言的译文都保留了占位符）
+	if !strings.Contains(issues[0].Message, "CPUFull") {
+		t.Errorf("提示应点名实际写入的值，实得 %q", issues[0].Message)
+	}
+}
+
+// TestEffectiveAtNormalizesDeprecatedConcurrency 断言 config get 的输出与运行期一致：
+// 文件里写 CPUHalf，运行期按 auto 跑，get 就不该原样打出这个废弃词。
+func TestEffectiveAtNormalizesDeprecatedConcurrency(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	writeFile(t, path, `{"concurrency": "CPUHalf"}`)
+
+	got, err := EffectiveAt(path, "concurrency")
+	if err != nil {
+		t.Fatalf("读取生效值失败: %v", err)
+	}
+	if got != DefaultConcurrency {
+		t.Errorf("EffectiveAt = %v，应为 %q", got, DefaultConcurrency)
 	}
 }

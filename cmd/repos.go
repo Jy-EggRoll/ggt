@@ -185,7 +185,7 @@ func expand(ctx context.Context, topPaths []string, ignoreSubmodules bool) []Rep
 
 	if !ignoreSubmodules {
 		// 第二步：并发发现所有顶层仓库的子模块。
-		subsForEach := worker.Map(ctx, topPaths, Concurrency(),
+		subsForEach := worker.Map(ctx, topPaths,
 			func(_ context.Context, top string) []string {
 				return discoverSubmodules(top)
 			})
@@ -218,7 +218,7 @@ func expand(ctx context.Context, topPaths []string, ignoreSubmodules bool) []Rep
 func appendWorktrees(ctx context.Context, entries []RepoEntry, topPaths []string) []RepoEntry {
 	// 探测与展开合成一个并发任务：先用一次 os.Stat 把绝大多数仓库挡掉（实测一批仓库里
 	// 通常只有个别几个建过工作树），探不到的连 git 进程都不启动
-	wtsForEach := worker.Map(ctx, topPaths, Concurrency(),
+	wtsForEach := worker.Map(ctx, topPaths,
 		func(ctx context.Context, top string) []RepoEntry {
 			if !git.HasWorktrees(top) {
 				return nil

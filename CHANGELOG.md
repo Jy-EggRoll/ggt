@@ -7,6 +7,12 @@
 
 ## 未发布
 
+**不兼容变更**
+
+- `concurrency` 的默认值从语义值 `CPUHalf` 改为 `auto`：按本机 CPU 逻辑核数取一半，最多 8。核数再多也不提高默认值，因为瓶颈已从 CPU 转到磁盘与内存带宽
+- 语义值 `CPUHalf`、`CPUFull`、`CPUQuarter` 移除，配置项只接受 `auto` 或 1 到 64 的整数。旧配置里读到这三个值不会换算成数字，而是按 `auto` 处理并提示一次，需要显式改写；`ggt config validate` 对这类值只报警告（运行期确实还能跑），`config get` 也按 `auto` 显示，`config set` 则拒绝再写入废弃值
+- `concurrency` 的上限从 1024 收紧到 64，且在配置文件加载、`-c`、`config set`、`config validate` 四条路径上一致生效：越界值（含 `-c 0` 与负数）直接报错并以非 0 退出码结束，不再被静默忽略或截断
+
 **自升级**
 
 - ✨ `ggt upgrade`（别名 `update`、`up`）：从 GitHub Release 检查并升级到最新版本。`--check` 只检查不升级、`--dev` 走开发版通道、`--force` 同版本也重装、`--yes` 跳过确认（非交互环境必需）

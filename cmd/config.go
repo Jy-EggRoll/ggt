@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/config"
@@ -44,7 +45,18 @@ Repository paths are managed by "ggt repo" instead of "ggt config set".`, nil),
 		//
 		// 代价是这些命令里全局 cfg 为 nil，一律不得调用 GetConfig()——
 		// 这与“只读原始 JSON”的设计本就一致。
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error { return nil },
+		//
+		// 遮蔽掉了 root 的钩子，也就连带跳过了它对 -c 的校验。用户既然在 config 命令上
+		// 写了 -c，越界值就不该被静默吞掉，因此这里按同一套边界单独校验一次；
+		// 合法值不产生副作用——config 子树不跑并发任务，-c 对它本来就没有含义
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("concurrency") {
+				if _, err := (&config.Config{Concurrency: strconv.Itoa(concurrency)}).ConcurrencyValue(); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
 	}
 	c.AddCommand(
 		newConfigShowCmd(),
@@ -154,7 +166,8 @@ func newConfigSetCmd() *cobra.Command {
 Other keys in the file are left untouched, including keys ggt does not know about.
 
 Examples:
-  ggt config set concurrency CPUFull
+  ggt config set concurrency auto
+  ggt config set concurrency 8
   ggt config set size_unit binary
   ggt config set language zh-CN`, nil),
 		Args: cobra.ExactArgs(2),
