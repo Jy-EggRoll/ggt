@@ -250,6 +250,76 @@ func TestCLIHelpContract(t *testing.T) {
 	}
 }
 
+// TestCLILanguageFallbackNotice 断言“启动时读到的语言”与 config validate 用同一份判定，
+// 并在回退时提示一次。
+//
+// 观察点是 --help：它不经过 PersistentPreRunE，因此不会被“整份配置非法”提前挡下，
+// 正好能看清启动最早那一步选中了哪个语言、说了什么。
+// 这一轮之前的行为是：配置里写 fr 时 l10n 层宽松回退成英文，用户得不到任何提示；
+// 而写 zh 时 config validate 说可以，实际界面却也回退英文。
+func TestCLILanguageFallbackNotice(t *testing.T) {
+	home := t.TempDir()
+	configPath := configFilePath(home)
+	writeConfig := func(body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			t.Fatalf("建配置目录失败: %v", err)
+		}
+		if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+			t.Fatalf("写配置失败: %v", err)
+		}
+	}
+
+	// zh 是受支持的别名：归一成 zh-CN 后界面是中文，且不该有任何回退提示
+	writeConfig(`{"language":"zh"}`)
+	chinese := runCLIWithEnv(t, home, "--help")
+	if chinese.exitCode != 0 || !hasHanText(chinese.stdout) {
+		t.Fatalf("language: zh 应归一成 zh-CN 并输出中文帮助: exit=%d stdout=%q stderr=%q",
+			chinese.exitCode, chinese.stdout, chinese.stderr)
+	}
+	if strings.Contains(chinese.stderr, "not supported") {
+		t.Fatalf("受支持的别名不该触发回退提示: stderr=%q", chinese.stderr)
+	}
+
+	// fr 不被支持：回退默认语言（英文帮助），并在 stderr 说明写了什么、回退到哪
+	writeConfig(`{"language":"fr"}`)
+	fallback := runCLIWithEnv(t, home, "--help")
+	if fallback.exitCode != 0 {
+		t.Fatalf("语言取值非法不该让帮助失败: exit=%d stderr=%q", fallback.exitCode, fallback.stderr)
+	}
+	if hasHanText(fallback.stdout) {
+		t.Fatalf("回退后应是默认语言（英文）的帮助: %q", fallback.stdout)
+	}
+	for _, want := range []string{"fr", "not supported", "English"} {
+		if !strings.Contains(fallback.stderr, want) {
+			t.Fatalf("回退提示应含 %q，实际 stderr=%q", want, fallback.stderr)
+		}
+	}
+	if strings.Contains(fallback.stdout, "not supported") {
+		t.Fatalf("提示不该混进 stdout（--help 之外还有脚本读它）: %q", fallback.stdout)
+	}
+
+	// 命令行写了不认识的语言：同一条判定，同样提示一次
+	writeConfig(`{"language":"zh-CN"}`)
+	flagFallback := runCLIWithEnv(t, home, "--lang", "fr", "--help")
+	if flagFallback.exitCode != 0 || hasHanText(flagFallback.stdout) {
+		t.Fatalf("--lang fr 应回退英文帮助: exit=%d stdout=%q", flagFallback.exitCode, flagFallback.stdout)
+	}
+	for _, want := range []string{"--lang", "fr", "not supported"} {
+		if !strings.Contains(flagFallback.stderr, want) {
+			t.Fatalf("命令行回退提示应含 %q，实际 stderr=%q", want, flagFallback.stderr)
+		}
+	}
+
+	// --lang 的别名同样走归一：zh 得到中文帮助且不提示
+	writeConfig(`{"language":"en"}`)
+	flagAlias := runCLIWithEnv(t, home, "--lang", "zh", "--help")
+	if flagAlias.exitCode != 0 || !hasHanText(flagAlias.stdout) {
+		t.Fatalf("--lang zh 应归一成 zh-CN: exit=%d stdout=%q stderr=%q",
+			flagAlias.exitCode, flagAlias.stdout, flagAlias.stderr)
+	}
+}
+
 // TestCLIConfigSubtreeContract 端到端验证 `ggt config` 子树的对外契约：
 // path/get/set/reset 的读写往返、未知键与未知取值被拒、以及“键只落用户真正设过的那一个”
 //

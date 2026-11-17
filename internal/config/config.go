@@ -27,7 +27,6 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -121,34 +120,88 @@ func ThemeDirs() []string {
 	return []string{dir, filepath.Join(dir, "themes")}
 }
 
-// LoadLanguage 只读取配置文件里的 language 字段，用于在命令行解析之前确定输出语言。
+// InvalidLanguageError 表示配置文件里的 language 项写了一个不被接受的取值。
+//
+// 语言是启动最早的一步，这条路径上的失败不能像其它配置项那样让命令退出——连 --help
+// 都会打不出来，只能回退默认语言。但“文件里写了什么”必须原样交回调用方：等语言就绪
+// 之后要提示一次，否则用户看到的只是“界面语言不对”，得不到任何线索。
+//
+// 单独成类型而不是用普通 error 区分，是因为调用方需要同时拿到两件事：这是“语言取值
+// 不被接受”（要提示），还是“文件读不出来”（语言从未配置或无从读取，静默回退即可）。
+type InvalidLanguageError struct {
+	// Raw 是文件里写下的原值（JSON 已渲染成文本），用于原样回显给用户
+	Raw string
+	// Err 是注册表给出的原因，保留错误链
+	Err error
+}
+
+func (e *InvalidLanguageError) Error() string { return e.Err.Error() }
+func (e *InvalidLanguageError) Unwrap() error { return e.Err }
+
+// LoadLanguage 读取配置文件里的 language 项并按注册表的规则归一化，供启动最早的一步使用。
 //
 // 单独提供本函数而不是复用 LoadConfig，原因有二：
 //   - 语言必须在 rootCmd.Execute() 之前确定（cobra 的 --help 不会执行 PersistentPreRunE），
 //     而 LoadConfig 依赖的 GetDefaultConfigPath 在主目录不可用时会直接退出进程
-//   - 只取一个字段，避免为纯展示路径做一次全量解码与默认值补全
+//   - 只取一个键，避免为纯展示路径做一次全量解码与默认值补全：其它键坏掉时语言仍要能读出来
 //
-// 这里刻意直接解析 JSON，不引入 viper 这类包级全局单例：语言必须能在 --help
-// 路径上被读取，任何全局状态污染都会让“本次运行读到哪个语言”变得不可预测
-// （本包已整体不使用 viper，原因详见 LoadConfigAt 的注释）。
+// 判定规则只有一份：走注册表里 language 项的 Normalize（与 config get / set / validate
+// 完全相同），因此 zh、zh-Hans 归一成 zh-CN，不认识的取值在这里就被拦下。此前这条路径
+// 直接读原始 JSON、由 l10n 层宽松回退，同一个取值在 config validate 里是 error、
+// 在“实际界面语言”上却悄悄变成英文。
 //
-// 配置文件不存在、不可读或格式非法时一律返回 error，由调用方回退到默认语言。
+// 返回值：文件不存在、文件里没有这个键时返回空串与 nil（由调用方用默认语言）；
+// 文件读不出来或 JSON 非法时返回 error；键存在但取值不被接受时返回
+// *InvalidLanguageError。三种情况都由调用方回退默认语言——语言只影响展示，
+// 不该让命令整体失败。
 func LoadLanguage() (string, error) {
 	path, err := getConfigPath()
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(path)
+	raw, err := ReadRawAt(path)
 	if err != nil {
 		return "", err
 	}
-	var probe struct {
-		Language string `json:"language"`
+	value, ok := raw["language"]
+	if !ok {
+		return "", nil
 	}
-	if err := json.Unmarshal(data, &probe); err != nil {
+	lang, err := NormalizeLanguage(value)
+	if err != nil {
+		return "", &InvalidLanguageError{Raw: ValueText(value), Err: err}
+	}
+	return lang, nil
+}
+
+// NormalizeLanguage 把配置文件里的原始取值（JSON 解码后的形态）交给 language 项的
+// Normalize，返回规范语言标签。
+//
+// 单独成函数是为了让“从 JSON 值来”与“从文本（--lang）来”两条入口共用同一份判定：
+// 两条各写一遍，就会重演“config validate 拒收、启动路径却悄悄放行”的分叉。
+func NormalizeLanguage(value any) (string, error) {
+	s, ok := Lookup("language")
+	if !ok || s.Normalize == nil {
+		// 注册表是编译期常量，缺项属于代码写错而不是用户输入问题
+		return "", fmt.Errorf("config: setting %q has no normalizer", "language")
+	}
+	normalized, err := s.Normalize(value)
+	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(probe.Language), nil
+	lang, ok := normalized.(string)
+	if !ok {
+		return "", ErrInvalidValue
+	}
+	return lang, nil
+}
+
+// ParseLanguage 把一段文本按 language 项的规则归一化，供命令行 --lang 与启动路径使用。
+//
+// 与 NormalizeLanguage 分开是因为入口形态不同：命令行给的是文本，配置文件给的是
+// JSON 原始值。判断“受不受支持”与“归一到哪个标签”仍然只在 language 项的 Normalize 里做。
+func ParseLanguage(text string) (string, error) {
+	return NormalizeLanguage(strings.TrimSpace(text))
 }
 
 // LoadConfig 从默认路径加载配置，是 LoadConfigAt 的便捷封装。

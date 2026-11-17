@@ -8,33 +8,87 @@
 package cmd
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/config"
+	"github.com/jy-eggroll/ggt/internal/locales"
 	"github.com/spf13/pflag"
 )
 
-// chooseLanguage 按优先级挑出要使用的语言串（**未经归一化**）：
+// languageSource 说明一段语言取值来自哪里，只影响回退提示里的一句话。
+type languageSource int
+
+const (
+	languageFromConfig languageSource = iota
+	languageFromCommandLine
+)
+
+// languageNotice 描述“写下的语言没被接受、已回退默认语言”这件事。
 //
-//	命令行 --lang/-l  >  配置文件 language 字段  >  空串（交由 l10n 用默认语言）
+// 为什么不在发现问题的当场打印：那一刻 l10n 还没初始化，文案只能是英文原文，
+// 而用户接下来看到的界面可能是中文。这里只留下来源与原值，等 l10n.Init 之后
+// 再按最终语言渲染一次。一次启动最多产生一条。
+type languageNotice struct {
+	source languageSource
+	value  string
+}
+
+// text 按当前生效的语言渲染提示。
 //
-// 刻意不在这里归一化：语言白名单属于 l10n.Options，而 Options 要交给 l10n.Init，
-// 归一化在 Init 内部完成即可——否则这里就得再持有并手工维护一份语言列表，
-// 两份列表迟早会对不上。
+// 回退目标取自 l10n.Current() 而不是写死默认语言：它在 Init 之后就是本次运行真正
+// 采用的标签，提示因此不会与实际界面语言不符。
+func (n *languageNotice) text() string {
+	value := strings.TrimSpace(n.value)
+	if value == "" {
+		// 与 concurrency 的报错同一写法：空值直接塞进句子会留下一个缺口
+		value = "(empty)"
+	}
+	fallback := locales.DisplayName(l10n.Current())
+	if n.source == languageFromCommandLine {
+		return l10n.T("The --lang value is not supported: {{.Value}}. Falling back to {{.Fallback}}.",
+			map[string]any{"Value": value, "Fallback": fallback})
+	}
+	return l10n.T("The language in the config file is not supported: {{.Value}}. Falling back to {{.Fallback}}.",
+		map[string]any{"Value": value, "Fallback": fallback})
+}
+
+// chooseLanguage 按优先级挑出要使用的语言，并把没被接受的取值交回调用方提示。
 //
-// 任何一步失败都静默降级、绝不返回错误：语言只影响展示，不该让命令整体失败。
+//	命令行 --lang/-l  >  配置文件 language  >  空串（交由 l10n 用默认语言）
+//
+// 两条来源都经 config 里 language 项自己的 Normalize（与 config get/set/validate
+// 同一份判定），这里不持有也不维护任何语言白名单：此前这条路径直接读原始 JSON、
+// 由 l10n 层宽松回退，同一个取值在 config validate 里是 error、在“实际界面语言”上
+// 却悄悄变成英文，用户得不到任何提示。
+//
+// 任何一步失败都只回退默认语言、绝不返回错误：语言只影响展示，不该让命令整体失败。
 // 尤其是配置文件损坏时也必须能正常输出帮助——这是 --help 路径会走到这里的前提。
-func chooseLanguage() string {
-	if lang := scanLangFlag(os.Args[1:]); lang != "" {
-		return lang
+func chooseLanguage(args []string) (string, *languageNotice) {
+	if raw := scanLangFlag(args); raw != "" {
+		lang, err := config.ParseLanguage(raw)
+		if err != nil {
+			return "", &languageNotice{source: languageFromCommandLine, value: raw}
+		}
+		return lang, nil
 	}
-	// LoadLanguage 只直接读取 JSON，不会像 LoadConfig 那样在主目录不可用时退出进程
-	if lang, err := config.LoadLanguage(); err == nil && lang != "" {
-		return lang
+
+	// LoadLanguage 只读配置文件里的一个键，不会像 LoadConfig 那样在主目录不可用时退出进程
+	lang, err := config.LoadLanguage()
+	if err == nil {
+		return lang, nil
 	}
-	return ""
+	// 只有“键在、但取值不被接受”才值得提示；文件不存在、读不出来或 JSON 非法时
+	// 没有可回显的取值要讲，静默回退即可（配置文件的问题由各命令自己的加载流程报告）
+	var invalid *config.InvalidLanguageError
+	if errors.As(err, &invalid) {
+		return "", &languageNotice{source: languageFromConfig, value: invalid.Raw}
+	}
+	return "", nil
 }
 
 // scanLangFlag 从原始命令行参数里预扫描 --lang/-l 的取值。
@@ -61,6 +115,19 @@ func scanLangFlag(args []string) string {
 	_ = fs.Parse(args)
 
 	return strings.TrimSpace(lang)
+}
+
+// printLanguageNotice 把回退提示写到 stderr。
+//
+// 走 stderr 而不是 stdout：这段提示早于任何命令，而 config show / get 的 stdout 是给
+// 脚本的（JSON、单个取值）。用 pterm 的告警样式而不是 logger，因为它与同屏的信息行
+// 同属面向用户的输出（约定见 output.go）；输出流在这里显式指定，不依赖 pterm 的全局
+// writer 设置——那些设置要等进入 Execute 之后才做。
+func printLanguageNotice(notice *languageNotice) {
+	if notice == nil {
+		return
+	}
+	fmt.Fprintln(os.Stderr, WarnStr(notice.text()))
 }
 
 // 语言串的归一化与白名单校验统一在 i18n 包（l10n.Normalize / l10n.IsSupported）。

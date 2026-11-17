@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -197,18 +198,19 @@ func TestDefaultLanguage(t *testing.T) {
 	}
 }
 
-// TestLoadLanguage 验证只读 language 字段的解析行为。
+// TestLoadLanguage 验证启动路径只读 language，且与注册表共用同一套判定。
 //
-// 该函数被 --help 路径依赖（语言必须早于 cobra 解析确定），因此有一条硬要求：
-// 任何异常情况都必须返回 error 而不是终止进程——调用方据此回退默认语言，
-// 保证帮助永远能打印出来。
+// 该函数被 --help 路径依赖（语言必须早于 cobra 解析确定），因此有两条硬要求：
+//   - 任何异常情况都只返回 error，由调用方回退默认语言，绝不终止进程，帮助永远能打印
+//   - 判定规则与 config get/set/validate 完全一致：zh 归一成 zh-CN；不认识的取值返回
+//     *InvalidLanguageError（调用方据此在语言就绪后提示一次），而不是交给 l10n 层宽松回退
 func TestLoadLanguage(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// 配置文件不存在：返回 error，由调用方回退默认语言
-	if _, err := LoadLanguage(); err == nil {
-		t.Error("配置文件不存在时应返回 error")
+	// 配置文件不存在 = 从没配过语言：返回空串与 nil，是否回退由调用方决定
+	if got, err := LoadLanguage(); err != nil || got != "" {
+		t.Errorf("配置文件不存在时应返回空串与 nil，实际 (%q, %v)", got, err)
 	}
 
 	cfgDir := filepath.Join(home, ".config", "go-git-ggt")
@@ -224,9 +226,25 @@ func TestLoadLanguage(t *testing.T) {
 		}
 	}
 
-	write(`{"language": "zh-CN", "concurrency": "8"}`)
-	if got, err := LoadLanguage(); err != nil || got != "zh-CN" {
-		t.Errorf(`LoadLanguage() = (%q, %v), want ("zh-CN", nil)`, got, err)
+	// 别名与大小写按同一份规则归一：启动路径读到的必须是规范标签，
+	// 否则 config validate 说 zh 可以、界面却拿不到中文
+	accepted := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"规范标签", `{"language": "zh-CN"}`, "zh-CN"},
+		{"同语种别名", `{"language": "zh"}`, "zh-CN"},
+		{"字形变体", `{"language": "zh-Hans"}`, "zh-CN"},
+		{"大小写与首尾空白", `{"language": "  ZH-cn  "}`, "zh-CN"},
+		{"地区变体", `{"language": "en-US"}`, "en"},
+		{"其它键不影响语言", `{"language": "zh", "concurrency": "8"}`, "zh-CN"},
+	}
+	for _, c := range accepted {
+		write(c.body)
+		if got, err := LoadLanguage(); err != nil || got != c.want {
+			t.Errorf("%s：LoadLanguage() = (%q, %v)，期望 (%q, nil)", c.name, got, err, c.want)
+		}
 	}
 
 	// 未设置 language 字段时返回空串与 nil，是否回退由调用方决定
@@ -235,10 +253,57 @@ func TestLoadLanguage(t *testing.T) {
 		t.Errorf("未设置 language 时应返回空串与 nil，实际 (%q, %v)", got, err)
 	}
 
-	// 格式非法时必须返回 error，而不是 panic 或终止进程
+	// 不认识的取值必须能让调用方认出“有值但不可用”，才能给出提示
+	rejected := []struct {
+		name string
+		body string
+		raw  string
+	}{
+		{"不支持的语言", `{"language": "fr"}`, "fr"},
+		{"类型不符", `{"language": 3}`, "3"},
+		{"空串", `{"language": ""}`, ""},
+	}
+	for _, c := range rejected {
+		write(c.body)
+		var invalid *InvalidLanguageError
+		_, err := LoadLanguage()
+		if !errors.As(err, &invalid) {
+			t.Errorf("%s：应返回 *InvalidLanguageError，实际 %v", c.name, err)
+			continue
+		}
+		if invalid.Raw != c.raw {
+			t.Errorf("%s：应回显文件里的原值 %q，实际 %q", c.name, c.raw, invalid.Raw)
+		}
+	}
+
+	// 格式非法时没有可回显的取值，只返回普通 error
 	write(`{not json`)
-	if _, err := LoadLanguage(); err == nil {
-		t.Error("配置文件格式非法时应返回 error")
+	var invalid *InvalidLanguageError
+	if _, err := LoadLanguage(); err == nil || errors.As(err, &invalid) {
+		t.Errorf("配置文件格式非法时应返回普通 error，实际 %v", err)
+	}
+}
+
+// TestParseLanguage 验证命令行 --lang 与启动路径共用同一份判定。
+//
+// 关键差别在“不认识”这一档：这里必须返回 error 让调用方提示并回退，
+// 不能照搬 l10n.Normalize 的宽松回退（那会把 fr 静默改写成 en）。
+func TestParseLanguage(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"zh", "zh-CN"},
+		{"zh-Hans", "zh-CN"},
+		{" ZH-CN ", "zh-CN"},
+		{"en-US", "en"},
+		{"en", "en"},
+	} {
+		if got, err := ParseLanguage(c.in); err != nil || got != c.want {
+			t.Errorf("ParseLanguage(%q) = (%q, %v)，期望 (%q, nil)", c.in, got, err, c.want)
+		}
+	}
+	for _, in := range []string{"fr", "", "   ", "english"} {
+		if _, err := ParseLanguage(in); err == nil {
+			t.Errorf("ParseLanguage(%q) 应返回 error，而不是回退默认语言", in)
+		}
 	}
 }
 

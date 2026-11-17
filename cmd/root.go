@@ -292,10 +292,14 @@ func Execute() {
 
 	// 语言文件是 //go:embed 进 locales 包的，加载失败属于构建期错误，必须显式暴露。
 	// 静默降级只会表现为“界面语言不对”，没有任何报错，极难排查
-	if err := l10n.Init(chooseLanguage(), locales.Options()); err != nil {
+	lang, langNotice := chooseLanguage(os.Args[1:])
+	if err := l10n.Init(lang, locales.Options()); err != nil {
 		ErrorMsg(err.Error())
 		os.Exit(1)
 	}
+	// 提示必须等到 Init 之后：那时才知道本次真正采用的语言，文案也才能跟着它渲染。
+	// 写在这里而不是 chooseLanguage 里，是因为后者可能在语言就绪之前就被调用
+	printLanguageNotice(langNotice)
 
 	// 信号根 ctx：Ctrl-C（os.Interrupt）与 SIGTERM 都取消它，各命令把 cmd.Context()
 	// 一路传给 worker.Map 与 git.RunContext，正在跑的 git 子进程因此会被 context 杀掉，
