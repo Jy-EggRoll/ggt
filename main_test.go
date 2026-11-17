@@ -692,3 +692,124 @@ func TestCLIConcurrencyContract(t *testing.T) {
 		}
 	}
 }
+
+// TestCLIErrorsDoNotPrintUsage 把“错误只留错误本身”钉成用户可见的契约：
+// 启动期错误、参数类错误、未知 flag 与未知子命令都不该先甩一整页用法。
+//
+// 未知子命令这一档的判断：同样不打印整段用法。报错已经点名写错的词，cobra 还会在
+// 近似拼写时附上“Did you mean this?”，而整张命令表属于 ggt --help 的职责；
+// 为一个拼写错误铺开用法页与本轮要消除的噪音是同一件事。用例把这三种输出
+// （stderr 无 “Usage:”、stderr 有点名、--help 仍有 “Usage:”）一起锁住。
+func TestCLIErrorsDoNotPrintUsage(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"启动期并发数越界", []string{"-c", "999", "version"}, "1 to 64"},
+		{"参数个数不足", []string{"repo", "add"}, "accepts 1 arg(s)"},
+		{"未知 flag", []string{"--definitely-not-a-flag"}, "unknown flag"},
+		{"未知子命令", []string{"definitely-not-a-command"}, "unknown command"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			result := runCLI(t, c.args...)
+			if result.exitCode == 0 {
+				t.Fatalf("这次调用应以非 0 退出：stdout=%q", result.stdout)
+			}
+			if combined := result.stdout + result.stderr; strings.Contains(combined, "Usage:") {
+				t.Errorf("错误输出不应附整段用法：stdout=%q stderr=%q", result.stdout, result.stderr)
+			}
+			if !strings.Contains(result.stderr, c.want) {
+				t.Errorf("stderr 应包含 %q，实得 %q", c.want, result.stderr)
+			}
+			// 错误只该出现在 stderr：stdout 留给脚本取数据
+			if result.stdout != "" {
+				t.Errorf("错误路径不应往 stdout 写东西：%q", result.stdout)
+			}
+		})
+	}
+
+	// 主动求助时用法照常打印，根命令与子命令都一样
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"config", "get", "--help"}} {
+		result := runCLI(t, args...)
+		if result.exitCode != 0 {
+			t.Fatalf("%v 应以 0 退出：stderr=%q", args, result.stderr)
+		}
+		if !strings.Contains(result.stdout, "Usage:") {
+			t.Errorf("%v 应打印用法：stdout=%q", args, result.stdout)
+		}
+	}
+}
+
+// TestCLIBoolValueRejectedEverywhere 断言布尔值写进配置项后，运行期、config get、
+// config set、config validate 四处给出同一个结论与同一句话。
+//
+// 改造前运行期把它弱类型解码成 1 照常跑，get 却解析不了 true、直接报错退出——
+// 同一份配置在两处结论相反。这里逐字比较四处报错里的那一句，而不是各自断言
+// “非 0 退出”：只有文案也对齐了，用户才不会以为是两件不同的事。
+func TestCLIBoolValueRejectedEverywhere(t *testing.T) {
+	home := t.TempDir()
+	configPath := configFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("创建配置目录失败: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"concurrency": true}`), 0o644); err != nil {
+		t.Fatalf("写入布尔并发数失败: %v", err)
+	}
+
+	// 四处报错的前缀各不相同（运行期多一层“加载配置失败”、validate 有序号标记），
+	// 取出共同的那一句再比较
+	sentence := func(result cliResult) string {
+		for _, line := range strings.Split(result.stdout+result.stderr, "\n") {
+			if at := strings.Index(line, "Invalid value"); at >= 0 {
+				return strings.TrimSpace(line[at:])
+			}
+		}
+		return ""
+	}
+
+	results := map[string]cliResult{
+		"运行期":        runCLIWithEnv(t, home, "version"),
+		"config get": runCLIWithEnv(t, home, "config", "get", "concurrency"),
+		"config set": runCLIWithEnv(t, home, "config", "set", "concurrency", "true"),
+		"validate":   runCLIWithEnv(t, home, "config", "validate"),
+	}
+	for name, result := range results {
+		if result.exitCode == 0 {
+			t.Errorf("%s 应拒绝布尔值并以非 0 退出：stdout=%q", name, result.stdout)
+		}
+	}
+
+	want := sentence(results["运行期"])
+	if want == "" {
+		t.Fatal("运行期报错里应有一句 Invalid value")
+	}
+	for _, part := range []string{"concurrency", "true", "1 to 64"} {
+		if !strings.Contains(want, part) {
+			t.Errorf("这句报错应包含 %q，实得 %q", part, want)
+		}
+	}
+	for name, result := range results {
+		if got := sentence(result); got != want {
+			t.Errorf("%s 的报错 = %q，期望与运行期相同：%q", name, got, want)
+		}
+	}
+
+	// 合法的数字与字符串形态不受影响：数字 8 与字符串 "8" 都要能跑、能读回 8
+	for _, content := range []string{`{"concurrency": 8}`, `{"concurrency": "8"}`} {
+		if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("写入 %s 失败: %v", content, err)
+		}
+		if result := runCLIWithEnv(t, home, "version"); result.exitCode != 0 {
+			t.Errorf("%s 应能正常运行：stderr=%q", content, result.stderr)
+		}
+		result := runCLIWithEnv(t, home, "config", "get", "concurrency")
+		if result.exitCode != 0 {
+			t.Fatalf("%s 的 get 应以 0 退出：stderr=%q", content, result.stderr)
+		}
+		if got := strings.TrimSpace(result.stdout); got != "8" {
+			t.Errorf("%s 的 get = %q，期望 8", content, got)
+		}
+	}
+}
