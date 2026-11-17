@@ -588,14 +588,11 @@ func TestLoadConfigAtRejectsBoolShape(t *testing.T) {
 			},
 		},
 		{
-			name:    "匿名键写成布尔不算错误",
+			// 未知键现在与 config validate 同结论：运行期也判失败。忽略它会让拼写错误
+			// 看起来像是生效了，而用户要花很久才发现“我设的项根本没被读到”
+			name:    "未知键让运行期加载失败",
 			content: `{"typo_key": true}`,
-			wantErr: false,
-			check: func(t *testing.T, cfg *Config) {
-				if cfg.Concurrency != DefaultConcurrency {
-					t.Errorf("未知键不应影响其它项，concurrency = %q", cfg.Concurrency)
-				}
-			},
+			wantErr: true,
 		},
 		{
 			name:    "布尔项本身的布尔值合法",
@@ -659,9 +656,13 @@ func TestLoadConfigAtRejectsBoolShape(t *testing.T) {
 				t.Fatalf("LoadConfigAt 错误 = %v，wantErr=%v", err, c.wantErr)
 			}
 			if c.wantErr {
-				// 类型错误与取值错误各有措辞，但都必须点名出问题的键，
+				// 类型错误、取值错误与未知键各有措辞，但都必须点名出问题的键，
 				// 而不是漏出 mapstructure 的 "unconvertible type" 原文
-				if !strings.Contains(err.Error(), "Expected") && !strings.Contains(err.Error(), "Invalid value for") {
+				msg := err.Error()
+				named := strings.Contains(msg, "Expected") ||
+					strings.Contains(msg, "Invalid value for") ||
+					strings.Contains(msg, "Unknown config key")
+				if !named {
 					t.Errorf("报错应指出是哪个键的取值/形态问题，实得 %q", err)
 				}
 				return

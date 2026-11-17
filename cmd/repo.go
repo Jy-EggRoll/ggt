@@ -27,11 +27,23 @@ func newRepoCmd() *cobra.Command {
 		Short: l10n.T("Manage repository path configuration", nil),
 		Long: l10n.T(`Manage the list of configured repository paths.
 
+These commands also work when the config file is invalid, so a broken repository
+list can be repaired from the command line.
+
 Examples:
   ggt repo list              List all repositories
   ggt repo add <path>        Add a repository path
   ggt repo remove <path>     Remove a repository path
   ggt repo add-parent <path> Add a parent directory (auto-discovers git repositories inside)`, nil),
+		// 遮蔽根命令的启动钩子，改走“配置坏了也能跑”的可恢复加载。
+		//
+		// 根钩子对非法配置直接报错退出，而本子树是配置坏掉时仅剩的两条命令行修复路径之一：
+		// repo_paths 写成 [""] 之后，用户连 ggt repo remove 都用不了，只能手改文件或用
+		// config reset --all 丢掉全部仓库记录。宽松加载下坏掉的键一律按默认值处理并逐条
+		// 提示，这几个子命令也只读写配置文件与仓库列表，不按其它配置项执行任何 git 操作。
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return startCommand(cmd, loadRecoverableConfig)
+		},
 	}
 	c.AddCommand(newRepoListCmd(), newRepoAddCmd(), newRepoRemoveCmd(), newRepoAddParentCmd())
 	return c

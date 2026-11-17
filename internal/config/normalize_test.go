@@ -443,3 +443,85 @@ func TestJSONNumberForConcurrency(t *testing.T) {
 		t.Errorf("写入文本 = %q，应为 8", written)
 	}
 }
+
+// TestPathsRejectControlChars 断言含换行或其它控制字符的路径在四条路径上都被拒绝。
+//
+// 契约来源是 config get 的输出形态：路径列表“一行一条”，一个带换行的路径会被打印成两行，
+// 按行读取的脚本就会把它当成两条路径——一个不存在的第二项会让下游直接报错。
+func TestPathsRejectControlChars(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		escaped string
+	}{
+		{"换行", `{"repo_paths": ["/a\nb"]}`, `\n`},
+		{"回车", `{"repo_paths": ["/a\rb"]}`, `\r`},
+		{"制表符", `{"repo_paths": ["/a\tb"]}`, `\t`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "c.json")
+			writeFile(t, path, c.content)
+
+			_, loadErr := LoadConfigAt(path)
+			if loadErr == nil {
+				t.Fatal("运行期加载应拒绝含控制字符的路径")
+			}
+			// 报错里用转义形态回显路径：原样拼进去的话，一个换行会把报错本身也拆成两行
+			if !strings.Contains(loadErr.Error(), "control character") || !strings.Contains(loadErr.Error(), c.escaped) {
+				t.Errorf("报错应点明控制字符并转义回显路径，实得 %q", loadErr)
+			}
+			if _, err := EffectiveAt(path, "repo_paths"); err == nil {
+				t.Error("config get 应拒绝含控制字符的路径")
+			}
+			issues, err := ValidateAt(path)
+			if err != nil {
+				t.Fatalf("体检本身不应失败: %v", err)
+			}
+			if len(issues) == 0 || issues[0].Level != LevelError {
+				t.Errorf("config validate 应把它报成 error，实得 %v", issues)
+			}
+		})
+	}
+
+	// 反例：合法路径仍然通过，规则没有扩大到拒绝一切
+	path := filepath.Join(t.TempDir(), "c.json")
+	writeFile(t, path, `{"repo_paths": ["/a/b c"]}`)
+	if _, err := LoadConfigAt(path); err != nil {
+		t.Errorf("普通路径不应被拒: %v", err)
+	}
+}
+
+// TestSetRejectsBlankConcurrency 断言 config set 不接受空串或纯空白。
+//
+// 与配置文件刻意的差异：文件里的空串是缺键形态（按 auto 跑），而 set 是显式写值。
+// 替用户把空串变成 auto 没有道理——脚本里 set concurrency "$VAR" 漏值时，
+// 用户需要的是当场报错，而不是一个悄悄生效的默认值。
+func TestSetRejectsBlankConcurrency(t *testing.T) {
+	for _, text := range []string{"", "   ", "\t"} {
+		path := filepath.Join(t.TempDir(), "c.json")
+		writeFile(t, path, `{}`)
+
+		if _, err := SetFromTextAt(path, "concurrency", text, false); err == nil {
+			t.Errorf("config set concurrency %q 应被拒绝", text)
+		}
+		raw, err := ReadRawAt(path)
+		if err != nil {
+			t.Fatalf("读取配置失败: %v", err)
+		}
+		if _, ok := raw["concurrency"]; ok {
+			t.Errorf("被拒绝的取值不应落盘: %#v", raw)
+		}
+	}
+
+	// 配置文件里的空串仍按 auto 处理：缺键与空值是文件的正常形态
+	path := filepath.Join(t.TempDir(), "c.json")
+	writeFile(t, path, `{"concurrency": ""}`)
+	cfg, err := LoadConfigAt(path)
+	if err != nil {
+		t.Fatalf("文件里的空串应仍然可加载: %v", err)
+	}
+	if cfg.Concurrency != DefaultConcurrency {
+		t.Errorf("文件里的空串应归一成 %q，实得 %q", DefaultConcurrency, cfg.Concurrency)
+	}
+}

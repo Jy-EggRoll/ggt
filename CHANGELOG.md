@@ -24,6 +24,17 @@
 - 路径列表项只接受字符串数组，元素去掉空白后不能为空；`repo_paths: [""]` 与 `repo_paths: "/a"` 都会被拒绝，`null` 仍视为空列表
 - `config validate` 不再把“类型不规范但运行期还能跑”报成 warning：类型不合法现在会让运行期加载失败，因此按 error 报出
 - 配置文件里的非法 `log_level` 不再回退默认级别继续跑，而是在加载期报错退出；要确认文件哪里不对，仍用 `ggt config validate`
+- 未知键不再只由 `config validate` 报错：运行期加载同样失败，加载、`config get`、`config set`、`config validate` 四条路径结论一致。未知键几乎总是拼写错误，忽略它会让用户以为配置生效了；清掉它用 `ggt config reset <键>`，文件里确实写着该键时即可删除
+- `ggt size --unit` 与配置项 `size_unit` 共用同一份归一规则：`--unit BINARY` 归一成 `binary`（此前按字面量比较、认不出就回退 `decimal`，与配置文件结论相反），非法取值直接报错退出，不再静默回退
+- `config set concurrency ""`（或纯空白）改为报错：set 是显式写值，替用户把它变成 `auto` 没有道理；配置文件里的空串仍按 `auto` 处理
+- 路径列表项拒绝含换行或其它控制字符的路径：`config get` 的路径列表是“一行一条”，带换行的路径会被下游脚本读成两条
+
+**配置自救**
+
+- ✨ 配置加载失败时不再把所有命令一起挡在门外：`ggt config` 与 `ggt repo` 两个子树改走宽松加载（只要求 JSON 语法与键名可读，不要求整份配置通过规范化），坏掉的项按内置默认值处理、仍然可用的仓库路径条目保留，并逐条提示坏在哪。此前 `repo_paths` 写成 `[""]` 之后，连 `ggt repo list` 与 `ggt config reset repo_paths` 都起不来，用户只剩手改文件或 `config reset --all`（丢掉全部仓库记录）
+- ✨ 加载失败的报错直接给出可执行的修复命令（`ggt config reset <键>`），并说明这两个子树仍然可用，用户不必先读懂配置文件才能恢复
+- ✨ `ggt config reset <键>` 对受管项（`repo_paths`、`parent_paths`）在“当前值非法”时放行一次，并说明这次是清理非法值；取值合法时仍按“由 `ggt repo` 管理”拒绝。受管约束的是“怎么设值”，不该拦住“怎么清除一个已经坏掉的值”
+- ✨ `ggt config`（即 `config show`）在配置坏掉时也打印当前配置：坏掉的项显示默认值，并在 JSON 之前逐条给出问题与修复命令
 
 **自升级**
 

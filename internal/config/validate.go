@@ -94,7 +94,8 @@ func validateKeys(raw map[string]any, normalized map[string]any) []Issue {
 		known[s.Key] = true
 	}
 
-	// 未知键多半是拼写错误。运行期完全静默地忽略它们，用户会以为设上了
+	// 未知键多半是拼写错误。运行期同样判失败（见 decodeConfig），因此这里按 error 报；
+	// 文案与运行期共用一个来源，两边不会给出两种说法
 	unknown := make([]string, 0, len(raw))
 	for k := range raw {
 		if !known[k] {
@@ -103,10 +104,7 @@ func validateKeys(raw map[string]any, normalized map[string]any) []Issue {
 	}
 	sort.Strings(unknown) // 排序保证输出稳定，便于 diff 与脚本处理
 	for _, k := range unknown {
-		issues = append(issues, Issue{
-			Level:   LevelError,
-			Message: l10n.T("Unknown config key {{.Key}} (possible typo); ggt silently ignores it", map[string]any{"Key": k}),
-		})
+		issues = append(issues, Issue{Level: LevelError, Message: unknownKeyError(k).Error()})
 	}
 
 	for _, s := range settings {

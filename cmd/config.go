@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/jy-eggroll/eggokit/l10n"
 	"github.com/jy-eggroll/ggt/internal/config"
@@ -74,11 +75,13 @@ Repository paths are managed by "ggt repo" instead of "ggt config set".`, nil),
 // showConfig 以 JSON 格式打印当前生效配置。
 func showConfig(cmd *cobra.Command, args []string) error {
 	// 不读全局 cfg（本子树遮蔽了 PersistentPreRunE，那是 nil），直接从文件重新加载，
-	// 语义与 get 保持一致：只看配置文件 + 补默认值
-	cfg, err := config.LoadConfig()
+	// 语义与 get 保持一致：只看配置文件 + 补默认值。
+	//
+	// 走可恢复加载而不是严格加载：配置坏了的时候，光看一遍当前配置正是排查的第一步。
+	// 坏掉的键按默认值显示，并在打印 JSON 之前逐条说明坏在哪、怎么修（见 loadRecoverableConfig）
+	cfg, err := loadRecoverableConfig()
 	if err != nil {
 		ErrorMsg(l10n.T("Cannot read the config file: {{.Err}}", map[string]any{"Err": err}))
-		InfoMsg(l10n.T("Run \"ggt config validate\" to see what is wrong", nil))
 		return errSilent
 	}
 
@@ -161,7 +164,10 @@ func newConfigSetCmd() *cobra.Command {
 		Short: l10n.T("Set a configuration value", nil),
 		Long: l10n.T(`Validate and write one setting into the config file.
 
-Other keys in the file are left untouched, including keys ggt does not know about.
+Other keys in the file are left untouched.
+
+An empty value is rejected where it would silently mean a default: write "auto"
+for concurrency instead of an empty string.
 
 Examples:
   ggt config set concurrency auto
@@ -210,6 +216,11 @@ func newConfigResetCmd() *cobra.Command {
 By default the value is REMOVED from the file, so the setting falls back to its
 built-in default. With --defaults the default value is written explicitly instead.
 
+The repository lists are normally managed by "ggt repo", but when their current
+value is invalid this command is allowed once to clear the broken value.
+
+A key that ggt does not know is removed from the file if it is present there.
+
 --all applies the same choice to everything: it deletes the config file, or with
 --defaults writes a file containing only default values. Either way the registered
 repositories are cleared — manage them one by one with "ggt repo" if that is not
@@ -248,10 +259,23 @@ Examples:
 func resetOneKey(key string, writeDefault bool) error {
 	s, ok := config.Lookup(key)
 	if !ok {
-		return errUnknownKey(key)
+		return resetUnknownKey(key, writeDefault)
 	}
+
 	if s.ManagedBy != "" {
-		return errors.New(l10n.T("{{.Key}} is managed by \"{{.Command}}\"; use that command to change it",
+		bad, err := config.ValueErrorAt(config.GetDefaultConfigPath(), s.Key)
+		if err != nil {
+			// 读不出文件是另一回事：把它报成“取值非法”会让用户以为 reset 修好了配置
+			return err
+		}
+		if !bad {
+			return errors.New(l10n.T("{{.Key}} is managed by \"{{.Command}}\"; use that command to change it",
+				map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
+		}
+		// 受管约束的是“怎么设值”，不该拦住“怎么清除一个已经坏掉的值”：受管项的值非法时
+		// 所有命令都起不来（其中包括 ggt repo 自己的写入校验），唯一能落地的修复就是这个
+		// reset。因此放行一次，并说明这次是清理非法值而不是绕开 ggt repo
+		WarnMsg(l10n.T("{{.Key}} is normally managed by \"{{.Command}}\", but its current value is invalid, so it is cleared to recover the config file",
 			map[string]any{"Key": s.Key, "Command": s.ManagedBy}))
 	}
 
@@ -270,6 +294,33 @@ func resetOneKey(key string, writeDefault bool) error {
 	}
 	SuccessMsg(l10n.T("{{.Key}} was removed from the config file; the default ({{.Value}}) now applies",
 		map[string]any{"Key": s.Key, "Value": defaultText}))
+	return nil
+}
+
+// resetUnknownKey 处理“键名根本没注册”的 reset。
+//
+// 为什么允许：未知键现在会让运行期加载失败（否则拼写错误会被静默忽略，用户以为配置生效了），
+// 而 reset 若不认它，用户就只剩手改文件或 reset --all——正是这次要消除的死锁。
+// 删除一个配置键不需要认识它的含义，因此只在“文件里确实写着这个键”时放行；
+// 文件里没有它时仍按未知键报错，拼写错误当场暴露，而不是回一句“已删除”让人以为清掉了什么。
+func resetUnknownKey(key string, writeDefault bool) error {
+	raw, err := config.ReadRawAt(config.GetDefaultConfigPath())
+	if err != nil {
+		return err
+	}
+	k := strings.ToLower(strings.TrimSpace(key))
+	if _, ok := raw[k]; !ok {
+		return errUnknownKey(key)
+	}
+	if writeDefault {
+		// 未知键没有默认值可写；这里要说清该用哪一种 reset，而不是让用户以为命令没生效
+		return errors.New(l10n.T("{{.Key}} is not a known setting, so it has no default value; run \"ggt config reset {{.Key}}\" to remove it",
+			map[string]any{"Key": k}))
+	}
+	if err := config.UnsetKey(k); err != nil {
+		return err
+	}
+	SuccessMsg(l10n.T("{{.Key}} is not a known setting; removed it from the config file", map[string]any{"Key": k}))
 	return nil
 }
 
@@ -321,8 +372,8 @@ func newConfigValidateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate",
 		Short: l10n.T("Check the config file for problems", nil),
-		Long: l10n.T(`Check the config file and report anything that would be silently ignored,
-silently replaced by a default, or that makes the file unreadable.
+		Long: l10n.T(`Check the config file and report anything that makes it unreadable or
+unusable at runtime.
 
 Output has no colors so it can be consumed by scripts. The exit code is 1 when at
 least one error is found.

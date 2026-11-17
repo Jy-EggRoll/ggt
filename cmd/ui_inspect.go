@@ -80,7 +80,13 @@ func (c *uiCache) handleSize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	low, high, unit, _ := sizeThresholds(0, 0, "")
+	// 看板不带任何 flag 覆盖，因此这里的 error 只可能来自配置本身；照实回报，
+	// 不要用一份“看起来生效”的分桶参数继续算下去
+	low, high, unit, err := sizeThresholds(0, 0, "")
+	if err != nil {
+		writeUIJSON(w, http.StatusInternalServerError, uiSizeInfo{Error: err.Error()})
+		return
+	}
 	out := uiSizeInfo{
 		Repo:   repo.Path,
 		Name:   repo.Name,

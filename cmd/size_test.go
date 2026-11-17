@@ -2,7 +2,12 @@
 // 覆盖 git count-objects 输出解析、单位换算与人类可读格式化。
 package cmd
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/jy-eggroll/ggt/internal/config"
+)
 
 // TestParseSizeValue 验证不同单位字符串能正确换算为字节数。
 func TestParseSizeValue(t *testing.T) {
@@ -139,4 +144,39 @@ func TestClassifyBySize(t *testing.T) {
 	assertNames(small, wantSmall)
 	assertNames(mid, wantMid)
 	assertNames(large, wantLarge)
+}
+
+// TestSizeThresholdsShareSizeUnitNormalize 断言 --unit 与配置文件走同一份归一规则。
+//
+// 此前这里自己比较字面量、认不出就回退 decimal：配置文件里的 size_unit: "BINARY" 被
+// Normalize 归一成 binary，而 --unit BINARY 按 decimal 算——同一份配置在两条入口给出的
+// 分桶结论相反。现在非法值直接报错，不再静默回退。
+func TestSizeThresholdsShareSizeUnitNormalize(t *testing.T) {
+	initL10n(t, "en")
+	withConfig(t, &config.Config{
+		SizeBucketLowMB:  500,
+		SizeBucketHighMB: 800,
+		SizeUnit:         config.SizeUnitBinary,
+	})
+
+	if low, high, unit, err := sizeThresholds(0, 0, ""); err != nil {
+		t.Fatalf("未给 flag 时不应报错: %v", err)
+	} else if low != 500 || high != 800 || unit != config.SizeUnitBinary {
+		t.Errorf("未给 flag 时应取配置：low=%d high=%d unit=%q", low, high, unit)
+	}
+
+	// flag 与配置文件同口径：大小写与首尾空白都归一，用户不必记得规范写法
+	if _, _, unit, err := sizeThresholds(0, 0, "  DECIMAL "); err != nil || unit != config.SizeUnitDecimal {
+		t.Errorf("--unit DECIMAL 应归一成 decimal，实得 (%q, %v)", unit, err)
+	}
+	if _, _, unit, err := sizeThresholds(0, 0, "BiNaRy"); err != nil || unit != config.SizeUnitBinary {
+		t.Errorf("--unit BiNaRy 应归一成 binary，实得 (%q, %v)", unit, err)
+	}
+
+	// 非法值直接报错，而不是先跑完一轮统计再回退 decimal
+	if _, _, _, err := sizeThresholds(0, 0, "kb"); err == nil {
+		t.Fatal("--unit kb 应报错")
+	} else if !strings.Contains(err.Error(), "--unit") || !strings.Contains(err.Error(), "decimal") {
+		t.Errorf("报错应点名 --unit 与候选取值，实得 %v", err)
+	}
 }

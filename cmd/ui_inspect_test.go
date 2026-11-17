@@ -40,7 +40,9 @@ func TestHandleSizeAndFiles(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := initDiffTestRepo(t)
 	// 阈值写成明确的两档，好核对服务端把配置里的值原样带给了页面
-	withConfig(t, &config.Config{RepoPaths: []string{repo}, SizeBucketLowMB: 100, SizeBucketHighMB: 1000})
+	// 口径显式给出 decimal：经加载的配置一定带着归一后的口径（默认值由注册表补上），
+	// 而这里直接构造 Config，零值不在“加载过”的取值范围内
+	withConfig(t, &config.Config{RepoPaths: []string{repo}, SizeBucketLowMB: 100, SizeBucketHighMB: 1000, SizeUnit: config.SizeUnitDecimal})
 
 	cache := &uiCache{ctx: context.Background()}
 

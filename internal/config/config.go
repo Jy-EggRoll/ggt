@@ -18,6 +18,10 @@
 //   - push_tags: 网页看板推送时是否附带 --follow-tags，默认 true
 //   - prune_branches: fetch / pull / sync 时是否加 --prune 修剪远程跟踪分支，默认 true；
 //     它只管分支，本地标签一律不自动修剪
+//
+// 取值不合法会让加载失败，所有命令因此在启动前退出。为保留一条命令行修复路径，
+// ggt config 与 ggt repo 两个子树改用宽松加载（见 recover.go 与 cmd 层 loadRecoverableConfig）：
+// 坏的键按默认值处理并提示怎么修，这两个子树只读写配置本身，不按配置执行 git 操作。
 package config
 
 import (
@@ -184,11 +188,13 @@ func LoadConfigAt(path string) (*Config, error) {
 // 再开弱转换等于给同一条规则留了第二份、更宽松的实现。
 func decodeConfig(raw map[string]any) (*Config, error) {
 	merged := DefaultRaw()
-	for key, v := range raw {
+	for _, key := range sortedRawKeys(raw) {
+		v := raw[key]
 		s, ok := Lookup(key)
 		if !ok {
-			// 未知键运行期一律忽略，由 config validate 报出
-			continue
+			// 未知键在运行期也判失败：它几乎总是拼写错误，而静默忽略会让用户以为设置生效了。
+			// 报错必须带上键名，才能给出“清掉这一个键”的命令（见 recover.go）
+			return nil, &KeyError{Key: key, Err: unknownKeyError(key)}
 		}
 		normalized, err := normalizeValue(s, v)
 		if err != nil {
@@ -198,11 +204,20 @@ func decodeConfig(raw map[string]any) (*Config, error) {
 				merged[s.Key] = v
 				continue
 			}
-			return nil, err
+			// 带上键名：加载失败的输出要据此指明该清掉哪一个键
+			return nil, &KeyError{Key: s.Key, Err: err}
 		}
 		merged[s.Key] = normalized
 	}
 
+	return decodeMerged(merged)
+}
+
+// decodeMerged 把“已经规范化的键值”解码成 Config。
+//
+// 宽松加载（recover.go）与严格加载（decodeConfig）共用这一处：两者对“规范值怎么变成
+// 结构体”必须给出同一个结论，否则同一份文件的同一个键会在两条路径上得到不同结果。
+func decodeMerged(merged map[string]any) (*Config, error) {
 	var cfg Config
 	dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 		Result:           &cfg,
@@ -218,6 +233,30 @@ func decodeConfig(raw map[string]any) (*Config, error) {
 	migrateDeprecatedConcurrency(&cfg)
 
 	return &cfg, nil
+}
+
+// KeyError 表示某个键让配置加载失败。
+//
+// 它存在的唯一目的是让调用方知道“该清掉哪个键”：加载失败的输出必须给出可直接执行的
+// 修复命令，而取值错误的文案里只有取值与期望，没有下一步能敲的东西（见 recover.go 的
+// WithRecoveryHint）。错误链保持完整，errors.Is 仍能穿透到具体原因。
+type KeyError struct {
+	Key string
+	Err error
+}
+
+func (e *KeyError) Error() string { return e.Err.Error() }
+
+func (e *KeyError) Unwrap() error { return e.Err }
+
+// unknownKeyError 是“未知键”的唯一文案，运行期加载与 config validate 共用。
+//
+// 两条路径必须同结论：此前 validate 把未知键判为 error 并退出 1，而运行期静默忽略、
+// 照常启动，用户看到的是“校验说文件有问题，实际又一切正常”。现在两边都判失败，
+// 因为未知键几乎总是拼写错误，忽略它只会让用户以为配置生效了。
+func unknownKeyError(key string) error {
+	return fmt.Errorf("%s", l10n.T("Unknown config key {{.Key}} (possible typo); remove it from the config file",
+		map[string]any{"Key": key}))
 }
 
 // defaultConfig 返回所有字段填好默认值的配置。

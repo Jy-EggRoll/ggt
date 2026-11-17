@@ -64,42 +64,7 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 		// 想看全表敲 ggt --help。
 		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			started := time.Now()
-			var err error
-			cfg, err = config.LoadConfig()
-			if err != nil {
-				// 错误包装保持 Go 侧拼接：go-i18n 模板没有 %w 等价物，写进模板会丢掉错误链
-				return fmt.Errorf("%s: %w", l10n.T("Failed to load the configuration", nil), err)
-			}
-
-			// 并发数在这里一次性解析并装进 worker 的共享信号量。放在启动流程而不是各命令里，
-			// 是因为它同时是“上限校验”的唯一入口：-c 与配置文件两条来源都在此汇合，
-			// 越界时让命令以非 0 退出码失败，而不是截断成上限继续跑。
-			//
-			// 命令行与配置文件必须分开解析：-c 明确给出空串（脚本里 -c "$VAR" 而 VAR
-			// 未设值）要报错，而配置文件里的空串仍按 auto 处理，见各自函数的注释。
-			var n int
-			if cmd.Flags().Changed("concurrency") {
-				n, err = config.ValidateCommandLineConcurrency(concurrency)
-				if err != nil {
-					return err
-				}
-				cfg.Concurrency = concurrency
-			} else {
-				n, err = cfg.ConcurrencyValue()
-				if err != nil {
-					return err
-				}
-			}
-			if err := worker.Init(n); err != nil {
-				return err
-			}
-
-			// 日志必须在读完配置之后、任何业务代码之前建立：级别要由配置与 -v/-vv 共同决定，
-			// 而业务命令在 RunE 里就会打诊断日志（见 DebugTimer）
-			initLogger(cmd, started)
-
-			return nil
+			return startCommand(cmd, config.LoadConfig)
 		},
 	}
 
@@ -119,6 +84,101 @@ Config file: ~/.config/go-git-ggt/ggt-config.json`, nil),
 	root.PersistentFlags().StringP("lang", "l", "", l10n.T("Output language (e.g. en, zh-CN); defaults to the language config value", nil))
 
 	return root
+}
+
+// configLoader 是“从哪里、以什么严格程度取配置”。
+//
+// 把它做成参数而不是写死在 startCommand 里，是为了让“配置坏了也要能跑”的那两个子树
+// 复用同一套启动步骤（并发数、worker、日志），而不必各自复制一份（见 loadRecoverableConfig）。
+type configLoader func() (*config.Config, error)
+
+// startCommand 是所有子命令执行前的统一启动步骤：取配置 → 解析并发数 → 建立日志。
+//
+// 并发数在这里一次性解析并装进 worker 的共享信号量。放在启动流程而不是各命令里，
+// 是因为它同时是“上限校验”的唯一入口：-c 与配置文件两条来源都在此汇合，
+// 越界时让命令以非 0 退出码失败，而不是截断成上限继续跑。
+//
+// 命令行与配置文件必须分开解析：-c 明确给出空串（脚本里 -c "$VAR" 而 VAR 未设值）
+// 要报错，而配置文件里的空串仍按 auto 处理，见各自函数的注释。
+func startCommand(cmd *cobra.Command, load configLoader) error {
+	started := time.Now()
+
+	loaded, err := load()
+	if err != nil {
+		// 错误包装保持 Go 侧拼接：go-i18n 模板没有 %w 等价物，写进模板会丢掉错误链。
+		// 修复提示附在同一个错误里：配置加载失败时，用户唯一能敲的就是那几条命令
+		return config.WithRecoveryHint(
+			fmt.Errorf("%s: %w", l10n.T("Failed to load the configuration", nil), err))
+	}
+	cfg = loaded
+
+	var n int
+	if cmd.Flags().Changed("concurrency") {
+		n, err = config.ValidateCommandLineConcurrency(concurrency)
+		if err != nil {
+			return err
+		}
+		cfg.Concurrency = concurrency
+	} else {
+		n, err = cfg.ConcurrencyValue()
+		if err != nil {
+			return err
+		}
+	}
+	if err := worker.Init(n); err != nil {
+		return err
+	}
+
+	// 日志必须在读完配置之后、任何业务代码之前建立：级别要由配置与 -v/-vv 共同决定，
+	// 而业务命令在 RunE 里就会打诊断日志（见 DebugTimer）
+	initLogger(cmd, started)
+
+	return nil
+}
+
+// loadRecoverableConfig 先按严格规则加载配置，失败时退回宽松加载：
+// 坏掉的键按默认值处理并逐条打印“怎么修”，命令本身继续跑。
+//
+// 只有 ggt config 与 ggt repo 两个子树使用它，理由是这样一条死锁链（已实测）：
+// repo_paths 写成 [""] 之后，ggt repo list（它要先读配置）与
+// ggt config reset repo_paths（受管项被拒）一起失败，用户只剩手改文件或
+// config reset --all（丢掉全部仓库记录）。这两个子树恰好是唯一的命令行修复入口，
+// 因此必须能在“配置已经坏了”的状态下运行。
+//
+// 为什么只放开这两个子树：其它命令的职责都建立在配置之上（按仓库列表跑 git、
+// 按 size_unit 分桶、按 language 输出），配置坏了它们本来也无事可做，让它们带着
+// 一半默认值继续跑只会给出与用户配置无关的结果。这两个子树的职责则只是配置本身，
+// 因此各自的权限也被收在这里：
+//
+//   - ggt config：只读写配置文件（show / get / set / reset / validate / path）。
+//     允许在配置非法时打印当前配置与体检结果；不允许把宽松加载出来的值当成“生效配置”
+//     写回文件，也不按配置执行任何 git 操作。
+//   - ggt repo：只读写仓库路径列表（list / add / remove / add-parent）。
+//     允许在配置非法时列出仍然可用的条目，并把修好的列表写回文件；不允许遍历仓库采集
+//     状态、跑并发任务，也不依据其它配置项做判断。
+//
+// 两条共同的边界：坏掉的键一律按默认值处理（并逐条提示），所以这两个子树的输出不能
+// 当作“运行期会怎么表现”的证据；写文件只发生在用户显式执行 set / reset / repo 增删时。
+func loadRecoverableConfig() (*config.Config, error) {
+	loaded, err := config.LoadConfig()
+	if err == nil {
+		return loaded, nil
+	}
+
+	lenient, problems, lenientErr := config.LoadConfigLenient()
+	if lenientErr != nil {
+		// 连 JSON 语法、键名可读性都不成立时宽松加载也没有意义：那时没有“哪一个键坏了”
+		// 可言，只能手改文件或整份重置。提示在这里补上，调用方（含 config show）拿到的
+		// error 就是可直接照做的；WithRecoveryHint 幂等，startCommand 再调用一次也只会有一份
+		return nil, config.WithRecoveryHint(err)
+	}
+
+	WarnMsg(l10n.T(`The configuration has problems, so ggt runs with built-in defaults for the affected entries; only "ggt config" and "ggt repo" work in this state`, nil))
+	for _, p := range problems {
+		WarnMsg(l10n.T("{{.Problem}} (recover with {{.Command}})",
+			map[string]any{"Problem": p.Error(), "Command": config.ResetCommand(p.Key)}))
+	}
+	return lenient, nil
 }
 
 // exitCodeInterrupted 是“被 SIGINT 打断”的退出码。

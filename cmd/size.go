@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jy-eggroll/eggokit/l10n"
+	"github.com/jy-eggroll/ggt/internal/config"
 	"github.com/jy-eggroll/ggt/internal/git"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -60,8 +61,14 @@ Examples:
   ggt size          Show sizes and bucket statistics for all repositories
   ggt sz            Short form
   ggt size --low 200 --high 600 --unit binary  Custom thresholds and unit`, nil),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			// 阈值与口径先解析：--unit 非法要当场报错，而不是先跑完一轮统计再悄悄回退成
+			// decimal。解析与看板共用同一份实现，同一次 size_unit 在两处因此给出同一个分桶结论
+			low, high, unit, err := sizeThresholds(sizeLow, sizeHigh, sizeUnit)
+			if err != nil {
+				return err
+			}
 			repos := AllRepos(ctx)
 			// 用 InfoLn 而非 InfoMsg：Ln 系列会在结尾多留一个空行，与后续明细隔开；
 			// "%s\n" 的格式串细节已统一在 output.go 处理，调用点不再自带格式串
@@ -86,21 +93,12 @@ Examples:
 			pterm.Println()
 			InfoMsg(l10n.T("Total size: {{.Size}}", map[string]any{"Size": formatSize(totalSize)}))
 
-			// 阈值与口径的解析（flag 优先于配置文件、非法口径回退 decimal）与看板共用同一份实现：
-			// 各写一份的话，同一次 size_unit 配置在命令行与页面上会给出不同的分桶结果
-			low, high, unit, badUnit := sizeThresholds(sizeLow, sizeHigh, sizeUnit)
-			if badUnit != "" {
-				// 走 Msg 系列而非格式串通道：译文已由 T 渲染完毕，套 "%s" 只是多余的间接层
-				// 译文里的 "decimal" 是配置枚举值，刻意保留原文，便于用户对照配置文件里的 size_unit
-				WarnMsg(l10n.T(`Invalid size_unit value ("{{.Unit}}"), falling back to "decimal"`, map[string]any{"Unit": badUnit}))
-			}
-
 			small, mid, large := classifyBySize(results, low, high, unit)
 			// 用 switch 而不是在消息 id 上做拼接（如 T("unit_"+unit)）：语义更明确，
 			// 也不会因将来新增配置取值而取到意料之外的文案
 			var unitLabel string
 			switch unit {
-			case "binary":
+			case config.SizeUnitBinary:
 				unitLabel = l10n.T("binary MB (1 MB = 1024×1024 bytes, i.e. MiB)", nil)
 			default:
 				unitLabel = l10n.T("decimal MB (1 MB = 1,000,000 bytes)", nil)
@@ -112,6 +110,7 @@ Examples:
 			printSizeBucket(l10n.T("<{{.Low}}MB", map[string]any{"Low": low}), small, InfoMsg)
 			printSizeBucket(l10n.T("{{.Low}}~{{.High}}MB", map[string]any{"Low": low, "High": high}), mid, WarnMsg)
 			printSizeBucket(l10n.T(">{{.High}}MB", map[string]any{"High": high}), large, ErrorMsg)
+			return nil
 		},
 	}
 
@@ -214,26 +213,31 @@ func collectRepoSize(ctx context.Context, path string) (map[string]string, error
 // sizeThresholds 解析分桶阈值与换算口径。
 //
 // 优先级：命令行 flag（非零/非空才算指定）> 配置文件 > 内置默认。
-// badUnit 非空表示配置里的 size_unit 不是合法取值，此时返回值已回退为 "decimal"，
-// 调用方自行决定要不要告警——终端要打印警告，看板只把生效的口径显示出来即可。
-func sizeThresholds(lowFlag, highFlag int, unitFlag string) (low, high int, unit, badUnit string) {
-	low = GetConfig().SizeBucketLowMB
+//
+// --unit 与配置文件走同一份 Normalize（config.ParseSizeUnit），非法取值直接返回错误：
+// 旧实现自己比较字面量、认不出就回退 decimal，于是 size_unit: "BINARY" 在配置文件路径上
+// 归一成 binary，--unit BINARY 却按 decimal 算——同一份配置在两条入口结论相反。
+// 配置里的取值不需要在这里再校验：加载时已经经同一个 Normalize 收敛过。
+func sizeThresholds(lowFlag, highFlag int, unitFlag string) (low, high int, unit string, err error) {
+	cfg := GetConfig()
+	low, high = cfg.SizeBucketLowMB, cfg.SizeBucketHighMB
 	if lowFlag > 0 {
 		low = lowFlag
 	}
-	high = GetConfig().SizeBucketHighMB
 	if highFlag > 0 {
 		high = highFlag
 	}
-	unit = GetConfig().SizeUnit
+	unit = cfg.SizeUnit
 	if unitFlag != "" {
-		unit = unitFlag
+		parsed, parseErr := config.ParseSizeUnit(unitFlag)
+		if parseErr != nil {
+			// 报错里点明是 --unit：规则虽然与 size_unit 共用，用户敲的却是这个 flag，
+			// 只提配置键会让人先去改配置文件，而真正写错的是命令行
+			return 0, 0, "", fmt.Errorf("%s", l10n.T("Invalid --unit value: {{.Err}}", map[string]any{"Err": parseErr}))
+		}
+		unit = parsed
 	}
-	if unit != "decimal" && unit != "binary" {
-		badUnit = unit
-		unit = "decimal"
-	}
-	return low, high, unit, badUnit
+	return low, high, unit, nil
 }
 
 // 分桶的取值。字符串而不是数字：它要进 JSON，页面上按它选颜色，出问题时一眼看得出是哪一档
@@ -259,10 +263,12 @@ func sizeBucket(size int64, lowMB, highMB int, unit string) string {
 }
 
 // bytesToMB 将字节数按指定口径换算为 MB 数值。
-// unit 为 "decimal" 时 1 MB = 1,000,000 字节；为 "binary" 时 1 MB = 1024×1024 字节（即 MiB）。
+// unit 为 config.SizeUnitDecimal 时 1 MB = 1,000,000 字节；
+// 为 config.SizeUnitBinary 时 1 MB = 1024×1024 字节（即 MiB）。
+// 入参总由 sizeThresholds 给出、已通过 Normalize，因此这里不再判非法值。
 // 纯函数，不依赖任何外部状态，便于单元测试。
 func bytesToMB(b int64, unit string) float64 {
-	if unit == "binary" {
+	if unit == config.SizeUnitBinary {
 		return float64(b) / (1024 * 1024)
 	}
 	return float64(b) / 1e6

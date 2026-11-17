@@ -170,6 +170,12 @@ func SetFromTextAt(path, key, text string, strict bool) (string, error) {
 		// 走到这里说明有人往注册表里加了项却两样都没填（约定由 TestSettingMetadataIsComplete 守着）
 		return "", fmt.Errorf("config: setting %q has neither Parse nor ManagedBy", s.Key)
 	}
+	// 显式写空值一律报错：空串在配置文件里可能是有含义的缺省形态（concurrency 的空串按
+	// auto 跑），但 set 的语义是“我要写这个值”，替用户把它变成某一个具体取值没有道理。
+	// 判断只落在声明了 RejectBlank 的项上，theme / font_* 的空串仍然有意义
+	if s.RejectBlank && strings.TrimSpace(text) == "" {
+		return "", invalidValueError(s, "(empty)")
+	}
 	if strict && !ChoiceAllowed(s, text) {
 		return "", fmt.Errorf("%s", l10n.T("{{.Key}} must be one of: {{.Values}}",
 			map[string]any{"Key": s.Key, "Values": optionValuesText(s.Options())}))

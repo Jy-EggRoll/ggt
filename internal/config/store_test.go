@@ -505,6 +505,17 @@ func TestSettingMetadataIsComplete(t *testing.T) {
 			t.Errorf("%q 声明了 AllowCustom 却没有候选清单", s.Key)
 		}
 
+		// RejectBlank 只对文本入口有意义：受管项没有文本入口（Parse 为 nil），标了也不起作用；
+		// 而默认值本身就是空白时，reset --defaults 会写入一个 set 自己拒收的值，自相矛盾
+		if s.RejectBlank {
+			if s.ManagedBy != "" {
+				t.Errorf("%q 由 %s 管理，声明 RejectBlank 没有意义", s.Key, s.ManagedBy)
+			}
+			if strings.TrimSpace(ValueText(s.Default)) == "" {
+				t.Errorf("%q 声明了 RejectBlank，但它的默认值是空白：reset --defaults 会写出一个自己拒收的值", s.Key)
+			}
+		}
+
 		if s.Options == nil {
 			continue
 		}

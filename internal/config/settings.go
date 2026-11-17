@@ -195,6 +195,15 @@ type Setting struct {
 	// concurrency 就是这种：候选是 auto 与几个常用档位，1 到 64 的任意整数也合法。
 	// 页面据此把控件渲染成“输入框 + 候选”而不是纯下拉
 	AllowCustom bool
+	// RejectBlank 表示文本入口（config set 与设置面板）不接受空串或纯空白。
+	//
+	// 它只管“显式写一个值”这一条路径，配置文件里的空串仍按各自的 Normalize 处理：
+	// concurrency 的文件空串是缺键形态，按 auto 跑。区分这两者是因为替用户做选择没有道理——
+	// set 是显式写值，写空串该报错并让用户自己写 auto，而不是悄悄存成 auto。
+	//
+	// 判断依据落在 Normalize 之外，是因为同一个取值在两个入口的意图不同，而 Normalize
+	// 只描述“值合不合法”。目前只有 concurrency 需要这一位（theme、font_* 的空串有含义）
+	RejectBlank bool
 	// Min / Max 是整数项的取值边界，nil 表示这一侧不设限。仅对 KindInt 有意义。
 	//
 	// 用指针而不是“0 表示不设限”，因为 0 本身是合法边界（notify_timeout 的下界就是 0）
@@ -224,6 +233,9 @@ var settings = []Setting{
 		// 不是全部合法取值
 		Options:     concurrencyOptions,
 		AllowCustom: true,
+		// set 与设置面板都是“显式写一个值”：写空串等于把选择权交给 ggt，
+		// 它会被静默写成 auto，而 -c "" 明确报错。两处口径必须一致（见 RejectBlank）
+		RejectBlank: true,
 		// 并发数在进程启动时一次性装进 worker 的共享信号量（见 worker.Init），
 		// 运行中改配置换不掉它；标成“需重启”而不是让面板提示一个不会发生的“立即生效”
 		ApplyAt: ApplyRestart,
@@ -259,7 +271,7 @@ var settings = []Setting{
 		Key:      "size_unit",
 		Title:    l10n.T("Size unit", nil),
 		Kind:     KindString,
-		Default:  "decimal",
+		Default:  SizeUnitDecimal,
 		Expected: l10n.T("decimal or binary", nil),
 		// 规范值由候选清单生成，合法取值因此只在 sizeUnitOptions 里写一遍
 		Normalize: enumValueNormalizer("size_unit", sizeUnitOptions),
@@ -528,9 +540,38 @@ func concurrencyOptions() []Option {
 	}
 }
 
+// size_unit 的两个取值。写成常量而不是让各处照抄字面量：注册表的默认值、候选清单、
+// 命令行 --unit 与 size 命令的换算分支都要用它，抄多了就会出现“某一处还认旧拼写”
+const (
+	SizeUnitDecimal = "decimal"
+	SizeUnitBinary  = "binary"
+)
+
+// ParseSizeUnit 解析 size 命令的换算口径，配置文件的取值与命令行 --unit 共用这一处。
+//
+// 返回的一定是 SizeUnitDecimal 或 SizeUnitBinary，非法取值返回错误、不回退：
+// 只是“比较一下字面量、不对就按 decimal 算”的旧实现会让 size_unit: "BINARY" 在配置文件
+// 路径上归一成 binary、--unit BINARY 却按 decimal 算，同一份配置两条入口结论相反。
+func ParseSizeUnit(text string) (string, error) {
+	s, ok := Lookup("size_unit")
+	if !ok || s.Parse == nil {
+		// 注册表是编译期常量，缺项属于代码写错而不是用户输入问题
+		return "", fmt.Errorf("config: setting %q has no text entry", "size_unit")
+	}
+	parsed, err := s.Parse(text)
+	if err != nil {
+		return "", err
+	}
+	unit, ok := parsed.(string)
+	if !ok {
+		return "", ErrInvalidValue
+	}
+	return unit, nil
+}
+
 // sizeUnitOptions 是 MB 换算口径的两个取值
 func sizeUnitOptions() []Option {
-	return []Option{{Value: "decimal"}, {Value: "binary"}}
+	return []Option{{Value: SizeUnitDecimal}, {Value: SizeUnitBinary}}
 }
 
 // languageOptions 返回随二进制发布的语言，清单与显示名都取自 locales 包。

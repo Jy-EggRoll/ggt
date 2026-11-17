@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/jy-eggroll/eggokit/l10n"
 )
@@ -183,6 +184,9 @@ func intValueNormalizer(key string, min, max *int) func(any) (any, error) {
 // 路径项没有“标量等价物”：写成 "/a" 时，接受它等于替用户猜“这是只有一个元素的列表”。
 // 元素只做“去空白后非空”的判断，不裁剪原值——路径本身可以含首尾空格，
 // 真正该拒绝的是整条都是空白、却看起来像配置了一条路径的条目。
+//
+// 含换行或其它控制字符的路径一律拒绝：config get 对路径列表的契约是“一行一条”，
+// 一个带换行的路径会被打印成两行，按行读取的脚本就会把它当成两条路径。
 func pathsValueNormalizer(key string) func(any) (any, error) {
 	return func(v any) (any, error) {
 		if v == nil {
@@ -211,6 +215,9 @@ func pathsValueNormalizer(key string) func(any) (any, error) {
 			}
 			if strings.TrimSpace(path) == "" {
 				return nil, emptyPathError(key)
+			}
+			if hasControlChar(path) {
+				return nil, controlCharPathError(key, path)
 			}
 			out = append(out, path)
 		}
@@ -287,6 +294,28 @@ func expectedPathError(key string, v any) error {
 func emptyPathError(key string) error {
 	return fmt.Errorf("%s", l10n.T("Empty path in {{.Key}}: entries must not be empty",
 		map[string]any{"Key": key}))
+}
+
+// controlCharPathError 说明路径条目里不能有换行或其它控制字符。
+//
+// 路径用 %q 形态嵌进文案：原样拼进去的话，一个换行会把这条报错本身也拆成两行，
+// 用户反而看不出到底是哪一个字符出的问题。
+func controlCharPathError(key, path string) error {
+	return fmt.Errorf("%s", l10n.T("Path in {{.Key}} contains a control character: {{.Path}}; entries must be a single line",
+		map[string]any{"Key": key, "Path": strconv.Quote(path)}))
+}
+
+// hasControlChar 判断字符串里是否含换行或其它控制字符。
+//
+// normalize 与宽松加载的抢救逻辑（recover.go 的 salvagePathList）共用这一处：
+// 两处各写一份判定，迟早出现“严格加载拒绝、宽松加载却放行”的错位。
+func hasControlChar(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // choiceError 列出枚举项的候选项。写清候选比只说“取值非法”有用：

@@ -311,6 +311,33 @@ func TestCLIConfigSubtreeContract(t *testing.T) {
 		t.Fatalf("reset 不应动到其它键，实际 %#v", afterReset)
 	}
 
+	// 未知键在运行期也判失败：这份文件里的 alpha / zeta 让普通命令起不来，
+	// 报错必须点名键并给出可执行的修复命令，而不是只说“配置有问题”
+	blocked := runCLIWithEnv(t, home, "version")
+	if blocked.exitCode == 0 {
+		t.Fatalf("未知键应让运行期命令失败: stdout=%q", blocked.stdout)
+	}
+	blockedOutput := blocked.stdout + blocked.stderr
+	for _, want := range []string{"Unknown config key", "ggt config reset "} {
+		if !strings.Contains(blockedOutput, want) {
+			t.Fatalf("未知键的报错应含 %q: %q", want, blockedOutput)
+		}
+	}
+
+	// reset 认键名而不管它有没有注册，只要求文件里确实有它：这是清掉拼错的键唯一的
+	// 命令行出路，否则用户只剩手改文件或 reset --all（会丢掉全部仓库记录）
+	for _, stray := range []string{"alpha", "zeta"} {
+		if reset := runCLIWithEnv(t, home, "config", "reset", stray); reset.exitCode != 0 {
+			t.Fatalf("reset 未知键 %q 失败: exit=%d stderr=%q", stray, reset.exitCode, reset.stderr)
+		}
+		if _, ok := readConfigFile(t, configPath)[stray]; ok {
+			t.Fatalf("reset 后文件里不应还有 %q: %#v", stray, readConfigFile(t, configPath))
+		}
+	}
+	if recovered := runCLIWithEnv(t, home, "version"); recovered.exitCode != 0 {
+		t.Fatalf("清掉未知键后 version 应恢复正常: exit=%d stderr=%q", recovered.exitCode, recovered.stderr)
+	}
+
 	// 未知键：拒绝并指向 ggt config --help（顺带告诉用户怎么列出全部键）
 	unknown := runCLIWithEnv(t, home, "config", "set", "nosuchkey", "x")
 	if unknown.exitCode == 0 || !strings.Contains(unknown.stderr, "nosuchkey") {
@@ -333,6 +360,17 @@ func TestCLIConfigSubtreeContract(t *testing.T) {
 	// --lang 仍优先于设置文件（临时覆盖的既有能力不能被改动破坏）
 	if overridden := runCLIWithEnv(t, home, "version", "--lang", "en"); hasHanText(overridden.stdout) {
 		t.Fatalf("--lang 应覆盖设置文件: %q", overridden.stdout)
+	}
+
+	// 显式写空值：set 不接受空串或纯空白，要求用户写 auto；配置文件里的空串仍按 auto 处理
+	for _, blank := range []string{"", "   "} {
+		result := runCLIWithEnv(t, home, "config", "set", "concurrency", blank)
+		if result.exitCode == 0 || !strings.Contains(result.stderr, "concurrency") {
+			t.Fatalf("config set concurrency %q 应被拒绝并点名: exit=%d stderr=%q", blank, result.exitCode, result.stderr)
+		}
+	}
+	if auto := runCLIWithEnv(t, home, "config", "set", "concurrency", "auto"); auto.exitCode != 0 {
+		t.Fatalf("显式写 auto 应成功: exit=%d stderr=%q", auto.exitCode, auto.stderr)
 	}
 }
 
@@ -369,6 +407,101 @@ func TestCLIConfigValidateContract(t *testing.T) {
 	// validate 直接 os.Exit，不经过 root 的错误包装，因此 stderr 必须干净
 	if strings.Contains(result.stderr, "Execution failed") {
 		t.Fatalf("validate 不应由 root 重复包装错误: %q", result.stderr)
+	}
+}
+
+// TestCLIConfigRecoveryFromInvalidPaths 复现并守住那条实测的死锁链：
+// repo_paths 写成 [""] 之后，普通命令全部在加载期失败，而修好它只需要一条命令。
+//
+// 断言的重点不是“报错对不对”，而是“报错之后还有没有别的命令能跑”：加载失败的输出
+// 必须给出可执行的修复命令，ggt config 与 ggt repo 两个子树必须仍然可用（否则用户只剩
+// 手改 JSON 或 reset --all，后者会丢掉全部仓库记录），最后一条 reset 真的把配置救回来。
+func TestCLIConfigRecoveryFromInvalidPaths(t *testing.T) {
+	home := t.TempDir()
+	configPath := configFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("创建配置目录失败: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"repo_paths":[""]}`), 0o644); err != nil {
+		t.Fatalf("写入坏配置失败: %v", err)
+	}
+
+	// 普通命令应当失败，且报错里带一条能直接敲的修复命令
+	broken := runCLIWithEnv(t, home, "status")
+	if broken.exitCode == 0 {
+		t.Fatalf("配置非法时 status 应失败: stdout=%q", broken.stdout)
+	}
+	brokenOutput := broken.stdout + broken.stderr
+	for _, want := range []string{"repo_paths", "ggt config reset repo_paths"} {
+		if !strings.Contains(brokenOutput, want) {
+			t.Fatalf("报错应含 %q: %q", want, brokenOutput)
+		}
+	}
+
+	// ggt repo 必须还能跑：它是仅有的两条修复入口之一
+	listed := runCLIWithEnv(t, home, "repo", "list")
+	if listed.exitCode != 0 {
+		t.Fatalf("配置非法时 repo list 应仍可用: exit=%d stdout=%q stderr=%q", listed.exitCode, listed.stdout, listed.stderr)
+	}
+	if !strings.Contains(listed.stdout, "No repositories configured") {
+		t.Fatalf("坏路径被丢掉后列表应为空: %q", listed.stdout)
+	}
+	if !strings.Contains(listed.stdout, "ggt config reset repo_paths") {
+		t.Fatalf("repo list 应说明坏在哪、怎么修: %q", listed.stdout)
+	}
+
+	// 裸 ggt config（即 show）同样要能跑：看一遍当前配置正是排查的第一步
+	showed := runCLIWithEnv(t, home, "config")
+	if showed.exitCode != 0 || !strings.Contains(showed.stdout, "repo_paths") {
+		t.Fatalf("配置非法时 config show 应仍可用: exit=%d stdout=%q stderr=%q", showed.exitCode, showed.stdout, showed.stderr)
+	}
+
+	// 救回来：reset 受管项在“当前值非法”时放行一次
+	reset := runCLIWithEnv(t, home, "config", "reset", "repo_paths")
+	if reset.exitCode != 0 {
+		t.Fatalf("reset 受管项应被放行: exit=%d stdout=%q stderr=%q", reset.exitCode, reset.stdout, reset.stderr)
+	}
+	if _, ok := readConfigFile(t, configPath)["repo_paths"]; ok {
+		t.Fatalf("reset 后文件里不应还有 repo_paths: %#v", readConfigFile(t, configPath))
+	}
+
+	// 配置恢复之后，普通命令必须能跑起来
+	if recovered := runCLIWithEnv(t, home, "status"); recovered.exitCode != 0 {
+		t.Fatalf("修好配置后 status 应恢复正常: exit=%d stdout=%q stderr=%q", recovered.exitCode, recovered.stdout, recovered.stderr)
+	}
+}
+
+// TestCLIRepoAddRepairsBrokenPathList 断言 ggt repo add 也能把坏掉的路列表写回合法形态。
+//
+// 与 reset 是两条独立的出路：用户只想补一个仓库时，不必先清空再重新登记；
+// 坏掉的条目会在宽松加载里被丢掉，写回的就是修好的列表。
+func TestCLIRepoAddRepairsBrokenPathList(t *testing.T) {
+	home := t.TempDir()
+	configPath := configFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("创建配置目录失败: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"repo_paths":[""]}`), 0o644); err != nil {
+		t.Fatalf("写入坏配置失败: %v", err)
+	}
+	repoDir := filepath.Join(home, "rescue-repo")
+	initGitRepo(t, repoDir)
+
+	added := runCLIWithEnv(t, home, "repo", "add", repoDir)
+	if added.exitCode != 0 {
+		t.Fatalf("配置非法时 repo add 应仍可用: exit=%d stdout=%q stderr=%q", added.exitCode, added.stdout, added.stderr)
+	}
+
+	// 写回文件的必须是一份合法列表：坏条目被丢掉，新仓库在里面
+	rawPaths, ok := readConfigFile(t, configPath)["repo_paths"].([]any)
+	if !ok || len(rawPaths) != 1 || rawPaths[0] != repoDir {
+		t.Fatalf("repo_paths 应只剩刚登记的那一条，实得 %#v", readConfigFile(t, configPath)["repo_paths"])
+	}
+	if listed := runCLIWithEnv(t, home, "repo", "list"); !strings.Contains(listed.stdout, repoDir) {
+		t.Fatalf("修好之后 repo list 应列出该仓库: %q", listed.stdout)
+	}
+	if status := runCLIWithEnv(t, home, "status"); status.exitCode != 0 {
+		t.Fatalf("修好配置后 status 应恢复正常: exit=%d stderr=%q", status.exitCode, status.stderr)
 	}
 }
 
@@ -465,6 +598,52 @@ func TestCLIStatusAndSizeOnControlledRepos(t *testing.T) {
 		if !strings.Contains(size.stdout, name) {
 			t.Fatalf("size 输出缺少仓库 %q: %q", name, size.stdout)
 		}
+	}
+}
+
+// TestCLISizeUnitMatchesConfig 断言 size 的 --unit 与配置文件里的 size_unit 同口径。
+//
+// 旧实现里命令行为字面量比较、认不出就回退 decimal：配置文件写 "BINARY" 归一成 binary，
+// 而 --unit BINARY 按 decimal 算，同一份配置在两条入口给出相反的分桶结论。
+func TestCLISizeUnitMatchesConfig(t *testing.T) {
+	home := t.TempDir()
+	repoDir := filepath.Join(home, "unit-repo")
+	initGitRepo(t, repoDir)
+
+	configPath := configFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("创建配置目录失败: %v", err)
+	}
+	// 配置文件里写大写形态，加载期归一成 binary
+	content := fmt.Sprintf(`{"repo_paths":[%q],"size_unit":"BINARY"}`, repoDir)
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("写入配置失败: %v", err)
+	}
+
+	fromConfig := runCLIWithEnv(t, home, "size")
+	if fromConfig.exitCode != 0 {
+		t.Fatalf("size 退出码 = %d，stderr=%q", fromConfig.exitCode, fromConfig.stderr)
+	}
+	if !strings.Contains(fromConfig.stdout, "binary MB") {
+		t.Fatalf("配置文件里的 BINARY 应按 binary 口径分桶: %q", fromConfig.stdout)
+	}
+
+	// 命令行写大小写混排的同一取值，必须得到同一个口径
+	fromFlag := runCLIWithEnv(t, home, "size", "--unit", "BiNaRy")
+	if fromFlag.exitCode != 0 {
+		t.Fatalf("size --unit BiNaRy 退出码 = %d，stderr=%q", fromFlag.exitCode, fromFlag.stderr)
+	}
+	if !strings.Contains(fromFlag.stdout, "binary MB") {
+		t.Fatalf("--unit BiNaRy 应归一成 binary: %q", fromFlag.stdout)
+	}
+
+	// 非法取值直接报错退出，不再静默回退 decimal
+	invalid := runCLIWithEnv(t, home, "size", "--unit", "kb")
+	if invalid.exitCode == 0 {
+		t.Fatalf("--unit kb 应以非 0 退出: stdout=%q", invalid.stdout)
+	}
+	if combined := invalid.stdout + invalid.stderr; !strings.Contains(combined, "--unit") || !strings.Contains(combined, "binary") {
+		t.Fatalf("报错应点名 --unit 与候选取值: %q", combined)
 	}
 }
 
